@@ -31,6 +31,7 @@ struct ConnectView: View {
                     PromiseRow(symbol: "person.fill.checkmark", title: "Only messages you sent", detail: "Other people's messages are never touched.")
                     PromiseRow(symbol: "iphone", title: "Your login stays on this phone", detail: "Nothing is sent to a DeLore server.")
                     PromiseRow(symbol: "eye.slash", title: "Message text is never saved", detail: "We keep dates and message types, not what you said.")
+                    PromiseRow(symbol: "chart.bar.xaxis", title: "No analytics or identifiers", detail: "We don't collect device IDs or usage stats.")
                 }
 
                 Text("If Instagram asks you to verify, complete it there. We won't skip that check.")

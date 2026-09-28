@@ -20,9 +20,9 @@ final class MockPurchaseService: PurchaseService, @unchecked Sendable {
 
     func products() async throws -> [StoreProduct] {
         [
-            StoreProduct(id: "mock.pro.yearly", kind: .proYearly, displayName: "Pro Yearly", displayPrice: "$29.99", monthlyEquivalent: "$2.49"),
-            StoreProduct(id: "mock.pro.monthly", kind: .proMonthly, displayName: "Pro Monthly", displayPrice: "$4.99", monthlyEquivalent: nil),
-            StoreProduct(id: "mock.cleanup.single", kind: .oneTimeCleanup, displayName: "One-time cleanup", displayPrice: "$4.99", monthlyEquivalent: nil)
+            StoreProduct(id: "mock.pro.yearly", kind: .proYearly, displayName: "Pro Yearly", displayPrice: "$59.99", monthlyEquivalent: "$5.00"),
+            StoreProduct(id: "mock.pro.monthly", kind: .proMonthly, displayName: "Pro Monthly", displayPrice: "$19.99", monthlyEquivalent: nil),
+            StoreProduct(id: "mock.cleanup.single", kind: .oneTimeCleanup, displayName: "One-time cleanup", displayPrice: "$9.99", monthlyEquivalent: nil)
         ]
     }
 

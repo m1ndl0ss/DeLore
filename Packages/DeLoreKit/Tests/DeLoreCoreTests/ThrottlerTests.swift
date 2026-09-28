@@ -80,6 +80,15 @@ final class ThrottlerTests: XCTestCase {
         }
     }
 
+    func testEstimatedDurationRespectsHourlyCap() throws {
+        let policy = RatePolicy.conservative
+        XCTAssertEqual(policy.estimatedDuration(forItemCount: 0), 0)
+        let oneHour = try XCTUnwrap(policy.estimatedDuration(forItemCount: policy.hourlyLimit))
+        XCTAssertEqual(oneHour, 3_600, accuracy: 0.001)
+        let twoHours = try XCTUnwrap(policy.estimatedDuration(forItemCount: policy.hourlyLimit * 2))
+        XCTAssertEqual(twoHours, 7_200, accuracy: 0.001)
+    }
+
     func testEstimatorNeedsSamplesBeforeClaimingAnything() {
         var estimator = ThroughputEstimator()
         estimator.beginSegment(at: start)

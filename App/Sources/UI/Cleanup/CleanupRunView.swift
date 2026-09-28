@@ -72,8 +72,9 @@ struct CleanupRunView: View {
 
                 LoreProgressBar(fraction: progress.fraction)
 
-                if session.isRunning {
-                    Text(TimeRemainingCopy.text(for: progress.estimatedSecondsRemaining))
+                if progress.remaining > 0 {
+                    Text(TimeRemainingCopy.text(for: progress.estimatedSecondsRemaining
+                        ?? model.env.ratePolicy.estimatedDuration(forItemCount: progress.remaining)))
                         .font(.system(.subheadline, design: .rounded, weight: .semibold))
                         .foregroundStyle(Palette.secondaryInk)
                 }
@@ -105,6 +106,11 @@ struct CleanupRunView: View {
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Palette.secondaryInk)
                     .frame(maxWidth: .infinity)
+                Label("If Instagram asks us to wait, we wait — on purpose, to keep your account safe.", systemImage: "shield.lefthalf.filled")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Palette.secondaryInk)
+                    .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
 
                 primaryAction(copy.action)
 
@@ -275,6 +281,7 @@ struct CleanupUnavailableView: View {
             Card {
                 PromiseRow(symbol: "key.slash", title: "We never see your password", detail: "You sign in on Instagram's page.")
                 PromiseRow(symbol: "lock.fill", title: "Still private", detail: "Your login stays on this phone.")
+                PromiseRow(symbol: "chart.bar.xaxis", title: "No analytics", detail: "We don't collect identifiers or usage stats.")
             }
             Spacer()
             Button("Got it") { dismiss() }

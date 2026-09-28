@@ -51,7 +51,7 @@ struct WelcomeView: View {
                     .sensoryFeedback(.impact(weight: .light), trigger: model.route)
                     .accessibilityIdentifier("getStarted")
 
-                Label("Your data stays on your device.", systemImage: "lock.fill")
+                Label("On this phone. No analytics. No identifiers.", systemImage: "lock.fill")
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Palette.secondaryInk)
             }

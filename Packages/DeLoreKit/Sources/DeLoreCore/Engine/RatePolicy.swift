@@ -98,7 +98,7 @@ public struct RatePolicy: Hashable, Codable, Sendable {
         maxConsecutiveFailures: 5
     )
 
-    /// Fast pacing for the on-device demo and UI tests, where nothing talks to Instagram.
+    /// Fast pacing for tests, where nothing talks to Instagram.
     public static let demo = RatePolicy(
         minimumDelay: 0.05,
         maximumJitter: 0.05,
@@ -118,4 +118,14 @@ public struct RatePolicy: Hashable, Codable, Sendable {
         maxAttemptsPerItem: 3,
         maxConsecutiveFailures: 5
     )
+
+    /// Honest wall-clock estimate from pacing plus the hourly cap. Jitter is averaged.
+    public func estimatedDuration(forItemCount count: Int) -> TimeInterval? {
+        guard count > 0 else { return 0 }
+        let typicalGap = minimumDelay + maximumJitter / 2
+        let fromGaps = Double(count) * typicalGap
+        guard hourlyLimit > 0 else { return fromGaps }
+        let fromHourlyCap = Double(count) / Double(hourlyLimit) * 3_600
+        return max(fromGaps, fromHourlyCap)
+    }
 }

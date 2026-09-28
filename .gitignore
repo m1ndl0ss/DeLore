@@ -24,3 +24,11 @@ Package.resolved
 *.cer
 *.env
 AuthKey_*.p8
+
+# Android
+Android/.gradle/
+Android/build/
+Android/app/build/
+Android/local.properties
+Android/.cxx/
+

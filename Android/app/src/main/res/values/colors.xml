@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="volt">#D4FF3A</color>
+    <color name="on_volt">#111111</color>
+    <color name="background_light">#F7F5F0</color>
+    <color name="ic_launcher_background">#111111</color>
+</resources>

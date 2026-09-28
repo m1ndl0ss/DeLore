@@ -17,8 +17,8 @@ struct CleanupStatusCopy: Equatable {
         case .ready, .running:
             if let until = coolingDownUntil, until > now {
                 return CleanupStatusCopy(
-                    headline: String(localized: "Taking a breather…"),
-                    message: String(localized: "Instagram asked us to slow down, so we're pausing to keep your account safe. Back at it around \(until.formatted(date: .omitted, time: .shortened))."),
+                    headline: String(localized: "Instagram asked us to wait"),
+                    message: String(localized: "We're slowing down on purpose to keep your account safe. Back at it around \(until.formatted(date: .omitted, time: .shortened))."),
                     tone: .caution,
                     action: .pause
                 )
@@ -36,13 +36,13 @@ struct CleanupStatusCopy: Equatable {
     static func copy(for reason: PauseReason) -> CleanupStatusCopy {
         switch reason {
         case .user:
-            return CleanupStatusCopy(headline: String(localized: "Paused"), message: String(localized: "Pick up whenever you're ready."), tone: .normal, action: .resume)
+            return CleanupStatusCopy(headline: String(localized: "Paused"), message: String(localized: "Tap Resume. We won't unsend the same message twice."), tone: .normal, action: .resume)
         case .appInBackground:
-            return CleanupStatusCopy(headline: String(localized: "Paused while you were away"), message: String(localized: "Cleaning only runs while the app is open. We'll keep going now that you're back."), tone: .normal, action: .resume)
+            return CleanupStatusCopy(headline: String(localized: "Paused while you were away"), message: String(localized: "Cleaning only runs while the app is open. Tap Resume — we won't unsend twice."), tone: .normal, action: .resume)
         case .interrupted:
-            return CleanupStatusCopy(headline: String(localized: "Welcome back"), message: String(localized: "The app closed mid-clean. Your progress is saved, so you can pick up where you left off."), tone: .normal, action: .resume)
+            return CleanupStatusCopy(headline: String(localized: "Pick up where you left off"), message: String(localized: "The app closed mid-clean. Your progress is saved. Tap Resume — we won't unsend the same message twice."), tone: .normal, action: .resume)
         case .rateLimited:
-            return CleanupStatusCopy(headline: String(localized: "We've paused the cleanup to keep your account safe."), message: String(localized: "Instagram asked us to slow down a few times in a row. Try again later."), tone: .caution, action: .tryAgain)
+            return CleanupStatusCopy(headline: String(localized: "Instagram asked us to wait"), message: String(localized: "We've paused the cleanup to keep your account safe. Try again later."), tone: .caution, action: .tryAgain)
         case .sessionExpired:
             return CleanupStatusCopy(headline: String(localized: "Instagram signed you out"), message: String(localized: "Reconnect your account, then come back to continue. Nothing else was touched."), tone: .caution, action: .reconnect)
         case .verificationRequired:

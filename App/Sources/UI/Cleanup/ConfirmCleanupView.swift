@@ -30,6 +30,12 @@ struct ConfirmCleanupView: View {
                             .accessibilityAddTraits(.isHeader)
                             .accessibilityIdentifier("confirmHeadline")
 
+                        if let eta = model.env.ratePolicy.estimatedDuration(forItemCount: prepared.count) {
+                            Text(TimeRemainingCopy.text(for: eta))
+                                .font(.system(.title3, design: .rounded, weight: .semibold))
+                                .foregroundStyle(Palette.secondaryInk)
+                        }
+
                         Card {
                             PromiseRow(symbol: "eye.fill", title: "Unsent messages may already have been seen, copied, screenshotted, or retained elsewhere.")
                             PromiseRow(symbol: "arrow.uturn.backward", title: "This can't be undone.")

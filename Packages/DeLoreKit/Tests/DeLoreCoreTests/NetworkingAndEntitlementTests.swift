@@ -136,6 +136,10 @@ final class EntitlementTests: XCTestCase {
         XCTAssertFalse(CleanupFilter(sentAfter: date.addingTimeInterval(1)).matches(message))
         XCTAssertFalse(CleanupFilter(sentBefore: date.addingTimeInterval(-1)).matches(message))
         XCTAssertTrue(CleanupFilter(sentAfter: date, sentBefore: date).matches(message))
+        XCTAssertTrue(CleanupFilter(sentBefore: date).matches(message))
+        XCTAssertTrue(CleanupFilter(sentAfter: date).matches(message))
+        XCTAssertFalse(CleanupFilter(sentBefore: date.addingTimeInterval(-0.001)).matches(message))
+        XCTAssertFalse(CleanupFilter(sentAfter: date.addingTimeInterval(0.001)).matches(message))
     }
 
     func testFilteredJobOnlyContainsMatchingMessages() async throws {

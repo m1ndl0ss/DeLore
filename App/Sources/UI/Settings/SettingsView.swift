@@ -85,7 +85,7 @@ struct SettingsView: View {
                 Section {
                     EmptyView()
                 } footer: {
-                    Text("DeLore \(appVersion) · Not affiliated with Instagram or Meta.")
+                    Text("DeLore \(appVersion) · No analytics. Not affiliated with Instagram or Meta.")
                         .frame(maxWidth: .infinity)
                 }
             }

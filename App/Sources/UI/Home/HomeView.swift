@@ -136,7 +136,9 @@ private struct PausedSessionCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(progress.status == .running ? "Cleaning in progress" : "Cleanup paused")
                         .font(.title(.headline))
-                    Text("^[\(progress.remaining) message](inflect: true) to go")
+                    Text(progress.status == .running
+                         ? "^[\(progress.remaining) message](inflect: true) to go"
+                         : "Tap Resume. We won't unsend twice.")
                         .font(.subheadline)
                 }
                 .foregroundStyle(Palette.onVolt)
@@ -149,7 +151,7 @@ private struct PausedSessionCard: View {
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Palette.volt))
         }
         .buttonStyle(.plain)
-        .accessibilityHint("Opens the cleanup")
+        .accessibilityHint("Opens the cleanup. Resume picks up without unsending twice.")
     }
 }
 

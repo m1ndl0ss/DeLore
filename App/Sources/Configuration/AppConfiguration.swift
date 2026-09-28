@@ -40,7 +40,7 @@ struct AppConfiguration {
                 proMonthly: string("DLProductProMonthly") ?? "app.delore.pro.monthly",
                 proYearly: string("DLProductProYearly") ?? "app.delore.pro.yearly"
             ),
-            freeCleanupLimit: string("DLFreeCleanupLimit").flatMap(Int.init) ?? 50,
+            freeCleanupLimit: string("DLFreeCleanupLimit").flatMap(Int.init) ?? 100,
             analyticsEnabled: string("DLAnalyticsEnabled")?.uppercased() == "YES",
             advancedFilters: true
         )

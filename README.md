@@ -1,6 +1,6 @@
 # DeLore
 
-**Delete the lore.** A Gen-Z iOS app for cleaning up the Instagram DMs *you* sent, in bulk, slowly and safely.
+**Delete the lore.** A Gen-Z app for cleaning up the Instagram DMs *you* sent, in bulk, slowly and safely. iOS and Android clients live in this repo and follow the same product: Instagram-hosted login, on-device session, local unsend.
 
 > Instagram has no official consumer DM-unsend API. DeLore still performs the core action the same
 > way a live App Store competitor (UnSendAll) describes for iOS: the user signs in through
@@ -17,7 +17,7 @@
 2. **Connect Instagram:** the user signs in on Instagram's own page. We never see the password.
 3. **Home:** "Your DMs · 8,923" (the messages *you* sent), plus **Clean up**, **Choose chats** and
    **See what's included**.
-4. **Clean up:** everything or chosen chats, with optional Pro filters (sent before a date; texts,
+4. **Clean up:** everything or chosen chats, with optional Pro filters (sent before or after a date; texts,
    photos & videos, links, voice). Messages from others are shown as "Never touched".
 5. **Review:** "You're about to unsend X messages", with the seen/screenshotted and can't-be-undone
    warnings. Nothing destructive happens before **Start cleaning**.
@@ -29,25 +29,10 @@
 
 ```
 App/                      SwiftUI app (iOS 17+)
-  Sources/UI/             Views + design system (Theme, Components)
-  Sources/Presentation/   @Observable models: AppModel, InboxSyncModel, CleanupSetupModel, CleanupSessionModel
-  Sources/Composition/    AppEnvironment: the composition root
-  Sources/Purchases/      StoreKit 2 service, entitlement manager
-  Sources/Integration/    LiveIntegration + Instagram-hosted WKWebView login
-  Sources/Configuration/  AppConfiguration (reads Config/*.xcconfig via Info.plist)
-Packages/DeLoreKit/       Platform-independent core (compiles and tests on macOS, Linux, Windows)
-  DeLoreCore/
-    Domain/               Models, the item state machine, jobs, progress
-    Engine/               CleanupEngine (actor), QueueBuilder, Throttler, Backoff, RatePolicy, ETA
-    Persistence/          FileJobStore (snapshot + append-only journal), protected file I/O
-    Export/               Content-free LocalLibraryStore (and the optional export parser)
-    Instagram/            Website session, HTTP client, inbox sync, Unsend, challenge classifier
-    Integration/          MessageSource / UnsendService protocols + typed IntegrationError
-    Networking/           HTTPClient + URLSessionTransport (typed, cancellable, idempotent-only retries)
-    Security/             Keychain SecretStore, SessionVault, Redactor, Sensitive<T>, LocalDataEraser
-    Analytics/            Closed-vocabulary events, payload safety check, no-op sink
-    Entitlements/         Pure allowance rules (free / one-time / Pro)
-  DeLoreFakes/            FakeInstagramService, FakeInstagramAPIClient, ManualClock
+Android/                  Kotlin + Compose app (API 26+)
+Packages/DeLoreKit/       Swift core used by iOS
+  DeLoreCore/             Domain, engine, Instagram website client, entitlements
+  DeLoreFakes/            Test doubles
 ```
 
 Everything external sits behind a protocol (`MessageSource`, `UnsendService`, `JobStore`,
@@ -66,6 +51,17 @@ open DeLore.xcodeproj      # scheme "DeLore" (Debug) or "DeLore-Staging"
 
 Core tests without Xcode: `swift test --package-path Packages/DeLoreKit`.
 
+Android (JDK 17 + Android SDK):
+
+```bash
+cd Android
+gradle :app:testDebugUnitTest :app:assembleDebug   # or Android Studio → Open Android/
+```
+
+Configurations: **Debug** (verbose redacted logs), **Staging** (release optimisations, for
+TestFlight), and **Release** (warnings/errors only). Every configuration uses the live Instagram
+integration. Android uses the same live website session in every build.
+
 Configurations: **Debug** (verbose redacted logs), **Staging** (release optimisations, for
 TestFlight), and **Release** (warnings/errors only). Every configuration uses the live Instagram
 integration.
@@ -81,7 +77,7 @@ All of it lives in `Config/Base.xcconfig`. No secrets are needed or committed.
 | `DL_PRIVACY_URL`, `DL_SUPPORT_URL` | Replace the `example.com` placeholders with real pages |
 | `DL_TERMS_URL` | Apple's standard EULA by default; replace if you publish your own |
 | `DL_PRODUCT_*` | Must match App Store Connect (and `App/StoreKit/DeLore.storekit`) |
-| `DL_FREE_LIMIT` | Lifetime free messages (default 50) |
+| `DL_FREE_LIMIT` | Lifetime free messages (default 100) |
 
 ## How authentication works
 
@@ -166,12 +162,12 @@ samples. No throughput is ever promised in the UI. The values can be tuned in
 
 ## StoreKit setup
 
-- **Free:** 50 messages of cleanup (a lifetime allowance kept in the Keychain,
+- **Free:** 100 messages of cleanup (a lifetime allowance kept in the Keychain,
   charged only for messages actually cleaned).
-- **One-time cleanup** (`app.delore.cleanup.single`, consumable): one full cleanup. Credited once
+- **One-time cleanup** (`app.delore.cleanup.single`, consumable): one full cleanup at **$9.99**. Credited once
   per verified transaction ID.
-- **Pro** (`app.delore.pro.monthly`, `app.delore.pro.yearly`; group "DeLore Pro"): unlimited
-  cleanup and filters.
+- **Pro monthly** (`app.delore.pro.monthly`): **$19.99**/month after the free 100. Unlimited cleanup and filters.
+- **Pro yearly** (`app.delore.pro.yearly`): **$59.99**/year (~$5/month). Same Pro group.
 - Transactions are verified with `VerificationResult` and finished only after delivery. The app
   listens to `Transaction.updates` and handles `Transaction.unfinished`. Restore calls
   `AppStore.sync()`. There's also Manage subscription. If the store is unreachable, the app stays
@@ -220,6 +216,14 @@ logging scan.
    the same traffic the user would generate by unsending in a browser.
 5. Archive with the Release scheme, upload, and test purchases in Sandbox/TestFlight (Staging).
 6. Optional: localize `Localizable.xcstrings` (it's populated from source at build time).
+
+## Remaining manual steps before Play Store submission
+
+1. Open `Android/` in Android Studio, set a real `applicationId` if you don't want `app.delore.android`.
+2. Create the same three products in Play Console (`app.delore.cleanup.single`, `app.delore.pro.monthly`, `app.delore.pro.yearly`) at $9.99 / $19.99 / $59.99.
+3. Host privacy/support pages (same as iOS) and replace the `example.com` URLs in `Android/app/build.gradle.kts`.
+4. Data safety form: data not collected by DeLore. Instagram receives the same website traffic as unsending in Chrome.
+5. Upload an AAB from `assembleRelease`, complete content rating, and test license testers.
 
 Branding: DeLore isn't affiliated with Instagram or Meta. "Instagram" is only used descriptively,
 and the icon is an original mark.

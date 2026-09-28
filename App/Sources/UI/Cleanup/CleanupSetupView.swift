@@ -146,11 +146,23 @@ struct CleanupSetupView: View {
             }
 
             Card {
-                Toggle(isOn: gated($setup.useDateFilter)) {
-                    Text("Only messages before a date")
+                Text("When they were sent")
+                    .font(.title(.headline))
+                    .foregroundStyle(Palette.ink)
+                Picker("When they were sent", selection: gatedDateBound) {
+                    Text("Anytime").tag(CleanupSetupModel.DateBound.any)
+                    Text("Before").tag(CleanupSetupModel.DateBound.before)
+                    Text("After").tag(CleanupSetupModel.DateBound.after)
                 }
-                if setup.useDateFilter {
-                    DatePicker("Sent before", selection: $setup.sentBefore, in: ...Date(), displayedComponents: .date)
+                .pickerStyle(.segmented)
+                .accessibilityLabel("When they were sent")
+                if setup.dateBound != .any {
+                    DatePicker(
+                        setup.dateBound == .before ? "Sent before" : "Sent after",
+                        selection: $setup.cutoff,
+                        in: ...Date(),
+                        displayedComponents: .date
+                    )
                 }
                 Divider()
                 ForEach(CleanupSetupModel.filterableKinds, id: \.self) { kind in
@@ -161,6 +173,19 @@ struct CleanupSetupView: View {
             }
             .tint(Palette.accentInk)
         }
+    }
+
+    private var gatedDateBound: Binding<CleanupSetupModel.DateBound> {
+        Binding(
+            get: { setup.dateBound },
+            set: { newValue in
+                if isPro || newValue == .any {
+                    setup.dateBound = newValue
+                } else {
+                    showingPaywall = true
+                }
+            }
+        )
     }
 
     /// Filters are Pro-only: flipping one on the free tier opens the paywall instead.

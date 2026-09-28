@@ -23,7 +23,7 @@ DL_PRODUCT_PRO_MONTHLY = app.delore.pro.monthly
 DL_PRODUCT_PRO_YEARLY = app.delore.pro.yearly
 
 // Lifetime number of messages free users can clean.
-DL_FREE_LIMIT = 50
+DL_FREE_LIMIT = 100
 
 // No analytics backend ships with the app. Flip only after wiring a privacy-preserving sink.
 DL_ANALYTICS_ENABLED = NO

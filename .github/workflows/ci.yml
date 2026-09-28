@@ -111,3 +111,20 @@ jobs:
           if grep -rnE "UserDefaults" Packages/DeLoreKit/Sources/DeLoreCore/Security App/Sources/Purchases/PurchaseService.swift | grep -vE "^[^:]+:[0-9]+:\s*//"; then
             echo "Secrets must not touch UserDefaults"; exit 1
           fi
+
+  android:
+    name: Android tests & debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Unit tests and debug assemble
+        working-directory: Android
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace

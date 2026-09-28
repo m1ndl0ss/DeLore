@@ -23,7 +23,7 @@ struct PaywallView: View {
                         .font(.display())
                         .foregroundStyle(Palette.ink)
                         .accessibilityAddTraits(.isHeader)
-                    Text("Free covers your first ^[\(entitlements.freeLimit) message](inflect: true). Unlock the rest whenever you're ready.")
+                    Text("First \(entitlements.freeLimit) messages are free. After that, Pro is \(monthlyPriceCopy) a month — or clean once without a subscription.")
                         .foregroundStyle(Palette.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -31,6 +31,7 @@ struct PaywallView: View {
                 VStack(alignment: .leading, spacing: Spacing.m) {
                     PromiseRow(symbol: "infinity", title: "Unlimited cleanup", detail: "Every chat, every message you sent.")
                     PromiseRow(symbol: "slider.horizontal.3", title: "Date & type filters", detail: "Only old stuff. Only photos. Your call.")
+                    PromiseRow(symbol: "hand.raised.fill", title: "No analytics. No identifiers.", detail: "We don't collect Apple IDs, device IDs, or usage stats.")
                     PromiseRow(symbol: "sparkles", title: "New features as they land", detail: "Included with Pro.")
                 }
 
@@ -49,7 +50,10 @@ struct PaywallView: View {
         .task {
             model.env.analytics.track(.paywallShown(context: context))
             await entitlements.loadProducts()
-            if selectedID == nil { selectedID = entitlements.products.first?.id }
+            if selectedID == nil {
+                selectedID = entitlements.products.first { $0.kind == .proMonthly }?.id
+                    ?? entitlements.products.first?.id
+            }
         }
         .onChange(of: entitlements.isPro) { _, isPro in
             if isPro { dismiss() }
@@ -130,6 +134,10 @@ struct PaywallView: View {
         entitlements.products.first { $0.id == selectedID }
     }
 
+    private var monthlyPriceCopy: String {
+        entitlements.products.first { $0.kind == .proMonthly }?.displayPrice ?? "$19.99"
+    }
+
     private func purchase() {
         guard let product = selectedProduct else { return }
         Task {
@@ -196,7 +204,7 @@ private struct PlanCard: View {
         case .proYearly:
             if let monthly = product.monthlyEquivalent { return "Just \(monthly)/month, billed yearly" }
             return "Billed yearly"
-        case .proMonthly: return "Billed monthly, cancel anytime"
+        case .proMonthly: return "After your free messages. Cancel anytime."
         case .oneTimeCleanup: return "Clean everything once. No subscription."
         }
     }

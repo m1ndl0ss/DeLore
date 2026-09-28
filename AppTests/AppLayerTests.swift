@@ -31,6 +31,7 @@ final class CleanupCopyTests: XCTestCase {
         let copy = CleanupStatusCopy.make(for: .running, coolingDownUntil: Date().addingTimeInterval(600))
         XCTAssertEqual(copy.tone, .caution)
         XCTAssertEqual(copy.action, .pause)
+        XCTAssertTrue(copy.headline.lowercased().contains("wait"))
     }
 
     func testTimeRemainingIsHonest() {
@@ -89,10 +90,10 @@ final class EntitlementManagerTests: XCTestCase {
 
     func testFreeTierIsLimited() {
         let ledger = PassLedger(store: InMemorySecretStore())
-        let manager = EntitlementManager(service: MockPurchaseService(ledger: ledger), ledger: ledger, freeLimit: 50, analytics: .disabled)
-        XCTAssertEqual(manager.allowance(requestedCount: 200, usesAdvancedFilters: false), .limited(remainingFree: 50))
+        let manager = EntitlementManager(service: MockPurchaseService(ledger: ledger), ledger: ledger, freeLimit: 100, analytics: .disabled)
+        XCTAssertEqual(manager.allowance(requestedCount: 200, usesAdvancedFilters: false), .limited(remainingFree: 100))
         manager.recordFreeUsage(30)
-        XCTAssertEqual(manager.remainingFree, 20)
+        XCTAssertEqual(manager.remainingFree, 70)
     }
 }
 
@@ -101,7 +102,7 @@ final class ConfigurationTests: XCTestCase {
         let configuration = AppConfiguration.load()
         XCTAssertFalse(configuration.products.oneTimeCleanup.isEmpty)
         XCTAssertEqual(Set(configuration.products.all).count, 3)
-        XCTAssertGreaterThan(configuration.freeCleanupLimit, 0)
+        XCTAssertEqual(configuration.freeCleanupLimit, 100)
         XCTAssertEqual(configuration.privacyPolicyURL.scheme, "https")
         XCTAssertEqual(configuration.privacyPolicyURL.scheme, "https")
         XCTAssertFalse(configuration.analyticsEnabled, "no analytics without a vetted backend")

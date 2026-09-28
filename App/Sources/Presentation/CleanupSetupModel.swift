@@ -17,10 +17,16 @@ final class CleanupSetupModel {
     /// Kinds offered as filters. `.other` (reactions, system items) rides along with "all".
     static let filterableKinds: [MessageKind] = [.text, .media, .link, .voice]
 
+    enum DateBound: Hashable {
+        case any
+        case before
+        case after
+    }
+
     var scopeKind: ScopeKind
     var chosen: Set<ConversationID>
-    var useDateFilter = false
-    var sentBefore: Date = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
+    var dateBound: DateBound = .any
+    var cutoff: Date = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
     var kinds: Set<MessageKind> = Set(CleanupSetupModel.filterableKinds)
 
     private(set) var isPreparing = false
@@ -44,11 +50,20 @@ final class CleanupSetupModel {
     }
 
     var filter: CleanupFilter {
-        CleanupFilter(
-            sentAfter: nil,
-            sentBefore: useDateFilter ? sentBefore : nil,
-            kinds: kinds.count == Self.filterableKinds.count ? nil : kinds
-        )
+        let dayStart = Calendar.current.startOfDay(for: cutoff)
+        let nextDay = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? cutoff
+        switch dateBound {
+        case .any:
+            return CleanupFilter(sentAfter: nil, sentBefore: nil, kinds: kindFilter)
+        case .before:
+            return CleanupFilter(sentAfter: nil, sentBefore: nextDay, kinds: kindFilter)
+        case .after:
+            return CleanupFilter(sentAfter: dayStart, sentBefore: nil, kinds: kindFilter)
+        }
+    }
+
+    private var kindFilter: Set<MessageKind>? {
+        kinds.count == Self.filterableKinds.count ? nil : kinds
     }
 
     var scope: CleanupScope {

@@ -1,0 +1,7 @@
+-keepattributes *Annotation*, InnerClasses, Signature, Exception
+-keep class app.delore.android.** { *; }
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.conscrypt.**
+-dontwarn org.openjsse.**
