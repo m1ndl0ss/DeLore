@@ -1,0 +1,5 @@
+#include "Base.xcconfig"
+
+DL_ENVIRONMENT = debug
+DL_DISPLAY_NAME = DeLore Dev
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG $(inherited)

@@ -1,0 +1,26 @@
+# Xcode (project is generated from project.yml)
+*.xcodeproj
+*.xcworkspace
+!Packages/**/*.xcworkspace
+xcuserdata/
+DerivedData/
+*.xcresult
+build/
+
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# macOS / editors
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Never commit secrets or signing material
+*.p12
+*.mobileprovision
+*.cer
+*.env
+AuthKey_*.p8

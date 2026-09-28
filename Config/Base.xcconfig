@@ -1,0 +1,29 @@
+// Shared build settings. Values here are configuration, not secrets: nothing secret belongs
+// in xcconfig files because they're committed to the repository.
+//
+// Note: "//" starts a comment in xcconfig, so URLs use "/$()/" to keep the double slash.
+
+MARKETING_VERSION = 1.0.0
+CURRENT_PROJECT_VERSION = 1
+
+// Set your Apple Developer Team ID here or in Xcode's Signing & Capabilities.
+DEVELOPMENT_TEAM =
+
+PRODUCT_BUNDLE_IDENTIFIER = app.delore.ios
+
+// MANUAL STEP before release: replace with your hosted pages.
+DL_PRIVACY_URL = https:/$()/example.com/delore/privacy
+DL_SUPPORT_URL = https:/$()/example.com/delore/support
+// Apple's standard EULA; replace if you publish custom terms.
+DL_TERMS_URL = https:/$()/www.apple.com/legal/internet-services/itunes/dev/stdeula/
+
+// Must match App Store Connect and App/StoreKit/DeLore.storekit.
+DL_PRODUCT_ONE_TIME = app.delore.cleanup.single
+DL_PRODUCT_PRO_MONTHLY = app.delore.pro.monthly
+DL_PRODUCT_PRO_YEARLY = app.delore.pro.yearly
+
+// Lifetime number of messages free users can clean.
+DL_FREE_LIMIT = 50
+
+// No analytics backend ships with the app. Flip only after wiring a privacy-preserving sink.
+DL_ANALYTICS_ENABLED = NO

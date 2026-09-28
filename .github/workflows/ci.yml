@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core package tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Test DeLoreKit
+        run: swift test --package-path Packages/DeLoreKit --parallel
+
+  ios:
+    name: iOS build & tests
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Pick simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)["devices"]
+          runtimes = sorted([r for r in data if "iOS" in r], reverse=True)
+          for runtime in runtimes:
+              for device in data[runtime]:
+                  if device["name"].startswith("iPhone") and device.get("isAvailable", True):
+                      print(device["udid"]); sys.exit(0)
+          sys.exit(1)
+          ')
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+      - name: Unit & UI tests (Debug, simulator)
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project DeLore.xcodeproj \
+            -scheme DeLore \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath TestResults.xcresult \
+            -skipPackagePluginValidation \
+            | tee xcodebuild-test.log | grep -E "error:|warning: .*(concurren|Sendable|actor)|Test Case .* failed|Executed|\*\* TEST" || true
+          test ${PIPESTATUS[0]} -eq 0
+      - name: Release build (device, unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project DeLore.xcodeproj \
+            -scheme DeLore \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee xcodebuild-release.log | grep -E "error:|\*\* BUILD" || true
+          test ${PIPESTATUS[0]} -eq 0
+      - name: Check release binary has no test-only code paths
+        run: |
+          APP=$(find ~/Library/Developer/Xcode/DerivedData -path "*Release-iphoneos/DeLore.app" -type d | head -1)
+          echo "App: $APP"
+          if strings "$APP/DeLore" | grep -q -- "-uitesting"; then
+            echo "UI-testing hook compiled into Release"; exit 1
+          fi
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-logs
+          path: |
+            xcodebuild-test.log
+            xcodebuild-release.log
+            TestResults.xcresult
+          retention-days: 7
+
+  hygiene:
+    name: Secrets & logging review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No committed secrets
+        run: |
+          if grep -rInE "(sessionid=|csrftoken=|BEGIN (RSA|EC|OPENSSH) PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|xox[baprs]-)" \
+               --exclude-dir=.git --exclude-dir=Tests --exclude=ci.yml --exclude=Redactor.swift . ; then
+            echo "Possible secret committed"; exit 1
+          fi
+      - name: No print/NSLog in app or core sources
+        run: |
+          if grep -rnE "\b(print|NSLog|debugPrint)\(" App/Sources Packages/DeLoreKit/Sources; then
+            echo "Use AppLogger (redacted) instead of print/NSLog"; exit 1
+          fi
+      - name: No UserDefaults in secret paths
+        run: |
+          if grep -rn "UserDefaults" Packages/DeLoreKit/Sources/DeLoreCore/Security; then
+            echo "Secrets must not touch UserDefaults"; exit 1
+          fi

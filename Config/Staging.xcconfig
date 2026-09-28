@@ -1,0 +1,6 @@
+#include "Base.xcconfig"
+
+// Internal TestFlight builds: release optimisations, plus the sample-data demo.
+DL_ENVIRONMENT = staging
+DL_DISPLAY_NAME = DeLore Beta
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = STAGING $(inherited)
