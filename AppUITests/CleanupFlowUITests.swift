@@ -20,8 +20,12 @@ final class CleanupFlowUITests: XCTestCase {
         add(attachment)
     }
 
-    private func tap(_ element: XCUIElement, timeout: TimeInterval = 10) {
+    /// Waits until the element can actually receive the tap; taps during a navigation
+    /// transition are otherwise dropped on slow simulators.
+    private func tap(_ element: XCUIElement, timeout: TimeInterval = 15) {
         XCTAssertTrue(element.waitForExistence(timeout: timeout), "\(element) not found")
+        let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: timeout), .completed, "\(element) never became hittable")
         element.tap()
     }
 
@@ -50,7 +54,7 @@ final class CleanupFlowUITests: XCTestCase {
 
         // Free tier: clean the free allowance.
         tap(app.buttons["cleanFree"])
-        XCTAssertTrue(app.buttons["startCleaning"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["startCleaning"].waitForExistence(timeout: 20))
         snapshot("6-confirm-ready")
         tap(app.buttons["startCleaning"])
 
