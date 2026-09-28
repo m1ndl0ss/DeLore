@@ -46,7 +46,7 @@ struct IncludedView: View {
                         }
                     }
 
-                    Text("Counts come from your Instagram download. Anything sent after you downloaded it isn't included until you import a newer one.")
+                    Text("Counts come from the chats we read on this phone. Refresh chats to pick up newer messages. Message requests aren't included.")
                         .font(.footnote)
                         .foregroundStyle(Palette.secondaryInk)
                 }

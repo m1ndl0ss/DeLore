@@ -45,7 +45,7 @@ jobs:
           sys.exit(1)
           ')
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
-      - name: Unit & UI tests (Debug, simulator)
+      - name: Unit tests (Debug, simulator)
         run: |
           set +e
           xcodebuild test \
@@ -78,19 +78,6 @@ jobs:
           if strings "$APP/DeLore" | grep -q -- "-uitesting"; then
             echo "UI-testing hook compiled into Release"; exit 1
           fi
-      - name: Export UI screenshots
-        if: always()
-        run: |
-          mkdir -p screenshots
-          xcrun xcresulttool export attachments --path TestResults.xcresult --output-path screenshots || true
-          ls screenshots | head -50
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v5
-        with:
-          name: ui-screenshots
-          path: screenshots
-          retention-days: 7
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v5

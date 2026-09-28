@@ -23,7 +23,7 @@ final class CleanupCopyTests: XCTestCase {
 
     func testSecurityPausesRequireUserAction() {
         XCTAssertEqual(CleanupStatusCopy.copy(for: .verificationRequired).action, .resumeAfterVerifying)
-        XCTAssertEqual(CleanupStatusCopy.copy(for: .sessionExpired).action, .resumeAfterVerifying)
+        XCTAssertEqual(CleanupStatusCopy.copy(for: .sessionExpired).action, .reconnect)
         XCTAssertEqual(CleanupStatusCopy.copy(for: .integrationUnavailable).action, .none)
     }
 
@@ -103,7 +103,7 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertEqual(Set(configuration.products.all).count, 3)
         XCTAssertGreaterThan(configuration.freeCleanupLimit, 0)
         XCTAssertEqual(configuration.privacyPolicyURL.scheme, "https")
-        XCTAssertEqual(configuration.instagramDownloadURL.scheme, "https")
+        XCTAssertEqual(configuration.privacyPolicyURL.scheme, "https")
         XCTAssertFalse(configuration.analyticsEnabled, "no analytics without a vetted backend")
     }
 
@@ -114,8 +114,9 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertLessThanOrEqual(policy.maxAttemptsPerItem, 3)
     }
 
-    func testLiveUnsendIsNotSilentlyEnabled() {
+    func testLiveUnsendUsesWebsiteSession() {
         let service = LiveIntegration.makeUnsendService(sessionVault: SessionVault(store: InMemorySecretStore()), logger: .disabled)
-        XCTAssertTrue(service is UnavailableUnsendService)
+        XCTAssertTrue(service is InstagramWebUnsendService)
+        XCTAssertFalse(service is UnavailableUnsendService)
     }
 }

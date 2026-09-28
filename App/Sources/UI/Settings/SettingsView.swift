@@ -57,9 +57,15 @@ struct SettingsView: View {
 
                 Section("Your data") {
                     NavigationLink("How we handle your data") { PrivacyView() }
-                    Button("Import a newer download") {
+                    Button("Refresh chats") {
                         dismiss()
-                        model.showConnect()
+                        model.refreshChats()
+                    }
+                    if !model.env.hasLiveSession {
+                        Button("Reconnect Instagram") {
+                            dismiss()
+                            model.beginLogin(.reconnect)
+                        }
                     }
                 }
 
@@ -73,7 +79,7 @@ struct SettingsView: View {
                     Button("Disconnect & delete my data", role: .destructive) { confirmingErase = true }
                         .accessibilityIdentifier("eraseData")
                 } footer: {
-                    Text("Removes your imported DMs, cleanup progress and everything else stored on this phone. Purchases stay with your Apple ID.")
+                    Text("Removes your chats, Instagram login, cleanup progress and everything else stored on this phone. Purchases stay with your Apple ID.")
                 }
 
                 Section {

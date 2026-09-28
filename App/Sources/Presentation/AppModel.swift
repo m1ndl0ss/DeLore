@@ -11,6 +11,14 @@ final class AppModel {
         case home
     }
 
+    enum LoginPurpose: String, Identifiable, Equatable {
+        case connect
+        case reconnect
+        case refresh
+
+        var id: String { rawValue }
+    }
+
     enum Sheet: Identifiable, Equatable {
         case settings
         case privacy
@@ -39,6 +47,8 @@ final class AppModel {
     /// The running screen can be tucked away while a job is paused; Home shows a way back.
     var isSessionPresented = false
     var importModel: ImportModel?
+    var inboxSyncModel: InboxSyncModel?
+    var loginPurpose: LoginPurpose?
     private(set) var overview: LibraryOverview?
     private(set) var isLoadingOverview = false
 
@@ -65,6 +75,10 @@ final class AppModel {
             await restoreSession()
             _ = await minimumSplash
             withAnimation { route = .home }
+        } else if env.hasLiveSession {
+            _ = await minimumSplash
+            withAnimation { route = .connect }
+            beginInboxSync()
         } else {
             _ = await minimumSplash
             withAnimation { route = .connect }
@@ -100,6 +114,60 @@ final class AppModel {
         withAnimation { route = .connect }
     }
 
+    func beginLogin(_ purpose: LoginPurpose = .connect) {
+        loginPurpose = purpose
+    }
+
+    func cancelLogin() {
+        loginPurpose = nil
+    }
+
+    func handleLogin(_ session: InstagramWebSession, purpose: LoginPurpose) {
+        do {
+            try env.saveInstagramSession(session)
+        } catch {
+            env.logger.error("could not keep Instagram session: \(error.safeDescription)")
+            loginPurpose = nil
+            return
+        }
+        loginPurpose = nil
+        let shouldSync: Bool
+        switch purpose {
+        case .connect, .refresh:
+            shouldSync = true
+        case .reconnect:
+            shouldSync = !env.hasLibrary
+        }
+        guard shouldSync else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            beginInboxSync()
+        }
+    }
+
+    func beginInboxSync() {
+        inboxSyncModel?.cancel()
+        let model = InboxSyncModel(env: env)
+        model.onFinished = { [weak self] _ in
+            Task { await self?.finishInboxSync() }
+        }
+        inboxSyncModel = model
+        model.start()
+    }
+
+    func dismissSync() {
+        inboxSyncModel?.cancel()
+        inboxSyncModel = nil
+    }
+
+    func refreshChats() {
+        if env.hasLiveSession {
+            beginInboxSync()
+        } else {
+            beginLogin(.refresh)
+        }
+    }
+
     func beginImport(from url: URL) {
         let model = ImportModel(url: url, library: env.library, analytics: env.analytics)
         model.onFinished = { [weak self] _ in
@@ -124,10 +192,13 @@ final class AppModel {
         withAnimation { route = .home }
     }
 
-    func useSampleData() async {
-        env.enableSampleData()
-        env.hasCompletedOnboarding = true
+    private func finishInboxSync() async {
+        if !env.hasCompletedOnboarding {
+            env.hasCompletedOnboarding = true
+            env.analytics.track(.onboardingCompleted)
+        }
         await reloadOverview()
+        inboxSyncModel = nil
         withAnimation { route = .home }
     }
 
@@ -159,7 +230,7 @@ final class AppModel {
             return
         }
         guard env.isCleanupAvailable else {
-            sheet = .unavailable
+            beginLogin(.reconnect)
             return
         }
         sheet = .setup(scope)
@@ -207,6 +278,9 @@ final class AppModel {
         isSessionPresented = false
         session = nil
         sheet = nil
+        loginPurpose = nil
+        inboxSyncModel?.cancel()
+        inboxSyncModel = nil
         do {
             try env.eraseAllData()
         } catch {

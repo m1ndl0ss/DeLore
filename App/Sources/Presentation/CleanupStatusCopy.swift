@@ -5,7 +5,7 @@ import Foundation
 /// suggestion to get around a platform safety check.
 struct CleanupStatusCopy: Equatable {
     enum Tone: Equatable { case normal, caution }
-    enum Action: Equatable { case pause, resume, tryAgain, resumeAfterVerifying, none }
+    enum Action: Equatable { case pause, resume, tryAgain, resumeAfterVerifying, reconnect, none }
 
     let headline: String
     let message: String?
@@ -44,7 +44,7 @@ struct CleanupStatusCopy: Equatable {
         case .rateLimited:
             return CleanupStatusCopy(headline: String(localized: "We've paused the cleanup to keep your account safe."), message: String(localized: "Instagram asked us to slow down a few times in a row. Try again later."), tone: .caution, action: .tryAgain)
         case .sessionExpired:
-            return CleanupStatusCopy(headline: String(localized: "Instagram signed you out"), message: String(localized: "Reconnect your account, then come back to continue. Nothing else was touched."), tone: .caution, action: .resumeAfterVerifying)
+            return CleanupStatusCopy(headline: String(localized: "Instagram signed you out"), message: String(localized: "Reconnect your account, then come back to continue. Nothing else was touched."), tone: .caution, action: .reconnect)
         case .verificationRequired:
             return CleanupStatusCopy(headline: String(localized: "Instagram is asking you to verify your account."), message: String(localized: "We've paused the cleanup to keep your account safe. Open Instagram and follow its steps, then come back here."), tone: .caution, action: .resumeAfterVerifying)
         case .repeatedFailures:
@@ -54,7 +54,7 @@ struct CleanupStatusCopy: Equatable {
         case .unexpectedResponse:
             return CleanupStatusCopy(headline: String(localized: "We stopped to be safe"), message: String(localized: "Instagram replied in a way we didn't expect. Try again later; we'll double-check before touching anything."), tone: .caution, action: .tryAgain)
         case .integrationUnavailable:
-            return CleanupStatusCopy(headline: String(localized: "Unsending isn't available yet"), message: String(localized: "Instagram doesn't currently let apps unsend messages for you. Nothing was changed."), tone: .caution, action: .none)
+            return CleanupStatusCopy(headline: String(localized: "We couldn't unsend just now"), message: String(localized: "Instagram didn't let this cleanup continue. Nothing else was changed."), tone: .caution, action: .none)
         case .storageFailure:
             return CleanupStatusCopy(headline: String(localized: "We couldn't save your progress"), message: String(localized: "Free up some space on your phone, then try again. Nothing was sent that we couldn't track."), tone: .caution, action: .tryAgain)
         }

@@ -15,8 +15,8 @@ struct HomeView: View {
 
                 if let overview = model.overview {
                     counts(overview)
-                    if !model.env.isCleanupAvailable {
-                        UnavailableNotice()
+                    if !model.env.hasLiveSession {
+                        ReconnectNotice { model.beginLogin(.reconnect) }
                     }
                     actions(overview)
                 } else if model.isLoadingOverview {
@@ -26,9 +26,9 @@ struct HomeView: View {
                     Card {
                         Text("We couldn't read your DMs")
                             .font(.title(.headline))
-                        Text("Import your Instagram download again to continue.")
+                        Text("Connect Instagram again to continue.")
                             .foregroundStyle(Palette.secondaryInk)
-                        Button("Import again") { model.showConnect() }
+                        Button("Connect Instagram") { model.showConnect() }
                             .buttonStyle(.secondary)
                     }
                 }
@@ -114,7 +114,7 @@ struct HomeView: View {
             .disabled(overview.sentByOwner == 0)
             Button("See what's included") { model.sheet = .included }
                 .buttonStyle(.secondary)
-            Button("Import a newer download") { model.showConnect() }
+            Button("Refresh chats") { model.refreshChats() }
                 .buttonStyle(.text)
                 .padding(.top, Spacing.s)
         }
@@ -153,16 +153,20 @@ private struct PausedSessionCard: View {
     }
 }
 
-private struct UnavailableNotice: View {
+private struct ReconnectNotice: View {
+    var reconnect: () -> Void
+
     var body: some View {
         Card {
-            Label("Your scan is ready", systemImage: "checkmark.seal.fill")
+            Text("Instagram signed you out")
                 .font(.title(.headline))
                 .foregroundStyle(Palette.ink)
-            Text("Instagram doesn't currently let apps unsend messages for you, so cleaning isn't switched on in this version. Everything else works, and nothing leaves your phone.")
+            Text("Reconnect to keep cleaning. Your progress is still on this phone.")
                 .font(.subheadline)
                 .foregroundStyle(Palette.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
+            Button("Reconnect Instagram", action: reconnect)
+                .buttonStyle(.secondary)
         }
     }
 }

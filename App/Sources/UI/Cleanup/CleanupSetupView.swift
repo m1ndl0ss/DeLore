@@ -20,7 +20,7 @@ struct CleanupSetupView: View {
                 VStack(alignment: .leading, spacing: Spacing.l) {
                     scopeSection
                     ownershipCard
-                    if model.env.configuration.features.advancedFilters {
+                    if model.env.configuration.advancedFilters {
                         filtersSection
                     }
                 }

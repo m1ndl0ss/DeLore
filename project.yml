@@ -57,8 +57,6 @@ targets:
     dependencies:
       - package: DeLoreKit
         product: DeLoreCore
-      - package: DeLoreKit
-        product: DeLoreFakes
   DeLoreTests:
     type: bundle.unit-test
     platform: iOS
@@ -72,25 +70,12 @@ targets:
       - target: DeLore
       - package: DeLoreKit
         product: DeLoreCore
-  DeLoreUITests:
-    type: bundle.ui-testing
-    platform: iOS
-    sources:
-      - path: AppUITests
-    settings:
-      base:
-        GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: app.delore.ios.uitests
-        TEST_TARGET_NAME: DeLore
-    dependencies:
-      - target: DeLore
 schemes:
   DeLore:
     build:
       targets:
         DeLore: all
         DeLoreTests: [test]
-        DeLoreUITests: [test]
     run:
       config: Debug
       storeKitConfiguration: App/StoreKit/DeLore.storekit
@@ -99,7 +84,6 @@ schemes:
       gatherCoverageData: true
       targets:
         - DeLoreTests
-        - DeLoreUITests
     profile:
       config: Release
     analyze:

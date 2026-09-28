@@ -14,7 +14,7 @@ struct PrivacyView: View {
                 Card {
                     Text("What stays on this phone")
                         .font(.title(.headline))
-                    Text("Your chat names, and the date and type of each message you sent. Never what the messages say. It's encrypted by iOS, kept out of backups, and deleted when you tap Disconnect & delete my data.")
+                    Text("Your Instagram login for this app, your chat names, and the date and type of each message you sent. Never what the messages say. It's encrypted by iOS, kept out of backups, and deleted when you tap Disconnect & delete my data.")
                         .font(.subheadline)
                         .foregroundStyle(Palette.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
@@ -23,7 +23,7 @@ struct PrivacyView: View {
                 Card {
                     Text("What leaves this phone")
                         .font(.title(.headline))
-                    Text("Nothing from your DMs. We don't run servers that receive your data, and there's no tracking or ads. Purchases are handled by Apple.")
+                    Text("Cleanup talks to Instagram from this phone, the same way you would unsend a message yourself. Nothing from your DMs is sent to a DeLore server. There's no tracking or ads. Purchases are handled by Apple.")
                         .font(.subheadline)
                         .foregroundStyle(Palette.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
@@ -32,7 +32,7 @@ struct PrivacyView: View {
                 Card {
                     Text("Your password")
                         .font(.title(.headline))
-                    Text("We never ask for it. You download your data from Instagram yourself, then choose the file here.")
+                    Text("You type it into Instagram's own sign-in page. We never see it, we never store it, and it never leaves this phone through us. After you sign in, Instagram's session stays in the Keychain on this device until you disconnect.")
                         .font(.subheadline)
                         .foregroundStyle(Palette.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)

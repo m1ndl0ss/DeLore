@@ -6,6 +6,10 @@ struct CleanupRunView: View {
     let session: CleanupSessionModel
     @State private var confirmingCancel = false
 
+    private var loginBinding: Binding<AppModel.LoginPurpose?> {
+        Binding(get: { model.loginPurpose }, set: { model.loginPurpose = $0 })
+    }
+
     var body: some View {
         Group {
             if session.isFinished {
@@ -97,7 +101,7 @@ struct CleanupRunView: View {
             Spacer(minLength: Spacing.m)
 
             VStack(spacing: Spacing.s) {
-                Label("Keep the app open while cleaning.", systemImage: "iphone")
+                Label("Keep DeLore open while we clean.", systemImage: "iphone")
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Palette.secondaryInk)
                     .frame(maxWidth: .infinity)
@@ -121,6 +125,13 @@ struct CleanupRunView: View {
             Text("Messages already unsent stay unsent. The rest stay where they are.")
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: progress.status)
+        .fullScreenCover(item: loginBinding) { purpose in
+            InstagramLoginView(
+                onComplete: { session in model.handleLogin(session, purpose: purpose) },
+                onCancel: { model.cancelLogin() }
+            )
+            .environment(model)
+        }
     }
 
     @ViewBuilder
@@ -155,6 +166,18 @@ struct CleanupRunView: View {
             }
             .buttonStyle(.primary)
             .disabled(session.isBusy)
+        case .reconnect:
+            VStack(spacing: Spacing.s) {
+                Button("Reconnect Instagram") { model.beginLogin(.reconnect) }
+                    .buttonStyle(.primary)
+                    .accessibilityIdentifier("reconnectInstagram")
+                Button("I've signed in, continue") {
+                    Task { await session.resume(userResolvedIssue: true) }
+                }
+                .buttonStyle(.secondary)
+                .disabled(session.isBusy)
+                .accessibilityIdentifier("resume")
+            }
         case .none:
             EmptyView()
         }
@@ -242,16 +265,16 @@ struct CleanupUnavailableView: View {
                 Spacer()
                 CloseButton { dismiss() }
             }
-            Text("Unsending isn't available yet")
+            Text("Sign in to Instagram first")
                 .font(.display(.title))
                 .foregroundStyle(Palette.ink)
                 .accessibilityAddTraits(.isHeader)
-            Text("Instagram doesn't currently offer a way for apps to unsend your messages for you, and we won't use workarounds that could put your account at risk.")
+            Text("Cleaning uses Instagram's own Unsend action from this phone. Reconnect your account, then try again.")
                 .foregroundStyle(Palette.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             Card {
-                PromiseRow(symbol: "checkmark.seal.fill", title: "Your scan is ready", detail: "See exactly how much lore there is, chat by chat.")
-                PromiseRow(symbol: "lock.fill", title: "Still private", detail: "Nothing from your DMs left your phone.")
+                PromiseRow(symbol: "key.slash", title: "We never see your password", detail: "You sign in on Instagram's page.")
+                PromiseRow(symbol: "lock.fill", title: "Still private", detail: "Your login stays on this phone.")
             }
             Spacer()
             Button("Got it") { dismiss() }

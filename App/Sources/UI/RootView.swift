@@ -35,6 +35,21 @@ struct RootView: View {
                     .environment(model)
             }
         }
+        .fullScreenCover(item: $model.loginPurpose) { purpose in
+            InstagramLoginView(
+                onComplete: { session in model.handleLogin(session, purpose: purpose) },
+                onCancel: { model.cancelLogin() }
+            )
+            .environment(model)
+        }
+        .fullScreenCover(item: inboxSyncBinding) { sync in
+            InboxSyncView(sync: sync)
+                .environment(model)
+        }
+        .fullScreenCover(item: importBinding) { importModel in
+            ImportProgressView(importModel: importModel)
+                .environment(model)
+        }
         .onChange(of: scenePhase) { _, phase in
             guard let session = model.session else { return }
             Task { await session.scenePhaseChanged(phase) }
@@ -50,6 +65,14 @@ struct RootView: View {
             get: { model.session != nil && model.isSessionPresented },
             set: { model.isSessionPresented = $0 }
         )
+    }
+
+    private var inboxSyncBinding: Binding<InboxSyncModel?> {
+        Binding(get: { model.inboxSyncModel }, set: { if $0 == nil { model.dismissSync() } })
+    }
+
+    private var importBinding: Binding<ImportModel?> {
+        Binding(get: { model.importModel }, set: { if $0 == nil { model.dismissImport() } })
     }
 }
 

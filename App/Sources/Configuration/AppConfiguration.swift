@@ -15,20 +15,10 @@ struct AppConfiguration {
     let products: ProductCatalog
     let freeCleanupLimit: Int
     let analyticsEnabled: Bool
-
-    /// Official Instagram page where people request a copy of their information.
-    let instagramDownloadURL = URL(string: "https://accountscenter.instagram.com/info_and_permissions/dyi/")!
+    let advancedFilters: Bool
 
     /// Pacing for destructive requests. Tune here; the engine reads every limit from it.
     let ratePolicy: RatePolicy = .conservative
-
-    let features: FeatureFlags
-
-    struct FeatureFlags {
-        /// Sample-data mode for internal builds. Never available in Release.
-        let sampleDataMode: Bool
-        let advancedFilters: Bool
-    }
 
     static func load(from bundle: Bundle = .main) -> AppConfiguration {
         func string(_ key: String) -> String? {
@@ -39,11 +29,6 @@ struct AppConfiguration {
         }
 
         let environment = string("DLEnvironment").flatMap(AppEnvironmentKind.init(rawValue:)) ?? .release
-        #if DEBUG || STAGING
-        let sampleData = true
-        #else
-        let sampleData = false
-        #endif
 
         return AppConfiguration(
             environment: environment,
@@ -57,7 +42,7 @@ struct AppConfiguration {
             ),
             freeCleanupLimit: string("DLFreeCleanupLimit").flatMap(Int.init) ?? 50,
             analyticsEnabled: string("DLAnalyticsEnabled")?.uppercased() == "YES",
-            features: FeatureFlags(sampleDataMode: sampleData, advancedFilters: true)
+            advancedFilters: true
         )
     }
 }

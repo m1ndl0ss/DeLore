@@ -1,26 +1,38 @@
 import DeLoreCore
 import Foundation
 
-/// The single place where a live Instagram unsend integration plugs in.
+/// Wires the Instagram *website* session into the rest of the app.
 ///
-/// Instagram does not offer an official API that lets a third-party app unsend messages from
-/// a personal account. Every unofficial route we evaluated depends on impersonating
-/// Instagram's own apps (private endpoints, client identifiers, device signatures) and
-/// operating outside Meta's terms, which is exactly the kind of platform-evasion this product
-/// refuses to ship. So Release builds use `UnavailableUnsendService`: discovery, planning and
-/// the whole cleanup engine work, and the app tells people plainly that unsending isn't
-/// available yet instead of pretending.
+/// Architecture (same shape UnSendAll describes for iOS):
+/// 1. The user signs in through Instagram's own login page (shown in a WKWebView).
+/// 2. Session cookies stay on the device, in the Keychain.
+/// 3. Discovery and Unsend talk to Instagram's website using that session.
+/// 4. Nothing is sent to a DeLore server.
 ///
-/// To add an officially supported integration:
-/// 1. Implement `UnsendService` (and `MessageSource` if it also provides discovery) using
-///    `HTTPClient` + `URLSessionTransport`. Map responses with
-///    `NetworkError.integrationError(destructive:)` and add platform-specific signals
-///    (e.g. checkpoint bodies → `.verificationRequired`).
-/// 2. Keep any credential it needs in `SessionVault` (Keychain), never in UserDefaults.
-/// 3. Never retry inside `unsend`; the engine owns retries and reconciliation.
-/// 4. Return it from `makeUnsendService`.
+/// We use Instagram's published website client id (`APP_ID` on instagram.com), not a
+/// spoofed iOS/Android app identity. Challenges, CAPTCHAs and checkpoints are shown
+/// in Instagram's page or stop the job — they are never solved or bypassed.
 enum LiveIntegration {
+    static func makeAPIClient(sessionVault: SessionVault, logger: AppLogger) -> InstagramAPIClient {
+        InstagramHTTPClient(
+            transport: URLSessionTransport(),
+            sessionProvider: { try sessionVault.loadSession() },
+            logger: logger
+        )
+    }
+
     static func makeUnsendService(sessionVault: SessionVault, logger: AppLogger) -> UnsendService {
-        UnavailableUnsendService()
+        let client = makeAPIClient(sessionVault: sessionVault, logger: logger)
+        return InstagramWebUnsendService(
+            client: client,
+            ownerID: { try sessionVault.loadSession()?.userID }
+        )
+    }
+
+    static func makeInboxSync(sessionVault: SessionVault, library: LocalLibraryStore, logger: AppLogger) -> InstagramInboxSync {
+        InstagramInboxSync(
+            client: makeAPIClient(sessionVault: sessionVault, logger: logger),
+            library: library
+        )
     }
 }
