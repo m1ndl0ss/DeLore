@@ -47,26 +47,30 @@ jobs:
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
       - name: Unit & UI tests (Debug, simulator)
         run: |
-          set -o pipefail
+          set +e
           xcodebuild test \
             -project DeLore.xcodeproj \
             -scheme DeLore \
             -destination "id=${{ steps.sim.outputs.udid }}" \
             -resultBundlePath TestResults.xcresult \
             -skipPackagePluginValidation \
-            | tee xcodebuild-test.log | grep -E "error:|warning: .*(concurren|Sendable|actor)|Test Case .* failed|Executed|\*\* TEST" || true
-          test ${PIPESTATUS[0]} -eq 0
+            > xcodebuild-test.log 2>&1
+          status=$?
+          grep -E "error:|warning: .*(concurren|Sendable|actor-isolated|data race)|Test Case .* (passed|failed)|Executed|\*\* TEST" xcodebuild-test.log | head -300
+          exit $status
       - name: Release build (device, unsigned)
         run: |
-          set -o pipefail
+          set +e
           xcodebuild build \
             -project DeLore.xcodeproj \
             -scheme DeLore \
             -configuration Release \
             -destination "generic/platform=iOS" \
             CODE_SIGNING_ALLOWED=NO \
-            | tee xcodebuild-release.log | grep -E "error:|\*\* BUILD" || true
-          test ${PIPESTATUS[0]} -eq 0
+            > xcodebuild-release.log 2>&1
+          status=$?
+          grep -E "error:|warning: |\*\* BUILD" xcodebuild-release.log | head -200
+          exit $status
       - name: Check release binary has no test-only code paths
         run: |
           APP=$(find ~/Library/Developer/Xcode/DerivedData -path "*Release-iphoneos/DeLore.app" -type d | head -1)
@@ -103,6 +107,6 @@ jobs:
           fi
       - name: No UserDefaults in secret paths
         run: |
-          if grep -rn "UserDefaults" Packages/DeLoreKit/Sources/DeLoreCore/Security; then
+          if grep -rnE "UserDefaults[.(]|: *UserDefaults" Packages/DeLoreKit/Sources/DeLoreCore/Security App/Sources/Purchases/PurchaseService.swift; then
             echo "Secrets must not touch UserDefaults"; exit 1
           fi

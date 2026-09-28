@@ -16,7 +16,8 @@ final class EntitlementManager {
     private let service: PurchaseService
     private let ledger: PassLedger
     private let analytics: Analytics
-    private var updatesTask: Task<Void, Never>?
+    /// Only touched on the main actor, plus `deinit` once no other reference exists.
+    @ObservationIgnored private nonisolated(unsafe) var updatesTask: Task<Void, Never>?
 
     init(service: PurchaseService, ledger: PassLedger, freeLimit: Int, analytics: Analytics) {
         self.service = service

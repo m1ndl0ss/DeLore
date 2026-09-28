@@ -15,7 +15,8 @@ final class CleanupSessionModel: Identifiable {
 
     private let engine: CleanupEngine
     private let entitlements: EntitlementManager
-    private var observation: Task<Void, Never>?
+    /// Only touched on the main actor, plus `deinit` once no other reference exists.
+    @ObservationIgnored private nonisolated(unsafe) var observation: Task<Void, Never>?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var finishHandled = false
 
