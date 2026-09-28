@@ -15,7 +15,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Swift version
         run: swift --version
       - name: Test DeLoreKit
@@ -26,7 +26,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate project
@@ -78,9 +78,22 @@ jobs:
           if strings "$APP/DeLore" | grep -q -- "-uitesting"; then
             echo "UI-testing hook compiled into Release"; exit 1
           fi
+      - name: Export UI screenshots
+        if: always()
+        run: |
+          mkdir -p screenshots
+          xcrun xcresulttool export attachments --path TestResults.xcresult --output-path screenshots || true
+          ls screenshots | head -50
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: ui-screenshots
+          path: screenshots
+          retention-days: 7
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ios-logs
           path: |
@@ -93,7 +106,7 @@ jobs:
     name: Secrets & logging review
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: No committed secrets
         run: |
           if grep -rInE "(sessionid=|csrftoken=|BEGIN (RSA|EC|OPENSSH) PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|xox[baprs]-)" \
@@ -107,6 +120,7 @@ jobs:
           fi
       - name: No UserDefaults in secret paths
         run: |
-          if grep -rnE "UserDefaults[.(]|: *UserDefaults" Packages/DeLoreKit/Sources/DeLoreCore/Security App/Sources/Purchases/PurchaseService.swift; then
+          # Code lines only; doc comments may mention UserDefaults.
+          if grep -rnE "UserDefaults" Packages/DeLoreKit/Sources/DeLoreCore/Security App/Sources/Purchases/PurchaseService.swift | grep -vE "^[^:]+:[0-9]+:\s*//"; then
             echo "Secrets must not touch UserDefaults"; exit 1
           fi
