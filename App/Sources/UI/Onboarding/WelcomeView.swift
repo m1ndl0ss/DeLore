@@ -20,10 +20,11 @@ struct WelcomeView: View {
                         Text("lore")
                             .overlay(alignment: .leading) {
                                 GeometryReader { proxy in
+                                    let thickness = max(8, proxy.size.height * 0.16)
                                     Capsule()
                                         .fill(Palette.volt)
-                                        .frame(width: struck ? proxy.size.width : 0, height: max(8, proxy.size.height * 0.16))
-                                        .offset(y: proxy.size.height * 0.5)
+                                        .frame(width: struck ? proxy.size.width : 0, height: thickness)
+                                        .offset(y: proxy.size.height * 0.55 - thickness / 2)
                                 }
                                 .accessibilityHidden(true)
                             }

@@ -72,9 +72,15 @@ struct HomeView: View {
                 .foregroundStyle(Palette.ink)
                 .contentTransition(.numericText())
                 .accessibilityIdentifier("messageCount")
-            Text("^[\(overview.sentByOwner) message](inflect: true) you sent, across ^[\(overview.cleanableConversations.count) chat](inflect: true).")
-                .font(.body)
-                .foregroundStyle(Palette.secondaryInk)
+            Group {
+                if overview.sentByOwner == 1 {
+                    Text("message you sent, across ^[\(overview.cleanableConversations.count) chat](inflect: true).")
+                } else {
+                    Text("messages you sent, across ^[\(overview.cleanableConversations.count) chat](inflect: true).")
+                }
+            }
+            .font(.body)
+            .foregroundStyle(Palette.secondaryInk)
             if let quip = quip(for: overview.sentByOwner) {
                 Text(quip)
                     .font(.system(.subheadline, design: .rounded, weight: .bold))
@@ -101,15 +107,13 @@ struct HomeView: View {
                 .buttonStyle(.primary)
                 .disabled(overview.sentByOwner == 0)
                 .accessibilityIdentifier("cleanUp")
-            HStack(spacing: Spacing.s) {
-                Button("Choose chats") {
-                    if model.hasUnfinishedSession { model.openSetup(.everything) } else { model.sheet = .chooseChats }
-                }
-                .buttonStyle(.secondary)
-                .disabled(overview.sentByOwner == 0)
-                Button("See what's included") { model.sheet = .included }
-                    .buttonStyle(.secondary)
+            Button("Choose chats") {
+                if model.hasUnfinishedSession { model.openSetup(.everything) } else { model.sheet = .chooseChats }
             }
+            .buttonStyle(.secondary)
+            .disabled(overview.sentByOwner == 0)
+            Button("See what's included") { model.sheet = .included }
+                .buttonStyle(.secondary)
             Button("Import a newer download") { model.showConnect() }
                 .buttonStyle(.text)
                 .padding(.top, Spacing.s)

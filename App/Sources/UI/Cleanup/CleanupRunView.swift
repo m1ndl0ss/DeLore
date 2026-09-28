@@ -175,8 +175,11 @@ struct CleanupDoneView: View {
         VStack(spacing: Spacing.l) {
             Spacer()
 
-            Text(wasCancelled ? "🧹" : "✨")
-                .font(.system(size: 88))
+            Image(systemName: wasCancelled ? "stop.fill" : "checkmark")
+                .font(.system(size: 52, weight: .black))
+                .foregroundStyle(Palette.onVolt)
+                .frame(width: 128, height: 128)
+                .background(Circle().fill(Palette.volt))
                 .scaleEffect(appeared ? 1 : 0.4)
                 .opacity(appeared ? 1 : 0)
                 .accessibilityHidden(true)

@@ -84,7 +84,9 @@ public actor CleanupEngine {
             counts[items[index].state, default: 0] += 1
         }
 
-        if job.status == .running {
+        // A fresh engine means a fresh process: whatever was running (or waiting for the app to
+        // come back) was interrupted by termination.
+        if job.status == .running || job.status == .paused(.appInBackground) {
             job.status = .paused(.interrupted)
             try deps.store.updateJob(job)
         }

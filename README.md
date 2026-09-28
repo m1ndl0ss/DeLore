@@ -182,7 +182,7 @@ samples. No throughput is ever promised in the UI. The values can be tuned in
 ## Testing
 
 ```bash
-swift test --package-path Packages/DeLoreKit        # 75 core tests (any OS)
+swift test --package-path Packages/DeLoreKit        # 76 core tests (any OS)
 xcodegen generate && xcodebuild test -scheme DeLore \
   -destination 'platform=iOS Simulator,name=iPhone 16'   # app unit + UI tests
 ```

@@ -231,6 +231,22 @@ final class CleanupEngineTests: XCTestCase {
         XCTAssertTrue(harness.fake.repeatedUnsends.isEmpty)
     }
 
+    func testTerminationWhileBackgroundedRestoresAsInterrupted() async throws {
+        let harness = EngineHarness()
+        try await harness.buildJob()
+        let engine = try await harness.makeEngine()
+        harness.fake.onUnsend { call in
+            if call == 3 { await engine.suspendForBackground() }
+        }
+        _ = try await harness.runToStop(engine)
+        harness.fake.onUnsend(nil)
+
+        let relaunched = try XCTUnwrap(try CleanupEngine.loadActive(dependencies: harness.dependencies))
+        let restored = await relaunched.progress()
+        XCTAssertEqual(restored.status, .paused(.interrupted))
+        XCTAssertEqual(restored.completed, 3)
+    }
+
     func testTornJournalWriteIsIgnoredOnLoad() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

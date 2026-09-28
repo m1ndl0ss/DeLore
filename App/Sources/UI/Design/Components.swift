@@ -114,6 +114,8 @@ struct Pill: View {
         Text(text)
             .font(.system(.caption, design: .rounded, weight: .heavy))
             .textCase(.uppercase)
+            .lineLimit(1)
+            .fixedSize()
             .foregroundStyle(filled ? Palette.onVolt : Palette.ink)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
