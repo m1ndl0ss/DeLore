@@ -58,14 +58,12 @@ public actor CleanupEngine {
 
     /// Restores an engine from persisted state, recovering from any interrupted run.
     public init(persisted: PersistedJob, dependencies: CleanupEngineDependencies) throws {
-        deps = dependencies
-        logger = dependencies.logger.scoped("engine")
-        throttler = Throttler(policy: dependencies.policy)
-        job = persisted.job
-        items = persisted.items
-
+        var job = persisted.job
+        var items = persisted.items
         guard items.count == job.itemCount else { throw JobStoreError.corrupted }
 
+        var retryIndices = Set<Int>()
+        var counts: [CleanupItemState: Int] = [:]
         for index in items.indices {
             switch items[index].state {
             case .processing:
@@ -73,10 +71,10 @@ public actor CleanupEngine {
                 items[index].state = .retryWait
                 items[index].needsReconcile = true
                 items[index].nextAttemptAt = nil
-                try deps.store.record(items[index])
+                try dependencies.store.record(items[index])
             case .discovered:
                 items[index].state = .queued
-                try deps.store.record(items[index])
+                try dependencies.store.record(items[index])
             default:
                 break
             }
@@ -88,8 +86,16 @@ public actor CleanupEngine {
         // come back) was interrupted by termination.
         if job.status == .running || job.status == .paused(.appInBackground) {
             job.status = .paused(.interrupted)
-            try deps.store.updateJob(job)
+            try dependencies.store.updateJob(job)
         }
+
+        deps = dependencies
+        logger = dependencies.logger.scoped("engine")
+        throttler = Throttler(policy: dependencies.policy)
+        self.job = job
+        self.items = items
+        self.retryIndices = retryIndices
+        self.counts = counts
     }
 
     public static func loadActive(dependencies: CleanupEngineDependencies) throws -> CleanupEngine? {
