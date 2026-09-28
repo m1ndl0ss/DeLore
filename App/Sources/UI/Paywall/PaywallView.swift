@@ -158,13 +158,12 @@ private struct PlanCard: View {
                 .foregroundStyle(isSelected ? Palette.onVolt : Palette.secondaryInk)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: Spacing.xs) {
-                    Text(title)
-                        .font(.title(.headline))
-                    if product.kind == .proYearly {
-                        Pill(text: "Best value", filled: !isSelected)
-                    }
+                if product.kind == .proYearly {
+                    Pill(text: "Best value", filled: !isSelected)
+                        .padding(.bottom, 2)
                 }
+                Text(title)
+                    .font(.title(.headline))
                 Text(subtitle)
                     .font(.subheadline)
                     .opacity(0.75)
