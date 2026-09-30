@@ -45,7 +45,6 @@ fun InstagramLoginScreen(
     var working by remember { mutableStateOf(true) }
     BackHandler(onBack = onCancel)
     Box(Modifier.fillMaxSize()) {
-        MeshBackground()
         Column(
             Modifier
                 .fillMaxSize()
@@ -140,7 +139,7 @@ private fun captureCookies(finished: AtomicBoolean, onComplete: (InstagramWebSes
 private fun readInstagramCookies(): List<InstagramWebSession.Cookie> {
     val manager = CookieManager.getInstance()
     val seen = LinkedHashMap<String, InstagramWebSession.Cookie>()
-    for (host in listOf("https://www.instagram.com", "https://instagram.com")) {
+    for (host in listOf("https://www.instagram.com", "https://instagram.com", "https://i.instagram.com")) {
         val header = manager.getCookie(host) ?: continue
         for (part in header.split(";")) {
             val trimmed = part.trim()

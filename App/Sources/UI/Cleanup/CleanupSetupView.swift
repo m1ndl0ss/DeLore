@@ -60,6 +60,7 @@ struct CleanupSetupView: View {
             .sheet(isPresented: $showingPaywall) {
                 PaywallView(context: .filters)
                     .environment(model)
+                    .presentationBackground(Palette.background)
             }
             .alert("Something went wrong", isPresented: failedBinding) {
                 Button("OK", role: .cancel) {}

@@ -4,8 +4,10 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -49,7 +51,6 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -96,8 +97,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -115,6 +116,7 @@ import app.delore.android.Sheet
 import app.delore.android.StatusCopy
 import app.delore.android.StatusCopyFactory
 import app.delore.android.SyncPauseKind
+import app.delore.android.TermsPrompt
 import app.delore.android.billing.PurchaseOutcome
 import app.delore.android.billing.StoreProduct
 import app.delore.android.domain.CleanupAllowanceDecision
@@ -154,12 +156,24 @@ fun DeLoreRoot(model: AppViewModel) {
             secondary = Palette.lilac,
         ),
     ) {
-        Box(Modifier.fillMaxSize()) {
-            MeshBackground()
+        Box(Modifier.fillMaxSize().background(Palette.backgroundDark)) {
+            MeshBackground(Modifier.fillMaxSize())
             InstagramBrowserHost(model.environment.webBrowser)
+            val covering = state.loginPurpose != null ||
+                state.termsPrompt != null ||
+                state.syncing ||
+                state.syncErrorTitle != null ||
+                (state.sessionPresented && state.progress != null)
             when (state.route) {
                 Route.LAUNCHING -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Wordmark() }
-                Route.HOME -> MainTabs(model)
+                Route.HOME -> if (!covering) MainTabs(model)
+            }
+            if (state.termsPrompt != null) {
+                TermsAcceptScreen(
+                    reminder = state.termsPrompt == TermsPrompt.REMINDER,
+                    onPrimary = { dontShow -> model.acceptTermsPrompt(dontShow) },
+                    onCancel = { model.cancelTermsPrompt() },
+                )
             }
             if (state.loginPurpose != null) {
                 InstagramLoginScreen(
@@ -167,13 +181,15 @@ fun DeLoreRoot(model: AppViewModel) {
                     onCancel = { model.cancelLogin() },
                 )
             }
-            if (state.syncing || state.syncErrorTitle != null) {
-                InboxSyncScreen(model)
-            }
             if (state.sessionPresented && state.progress != null) {
                 CleanupRunScreen(model)
             }
-            state.sheet?.let { SheetHost(model, it) }
+            if (!state.syncing && state.syncErrorTitle == null) {
+                state.sheet?.let { SheetHost(model, it) }
+            }
+            if (state.syncing || state.syncErrorTitle != null) {
+                InboxSyncScreen(model)
+            }
         }
     }
 }
@@ -198,7 +214,7 @@ private fun MainTabs(model: AppViewModel) {
             Column {
                 Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.hairlineDark))
                 NavigationBar(
-                containerColor = Palette.backgroundDark,
+                containerColor = Palette.backgroundDark.copy(alpha = 0.62f),
                 tonalElevation = 0.dp,
             ) {
                 listOf(
@@ -239,7 +255,6 @@ private fun MainTabs(model: AppViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AccountScreen(model: AppViewModel) {
-    val uri = LocalUriHandler.current
     var confirmErase by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { model.reloadOverview() }
     Column(
@@ -296,9 +311,9 @@ private fun AccountScreen(model: AppViewModel) {
         Column(Modifier.clip(RoundedCornerShape(Radius.m)).background(Palette.surface())) {
             YouRow("Privacy") { model.showSheet(Sheet.Privacy) }
             YouDivider()
-            YouRow("Support") { uri.openUri(BuildConfig.SUPPORT_URL) }
+            YouRow("Support") { model.showSheet(Sheet.Support) }
             YouDivider()
-            YouRow("Terms") { uri.openUri(BuildConfig.TERMS_URL) }
+            YouRow("Terms") { model.showSheet(Sheet.Terms) }
         }
         Box(
             Modifier
@@ -456,7 +471,6 @@ private fun InboxSyncScreen(model: AppViewModel) {
             .fillMaxSize()
             .clickable(indication = null, interactionSource = consumeClicks) {},
     ) {
-        MeshBackground()
         Column(
             Modifier
                 .fillMaxSize()
@@ -470,8 +484,12 @@ private fun InboxSyncScreen(model: AppViewModel) {
                 Spacer(Modifier.weight(1f))
                 CloseButton { model.dismissSync() }
             }
-            val titles = state.inboxRead.foundTitles.ifEmpty {
-                state.overview?.conversations?.map { it.title }.orEmpty()
+            val titles = if (state.inboxRead.isListing) {
+                state.inboxRead.foundTitles.ifEmpty {
+                    state.overview?.conversations?.map { it.title }.orEmpty()
+                }
+            } else {
+                state.inboxRead.foundTitles
             }
             if (state.syncErrorTitle != null) {
                 Spacer(Modifier.height(Spacing.m))
@@ -486,39 +504,34 @@ private fun InboxSyncScreen(model: AppViewModel) {
                 }
             } else {
                 val read = state.inboxRead
-                val numbers = NumberFormat.getIntegerInstance(Locale.US)
                 Spacer(Modifier.height(Spacing.s))
-                Text(
-                    if (read.isComplete) "All set" else if (read.isListing) "Finding who you talked to…" else "Reading selected chats…",
-                    color = Palette.ink(),
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 20.sp,
-                    textAlign = TextAlign.Center,
-                )
-                Text(
-                    if (read.isListing) "${numbers.format(read.chatsFound)} people so far"
-                    else "${numbers.format(read.chatsRead)} / ${numbers.format(read.chatsTotal ?: 0)} chats",
-                    color = Palette.accent,
-                    fontFamily = Type.sans,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                )
-                Spacer(Modifier.height(Spacing.s))
-                LoreProgressBar(read.fraction)
-                if (read.sendsFound > 0) {
+                Appear {
                     Text(
-                        "${numbers.format(read.sendsFound)} of your sends",
-                        color = Palette.secondaryInk(),
-                        fontFamily = Type.sans,
-                        fontSize = 13.sp,
+                        if (read.isComplete) "All set" else read.headline,
+                        color = Palette.ink(),
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 20.sp,
+                        textAlign = TextAlign.Center,
                     )
                 }
+                Appear(80) {
+                    Text(
+                        read.detail,
+                        color = Palette.accent,
+                        fontFamily = Type.sans,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                    )
+                }
+                Spacer(Modifier.height(Spacing.s))
+                LoreProgressBar(read.fraction)
             }
             Spacer(Modifier.height(Spacing.m))
             Text(
                 when {
                     titles.isEmpty() && state.syncErrorTitle == null -> "Names land here as we find them"
                     state.syncErrorTitle != null -> "Kept on this phone · ${titles.size}"
+                    !state.inboxRead.isListing -> state.inboxRead.displayChat ?: "This chat"
                     else -> "Found so far · ${titles.size}"
                 },
                 color = Palette.secondaryInk(),
@@ -735,11 +748,14 @@ private fun SheetHost(model: AppViewModel, sheet: Sheet) {
     ModalBottomSheet(
         onDismissRequest = { model.showSheet(null) },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Palette.background(),
+        containerColor = if (sheet is Sheet.Paywall) Palette.backgroundDark else Palette.backgroundDark.copy(alpha = 0.78f),
+        scrimColor = Color.Black.copy(alpha = 0.42f),
     ) {
         when (sheet) {
             Sheet.Settings -> SettingsSheet(model)
             Sheet.Privacy -> PrivacySheet()
+            Sheet.Support -> FAQSheet()
+            Sheet.Terms -> TermsSheet()
             Sheet.ChooseChats -> state.overview?.let { ChooseChatsSheet(model, it) }
             Sheet.Included -> state.overview?.let { IncludedSheet(it) }
             is Sheet.Setup -> state.overview?.let { CleanupSetupSheet(model, it, sheet.scope) }
@@ -751,7 +767,6 @@ private fun SheetHost(model: AppViewModel, sheet: Sheet) {
 
 @Composable
 private fun SettingsSheet(model: AppViewModel) {
-    val uri = LocalUriHandler.current
     var confirmErase by remember { mutableStateOf(false) }
     Column(Modifier.verticalScroll(rememberScrollState()).padding(Spacing.screen)) {
         Text("Your plan", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
@@ -777,14 +792,14 @@ private fun SettingsSheet(model: AppViewModel) {
             }
         }
         Spacer(Modifier.height(Spacing.l))
-        QuietButton("Support") { uri.openUri(BuildConfig.SUPPORT_URL) }
-        QuietButton("Privacy policy") { uri.openUri(BuildConfig.PRIVACY_URL) }
-        QuietButton("Terms of use") { uri.openUri(BuildConfig.TERMS_URL) }
+        QuietButton("Support") { model.showSheet(Sheet.Support) }
+        QuietButton("Privacy policy") { model.showSheet(Sheet.Privacy) }
+        QuietButton("Terms of use") { model.showSheet(Sheet.Terms) }
         Spacer(Modifier.height(Spacing.l))
         QuietButton("Disconnect & delete my data", tint = Palette.danger()) { confirmErase = true }
         Text("Removes your chats, Instagram login, cleanup progress and everything else stored on this phone. Purchases stay with your Google account.", color = Palette.secondaryInk(), fontSize = 12.sp)
         Spacer(Modifier.height(Spacing.m))
-        Text("Retract ${BuildConfig.VERSION_NAME} · No analytics. Not affiliated with Instagram or Meta.", color = Palette.secondaryInk(), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        Text("Retract ${BuildConfig.VERSION_NAME} · No analytics. Not affiliated with Instagram or Meta. We are not responsible for anything that happens to your Instagram account.", color = Palette.secondaryInk(), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(Spacing.xl))
     }
     if (confirmErase) {
@@ -804,31 +819,6 @@ private fun SettingsSheet(model: AppViewModel) {
 }
 
 @Composable
-private fun PrivacySheet() {
-    Column(Modifier.verticalScroll(rememberScrollState()).padding(Spacing.screen), verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
-        Text("Privacy", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
-        PromiseRow(Icons.Filled.PhoneAndroid, "Your Instagram content is processed on your phone.")
-        PromiseRow(Icons.Filled.Lock, "We don't sell or store your messages.")
-        PromiseRow(Icons.Filled.Visibility, "We don't need your message content to provide the cleanup.")
-        PromiseRow(Icons.Filled.BarChart, "No analytics. No identifiers sent to us.")
-        Card {
-            Text("What stays on this phone", color = Palette.ink(), fontWeight = FontWeight.Bold)
-            Text("Your Instagram login for this app, your chat names, and the date and type of each message you sent. Never what the messages say. It's encrypted on this device and deleted when you tap Disconnect & delete my data.", color = Palette.secondaryInk())
-        }
-        Card {
-            Text("What leaves this phone", color = Palette.ink(), fontWeight = FontWeight.Bold)
-            Text("Cleanup talks to Instagram from this phone, the same way you would unsend a message yourself. Nothing from your DMs is sent to a Retract server. We don't collect analytics, advertising IDs, or other identifiers. There's no tracking or ads. Purchases are handled by Google Play.", color = Palette.secondaryInk())
-        }
-        Card {
-            Text("Your password", color = Palette.ink(), fontWeight = FontWeight.Bold)
-            Text("You type it into Instagram's own sign-in page. We never see it, we never store it, and it never leaves this phone through us.", color = Palette.secondaryInk())
-        }
-        Text("Retract isn't affiliated with, endorsed by, or connected to Instagram or Meta.", color = Palette.secondaryInk(), fontSize = 13.sp)
-        Spacer(Modifier.height(Spacing.xl))
-    }
-}
-
-@Composable
 private fun IncludedSheet(overview: LibraryOverview) {
     Column(Modifier.verticalScroll(rememberScrollState()).padding(Spacing.screen), verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
         Text("What's included", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
@@ -838,6 +828,8 @@ private fun IncludedSheet(overview: LibraryOverview) {
             KindLine("Photos & videos", overview.sentByKind[MessageKind.MEDIA] ?: 0)
             KindLine("Links & shared posts", overview.sentByKind[MessageKind.LINK] ?: 0)
             KindLine("Voice messages", overview.sentByKind[MessageKind.VOICE] ?: 0)
+            val other = overview.sentByKind[MessageKind.OTHER] ?: 0
+            if (other > 0) KindLine("Everything else", other)
         }
         Card {
             Text("Messages from others: never touched", color = Palette.ink(), fontWeight = FontWeight.Bold)
@@ -860,8 +852,16 @@ private fun KindLine(title: String, count: Int) {
 @Composable
 private fun ChooseChatsSheet(model: AppViewModel, overview: LibraryOverview) {
     var selection by remember { mutableStateOf(setOf<ConversationID>()) }
-    val chats = overview.cleanableConversations.sortedByDescending { it.sentByOwner }
-    val selectedCount = overview.cleanableConversations.filter { it.id in selection }.sumOf { it.sentByOwner }
+    val chats = overview.conversations
+        .filter { !it.messagesLoaded || it.isCleanable }
+        .sortedByDescending { if (it.messagesLoaded) it.sentByOwner else Int.MAX_VALUE - 1 }
+    val unreadSelected = chats.count { it.id in selection && !it.messagesLoaded }
+    val loadedSelected = chats.filter { it.id in selection && it.messagesLoaded }.sumOf { it.sentByOwner }
+    val buttonLabel = when {
+        selection.isEmpty() -> "Pick at least one chat"
+        unreadSelected > 0 -> "Read ${inflect(unreadSelected, "chat")}"
+        else -> "Continue with ${inflect(loadedSelected, "message")}"
+    }
     Column(Modifier.fillMaxSize().padding(Spacing.screen)) {
         Text("Choose chats", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
         Spacer(Modifier.height(Spacing.m))
@@ -873,9 +873,12 @@ private fun ChooseChatsSheet(model: AppViewModel, overview: LibraryOverview) {
             }
         }
         PrimaryButton(
-            if (selection.isEmpty()) "Pick at least one chat" else "Continue with ${inflect(selectedCount, "message")}",
+            buttonLabel,
             enabled = selection.isNotEmpty(),
-        ) { model.openSetup(CleanupScope.Conversations(selection)) }
+        ) {
+            model.showSheet(null)
+            model.retractWith(selection)
+        }
         Spacer(Modifier.height(Spacing.m))
     }
 }
@@ -912,46 +915,57 @@ private fun OverlayChoiceRow(primary: String, onPrimary: () -> Unit, secondary: 
 
 @Composable
 private fun FoundPersonRow(name: String, newest: Boolean) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (newest) Palette.surfaceElevated else Palette.surface())
-            .then(
-                if (newest) Modifier.border(1.dp, Palette.accent.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
-                else Modifier,
-            )
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Box(
+    val reduce = reduceMotion()
+    val clock = rememberInfiniteTransition(label = "found-row")
+    val glow by clock.animateFloat(
+        initialValue = 0.22f,
+        targetValue = 0.55f,
+        animationSpec = infiniteRepeatable(tween(900, easing = EaseInOut), RepeatMode.Reverse),
+        label = "found-glow",
+    )
+    val highlight = if (newest && !reduce) glow else 0.22f
+    Appear(if (newest) 0 else 40) {
+        Row(
             Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(Palette.accent.copy(alpha = 0.22f)),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (newest) Palette.surfaceElevated else Palette.surface())
+                .then(
+                    if (newest) Modifier.border(1.dp, Palette.accent.copy(alpha = highlight), RoundedCornerShape(12.dp))
+                    else Modifier,
+                )
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            Box(
+                Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(Palette.accent.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    personInitial(name),
+                    color = Palette.accent,
+                    fontFamily = Type.sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                )
+            }
             Text(
-                personInitial(name),
-                color = Palette.accent,
+                name,
+                color = Palette.ink(),
                 fontFamily = Type.sans,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
+                fontSize = 16.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
-        }
-        Text(
-            name,
-            color = Palette.ink(),
-            fontFamily = Type.sans,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 16.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (newest) {
-            Text("new", color = Palette.accent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+            if (newest) {
+                Text("new", color = Palette.accent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+            }
         }
     }
 }
@@ -963,9 +977,14 @@ private fun personInitial(name: String): String {
 
 @Composable
 private fun ChatRow(chat: ConversationSummary, selected: Boolean, onClick: () -> Unit) {
+    val scale by animateFloatAsState(if (selected) 1.02f else 1f, tween(180), label = "chat-scale")
     Row(
         Modifier
             .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clip(RoundedCornerShape(16.dp))
             .background(if (selected) Palette.surfaceElevated else Palette.surface())
             .border(
@@ -1116,7 +1135,9 @@ private fun CleanupSetupSheet(model: AppViewModel, overview: LibraryOverview, sc
         Spacer(Modifier.height(Spacing.xl))
     }
     if (showPaywall) {
-        PaywallSheet(model)
+        Box(Modifier.fillMaxSize().background(Palette.backgroundDark)) {
+            PaywallSheet(model)
+        }
     }
     if (showDate) {
         val picker = rememberDatePickerState(initialSelectedDateMillis = setup.cutoff)
@@ -1166,7 +1187,8 @@ private fun ConfirmBlock(model: AppViewModel, setup: CleanupSetupState, prepared
         PromiseRow(Icons.Filled.Visibility, "Unsent messages may already have been seen, copied, screenshotted, or retained elsewhere.")
         PromiseRow(Icons.Filled.Refresh, "This can't be undone.")
         PromiseRow(Icons.Filled.Person, "Only messages you sent.", "Never anyone else's.")
-        PromiseRow(Icons.Filled.Shield, "Slow on purpose.", "We pace things to keep your account safe, so big cleanups can take hours. Keep the app open while cleaning.")
+        PromiseRow(Icons.Filled.Shield, "Slow on purpose.", "We pace unsends because Instagram rate-limits. Big cleanups can take hours. Keep the app open. That does not protect your account.")
+        PromiseRow(Icons.Filled.Warning, "We are not responsible for anything.", LegalCopy.NOT_RESPONSIBLE)
     }
     Spacer(Modifier.height(Spacing.m))
     when (decision) {
@@ -1192,7 +1214,6 @@ private fun ConfirmBlock(model: AppViewModel, setup: CleanupSetupState, prepared
             }
         }
         is CleanupAllowanceDecision.Allowed -> {
-            if (decision.consumesPass) Text("Uses your one-time cleanup", color = Palette.secondaryInk())
             PrimaryButton("Start cleaning") {
                 scope.launch { model.startCleanup(PreparedCleanup(prepared.job, decision)) }
             }
@@ -1255,13 +1276,13 @@ private fun PaywallSheet(model: AppViewModel) {
 @Composable
 private fun PaywallContent(model: AppViewModel, embedded: Boolean) {
     val activity = LocalContext.current.findActivity()
-    val uri = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     val plans = model.entitlements.products
         .filter { it.kind == StoreProduct.Kind.YEARLY || it.kind == StoreProduct.Kind.MONTHLY }
         .sortedBy { if (it.kind == StoreProduct.Kind.YEARLY) 0 else 1 }
     var selected by remember { mutableStateOf(plans.firstOrNull { it.kind == StoreProduct.Kind.YEARLY }?.id) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var legal by remember { mutableStateOf<String?>(null) }
     val reduce = reduceMotion()
     val glowPulse by rememberInfiniteTransition(label = "planGlow").animateFloat(
         initialValue = 0.7f,
@@ -1294,15 +1315,19 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean) {
             }
         }
     }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .then(if (embedded) Modifier.statusBarsPadding() else Modifier)
-            .verticalScroll(rememberScrollState())
-            .padding(Spacing.screen)
-            .padding(bottom = Spacing.xl),
-        verticalArrangement = Arrangement.spacedBy(Spacing.m),
-    ) {
+    when (legal) {
+        "terms" -> TermsSheet(onBack = { legal = null })
+        "privacy" -> PrivacySheet(onBack = { legal = null })
+        else -> Column(
+            Modifier
+                .fillMaxWidth()
+                .background(Palette.backgroundDark)
+                .then(if (embedded) Modifier.statusBarsPadding() else Modifier)
+                .verticalScroll(rememberScrollState())
+                .padding(Spacing.screen)
+                .padding(bottom = Spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(Spacing.m),
+        ) {
         Text("Go Pro", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 26.sp, lineHeight = 32.sp)
         Text(
             if (model.entitlements.isPro) "You're on Pro" else "Unlimited unsends. Pick a plan.",
@@ -1310,6 +1335,9 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean) {
             fontFamily = Type.sans,
             fontSize = 15.sp,
         )
+        if (!model.entitlements.isPro) {
+            Text(LegalCopy.NOT_RESPONSIBLE, color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 14.sp)
+        }
         when {
             model.entitlements.isLoadingProducts && plans.isEmpty() -> {
                 CircularProgressIndicator(color = Palette.accent, modifier = Modifier.align(Alignment.CenterHorizontally))
@@ -1347,8 +1375,9 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean) {
                     if (ok && model.entitlements.isPro) model.showSheet(null)
                 }
             }
-            QuietLink("Terms") { uri.openUri(BuildConfig.TERMS_URL) }
-            QuietLink("Privacy") { uri.openUri(BuildConfig.PRIVACY_URL) }
+            QuietLink("Terms") { legal = "terms" }
+            QuietLink("Privacy") { legal = "privacy" }
+        }
         }
     }
 }
@@ -1472,79 +1501,87 @@ private fun UnavailableSheet(onClose: () -> Unit) {
 private fun CleanupRunScreen(model: AppViewModel) {
     val state by model.state.collectAsState()
     val progress = state.progress ?: return
-    BackHandler { if (!progress.status.let { it == JobStatus.Running }) model.presentSession(false) }
-    if (progress.status.isFinished) {
-        CleanupDoneScreen(model, progress)
-        return
-    }
-    val copy = StatusCopyFactory.make(progress.status, progress.resumeNotBefore ?: state.tryAgainAt)
+    val consumeClicks = remember { MutableInteractionSource() }
     var confirmCancel by remember { mutableStateOf(false) }
-    Column(
+    BackHandler { if (progress.status != JobStatus.Running) model.presentSession(false) }
+    Box(
         Modifier
             .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = Spacing.screen),
+            .clickable(indication = null, interactionSource = consumeClicks) {},
     ) {
-        Spacer(Modifier.height(Spacing.m))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Wordmark()
-            Spacer(Modifier.weight(1f))
-            if (progress.status != JobStatus.Running) CloseButton { model.presentSession(false) }
-        }
-        Spacer(Modifier.weight(1f))
-        Text(copy.headline, color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, lineHeight = 34.sp)
-        Spacer(Modifier.height(Spacing.m))
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(NumberFormat.getIntegerInstance().format(progress.processed), color = Palette.ink(), fontFamily = Type.sans, fontSize = 48.sp, fontWeight = FontWeight.SemiBold, lineHeight = 52.sp)
-            Text(" / ${NumberFormat.getIntegerInstance().format(progress.total)}", color = Palette.secondaryInk(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
-        }
-        LoreProgressBar(progress.fraction)
-        if (progress.remaining > 0) {
-            val eta = progress.estimatedSecondsRemaining ?: model.ratePolicy.estimatedDuration(progress.remaining)
-            Text(StatusCopyFactory.timeRemaining(eta), color = Palette.secondaryInk(), fontWeight = FontWeight.SemiBold)
-        }
-        copy.message?.let { message ->
-            Spacer(Modifier.height(Spacing.m))
-            Card {
-                Row {
-                    Icon(if (copy.caution) Icons.Filled.Shield else Icons.Filled.Info, null, tint = if (copy.caution) Palette.accentInk() else Palette.secondaryInk())
-                    Spacer(Modifier.size(8.dp))
-                    Text(message, color = Palette.ink())
+        if (progress.status.isFinished) {
+            CleanupDoneScreen(model, progress)
+        } else {
+            val copy = StatusCopyFactory.make(progress.status, progress.resumeNotBefore ?: state.tryAgainAt)
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .padding(horizontal = Spacing.screen),
+            ) {
+                Spacer(Modifier.height(Spacing.m))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Wordmark()
+                    Spacer(Modifier.weight(1f))
+                    if (progress.status != JobStatus.Running) CloseButton { model.presentSession(false) }
                 }
+                Spacer(Modifier.weight(1f))
+                Text(copy.headline, color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, lineHeight = 34.sp)
+                Spacer(Modifier.height(Spacing.m))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(NumberFormat.getIntegerInstance().format(progress.processed), color = Palette.ink(), fontFamily = Type.sans, fontSize = 48.sp, fontWeight = FontWeight.SemiBold, lineHeight = 52.sp)
+                    Text(" / ${NumberFormat.getIntegerInstance().format(progress.total)}", color = Palette.secondaryInk(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                }
+                LoreProgressBar(progress.fraction)
+                if (progress.remaining > 0) {
+                    val eta = progress.estimatedSecondsRemaining ?: model.ratePolicy.estimatedDuration(progress.remaining)
+                    Text(StatusCopyFactory.timeRemaining(eta), color = Palette.secondaryInk(), fontWeight = FontWeight.SemiBold)
+                }
+                copy.message?.let { message ->
+                    Spacer(Modifier.height(Spacing.m))
+                    Card {
+                        Row {
+                            Icon(if (copy.caution) Icons.Filled.Shield else Icons.Filled.Info, null, tint = if (copy.caution) Palette.accentInk() else Palette.secondaryInk())
+                            Spacer(Modifier.size(8.dp))
+                            Text(message, color = Palette.ink())
+                        }
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                Text("Keep Retract open while we clean.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                Text("If Instagram asks us to wait, we wait. That does not mean your account is safe.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                Text(LegalCopy.NOT_RESPONSIBLE, color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(Spacing.s))
+                when (copy.action) {
+                    StatusCopy.Action.PAUSE -> SecondaryButton("Pause") { model.pauseCleanup() }
+                    StatusCopy.Action.RESUME -> PrimaryButton("Resume") { model.resumeCleanup() }
+                    StatusCopy.Action.TRY_AGAIN -> PrimaryButton("Try again") { model.resumeCleanup() }
+                    StatusCopy.Action.RESUME_AFTER_VERIFYING -> PrimaryButton("I've done that, continue") { model.resumeCleanup(userResolvedIssue = true) }
+                    StatusCopy.Action.RECONNECT -> {
+                        PrimaryButton("Reconnect Instagram") { model.beginLogin(LoginPurpose.RECONNECT) }
+                        SecondaryButton("I've signed in, continue") { model.resumeCleanup(userResolvedIssue = true) }
+                    }
+                    StatusCopy.Action.NONE -> Unit
+                }
+                QuietButton("Cancel cleanup", tint = Palette.danger()) { confirmCancel = true }
+                Spacer(Modifier.height(Spacing.m))
+            }
+            if (confirmCancel) {
+                AlertDialog(
+                    onDismissRequest = { confirmCancel = false },
+                    title = { Text("Stop cleaning?") },
+                    text = { Text("Messages already unsent stay unsent. The rest stay where they are.") },
+                    confirmButton = {
+                        QuietButton("Stop cleaning", tint = Palette.danger()) {
+                            confirmCancel = false
+                            model.cancelCleanup()
+                        }
+                    },
+                    dismissButton = { QuietButton("Keep going") { confirmCancel = false } },
+                )
             }
         }
-        Spacer(Modifier.weight(1f))
-        Text("Keep Retract open while we clean.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-        Text("If Instagram asks us to wait, we wait — on purpose, to keep your account safe.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(Spacing.s))
-        when (copy.action) {
-            StatusCopy.Action.PAUSE -> SecondaryButton("Pause") { model.pauseCleanup() }
-            StatusCopy.Action.RESUME -> PrimaryButton("Resume") { model.resumeCleanup() }
-            StatusCopy.Action.TRY_AGAIN -> PrimaryButton("Try again") { model.resumeCleanup() }
-            StatusCopy.Action.RESUME_AFTER_VERIFYING -> PrimaryButton("I've done that, continue") { model.resumeCleanup(userResolvedIssue = true) }
-            StatusCopy.Action.RECONNECT -> {
-                PrimaryButton("Reconnect Instagram") { model.beginLogin(LoginPurpose.RECONNECT) }
-                SecondaryButton("I've signed in, continue") { model.resumeCleanup(userResolvedIssue = true) }
-            }
-            StatusCopy.Action.NONE -> Unit
-        }
-        QuietButton("Cancel cleanup", tint = Palette.danger()) { confirmCancel = true }
-        Spacer(Modifier.height(Spacing.m))
-    }
-    if (confirmCancel) {
-        AlertDialog(
-            onDismissRequest = { confirmCancel = false },
-            title = { Text("Stop cleaning?") },
-            text = { Text("Messages already unsent stay unsent. The rest stay where they are.") },
-            confirmButton = {
-                QuietButton("Stop cleaning", tint = Palette.danger()) {
-                    confirmCancel = false
-                    model.cancelCleanup()
-                }
-            },
-            dismissButton = { QuietButton("Keep going") { confirmCancel = false } },
-        )
     }
 }
 

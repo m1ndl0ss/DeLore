@@ -14,6 +14,7 @@ import app.delore.android.domain.IntegrationError
 import app.delore.android.domain.InboxReadProgress
 import app.delore.android.domain.JobStatus
 import app.delore.android.domain.LibraryOverview
+import app.delore.android.domain.PauseReason
 import app.delore.android.domain.MessageKind
 import app.delore.android.engine.CleanupEngine
 import app.delore.android.engine.CleanupEngineError
@@ -37,9 +38,13 @@ enum class MainTab { UNSENDING, ACTIVITY, SETTINGS }
 
 enum class LoginPurpose { CONNECT, RECONNECT, REFRESH }
 
+enum class TermsPrompt { SIGNUP, REMINDER }
+
 sealed class Sheet {
     data object Settings : Sheet()
     data object Privacy : Sheet()
+    data object Support : Sheet()
+    data object Terms : Sheet()
     data object ChooseChats : Sheet()
     data object Included : Sheet()
     data class Setup(val scope: CleanupScope) : Sheet()
@@ -64,6 +69,7 @@ data class UiState(
     val history: List<CleanupHistoryEntry> = emptyList(),
     val loadingOverview: Boolean = false,
     val loginPurpose: LoginPurpose? = null,
+    val termsPrompt: TermsPrompt? = null,
     val syncing: Boolean = false,
     val inboxRead: InboxReadProgress = InboxReadProgress(),
     val syncErrorTitle: String? = null,
@@ -90,6 +96,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
     private var finishHandled = false
     private var currentJobId: String? = null
     private var didPromptDeletionLogin = false
+    private var termsNoticeDismissedThisLaunch = false
     private var pendingRetractIds: Set<ConversationID> = emptySet()
     private var inboxLoadIds: Collection<ConversationID>? = null
 
@@ -110,10 +117,42 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         splash.join()
         env.inboxHoldOffUntilMillis = 0L
         _state.update { it.copy(route = Route.HOME) }
+        maybeShowTermsNotice()
     }
 
     fun beginLogin(purpose: LoginPurpose = LoginPurpose.CONNECT) {
-        _state.update { it.copy(loginPurpose = purpose) }
+        if (purpose == LoginPurpose.CONNECT && !env.hasAcceptedTerms) {
+            _state.update { it.copy(termsPrompt = TermsPrompt.SIGNUP, loginPurpose = null) }
+            return
+        }
+        _state.update { it.copy(loginPurpose = purpose, termsPrompt = null) }
+    }
+
+    fun cancelTermsPrompt() {
+        if (_state.value.termsPrompt == TermsPrompt.REMINDER) termsNoticeDismissedThisLaunch = true
+        _state.update { it.copy(termsPrompt = null) }
+    }
+
+    fun acceptTermsPrompt(dontShowAgain: Boolean = true) {
+        val prompt = _state.value.termsPrompt
+        if (prompt == TermsPrompt.SIGNUP || dontShowAgain) {
+            env.acceptedTermsVersion = app.delore.android.ui.LegalCopy.TERMS_VERSION
+        } else {
+            termsNoticeDismissedThisLaunch = true
+        }
+        if (prompt == TermsPrompt.SIGNUP) {
+            _state.update { it.copy(termsPrompt = null, loginPurpose = LoginPurpose.CONNECT) }
+        } else {
+            _state.update { it.copy(termsPrompt = null) }
+        }
+    }
+
+    fun maybeShowTermsNotice() {
+        if (env.hasAcceptedTerms || !env.hasLiveSession || termsNoticeDismissedThisLaunch) return
+        val state = _state.value
+        if (state.sessionPresented && state.progress?.status?.isFinished == false) return
+        if (state.termsPrompt != null || state.loginPurpose != null) return
+        _state.update { it.copy(termsPrompt = TermsPrompt.REMINDER) }
     }
 
     fun cancelLogin() {
@@ -130,6 +169,8 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         if (shouldSync) viewModelScope.launch {
             delay(900)
             beginInboxSync(force = true)
+        } else {
+            maybeShowTermsNotice()
         }
     }
 
@@ -139,17 +180,33 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         }
         env.inboxHoldOffUntilMillis = 0L
         inboxLoadIds = loadIds
-        val seedTitles = _state.value.overview?.conversations?.map { it.title }
-            ?.ifEmpty { _state.value.inboxRead.foundTitles }
-            ?: _state.value.inboxRead.foundTitles
+        val conversations = _state.value.overview?.conversations.orEmpty()
+        val seedTitles = conversations.map { it.title }
+            .ifEmpty { _state.value.inboxRead.foundTitles }
+        val focused = loadIds?.map { it.rawValue }?.distinct().orEmpty()
+        val titles = focused.associateWith { raw ->
+            conversations.firstOrNull { it.id.rawValue == raw }?.title ?: "Chat"
+        }
         _state.update {
             it.copy(
+                sheet = null,
                 syncing = true,
-                inboxRead = InboxReadProgress(
-                    chatsFound = seedTitles.size,
-                    chatsTotal = loadIds?.size,
-                    foundTitles = seedTitles,
-                ),
+                inboxRead = if (loadIds != null) {
+                    val names = focused.map { raw -> titles[raw] ?: "Chat" }
+                    InboxReadProgress(
+                        chatsFound = focused.size,
+                        chatsRead = 0,
+                        chatsTotal = focused.size,
+                        sendsFound = 0,
+                        currentTitle = names.firstOrNull(),
+                        foundTitles = names,
+                    )
+                } else {
+                    InboxReadProgress(
+                        chatsFound = seedTitles.size,
+                        foundTitles = seedTitles,
+                    )
+                },
                 syncErrorTitle = null,
                 syncErrorMessage = null,
                 syncPauseKind = null,
@@ -162,7 +219,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
                 if (loadIds == null) {
                     env.listInbox { progress -> _state.update { it.copy(inboxRead = progress) } }
                 } else {
-                    env.loadInbox(loadIds) { progress -> _state.update { it.copy(inboxRead = progress) } }
+                    env.loadInbox(loadIds, titles) { progress -> _state.update { it.copy(inboxRead = progress) } }
                 }
                 env.hasCompletedOnboarding = true
                 reloadOverview()
@@ -170,13 +227,15 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
                 val pending = pendingRetractIds
                 pendingRetractIds = emptySet()
                 if (pending.isNotEmpty()) {
+                    val pendingRaw = pending.map { it.rawValue }.toSet()
                     val cleanable = _state.value.overview?.cleanableConversations
-                        ?.map { it.id }
-                        ?.toSet()
-                        ?.intersect(pending)
                         .orEmpty()
+                        .filter { it.id.rawValue in pendingRaw }
+                        .map { it.id }
+                        .toSet()
                     if (cleanable.isNotEmpty()) openSetup(CleanupScope.Conversations(cleanable))
                 }
+                maybeShowTermsNotice()
             } catch (_: kotlinx.coroutines.CancellationException) {
                 reloadOverview()
                 _state.update { it.copy(syncing = false) }
@@ -186,7 +245,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
                 val saved = _state.value.overview?.conversations?.map { it.title }.orEmpty()
                 val pause = SyncPause.from(error)
                 _state.update {
-                    val titles = it.inboxRead.foundTitles.ifEmpty { saved }
+                    val keptTitles = it.inboxRead.foundTitles.ifEmpty { saved }
                     it.copy(
                         syncing = false,
                         syncErrorTitle = pause.title,
@@ -194,8 +253,8 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
                         syncPauseKind = pause.kind,
                         syncRetryAfterSeconds = pause.retryAfterSeconds,
                         inboxRead = it.inboxRead.copy(
-                            chatsFound = maxOf(it.inboxRead.chatsFound, titles.size),
-                            foundTitles = titles,
+                            chatsFound = maxOf(it.inboxRead.chatsFound, keptTitles.size),
+                            foundTitles = keptTitles,
                         ),
                     )
                 }
@@ -206,7 +265,9 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
     fun retractWith(ids: Set<ConversationID>) {
         if (ids.isEmpty()) return
         pendingRetractIds = ids
-        val unread = _state.value.overview?.conversations.orEmpty().filter { it.id in ids && !it.messagesLoaded }
+        val unread = _state.value.overview?.conversations.orEmpty().filter { chat ->
+            chat.id.rawValue in ids.map { it.rawValue }.toSet() && !chat.messagesLoaded
+        }
         if (unread.isEmpty()) {
             pendingRetractIds = emptySet()
             openSetup(CleanupScope.Conversations(ids))
@@ -228,6 +289,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
                 syncRetryAfterSeconds = null,
             )
         }
+        maybeShowTermsNotice()
     }
 
     fun acceptInboxHoldOff(later: Boolean) {
@@ -295,6 +357,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
 
     fun presentSession(present: Boolean) {
         _state.update { it.copy(sessionPresented = present) }
+        if (!present) maybeShowTermsNotice()
     }
 
     suspend fun reloadOverview() {
@@ -349,6 +412,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
                 sheet = if (thenChooseChats) Sheet.ChooseChats else it.sheet,
             )
         }
+        maybeShowTermsNotice()
     }
 
     fun eraseEverything() = viewModelScope.launch {
@@ -400,7 +464,10 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
             engine = loaded
             currentJobId = progress.jobID
             observe(loaded)
-            _state.update { it.copy(progress = progress, sessionPresented = true) }
+            if (loaded.currentJob().status.pauseReason == PauseReason.INTERRUPTED) {
+                runCatching { loaded.start() }
+            }
+            _state.update { it.copy(progress = loaded.progress(), sessionPresented = true) }
         }
     }
 
@@ -574,7 +641,7 @@ object StatusCopyFactory {
                 if (coolingDownUntil != null && coolingDownUntil > now) {
                     return StatusCopy(
                         "Instagram asked us to wait",
-                        "We're slowing down on purpose to keep your account safe. Back at it around ${formatTime(coolingDownUntil)}.",
+                        "We're slowing down because Instagram asked us to wait. Back at it around ${formatTime(coolingDownUntil)}.",
                         true,
                         StatusCopy.Action.PAUSE,
                     )
@@ -595,17 +662,17 @@ object StatusCopyFactory {
         app.delore.android.domain.PauseReason.INTERRUPTED ->
             StatusCopy("Pick up where you left off", "The app closed mid-clean. Your progress is saved. Tap Resume — we won't unsend the same message twice.", false, StatusCopy.Action.RESUME)
         app.delore.android.domain.PauseReason.RATE_LIMITED ->
-            StatusCopy("Instagram asked us to wait", "We've paused the cleanup to keep your account safe. Try again later.", true, StatusCopy.Action.TRY_AGAIN)
+            StatusCopy("Instagram asked us to wait", "We've paused because Instagram asked us to wait. Try again later.", true, StatusCopy.Action.TRY_AGAIN)
         app.delore.android.domain.PauseReason.SESSION_EXPIRED ->
             StatusCopy("Instagram signed you out", "Reconnect your account, then come back to continue. Nothing else was touched.", true, StatusCopy.Action.RECONNECT)
         app.delore.android.domain.PauseReason.VERIFICATION_REQUIRED ->
-            StatusCopy("Instagram is asking you to verify your account.", "We've paused the cleanup to keep your account safe. Open Instagram and follow its steps, then come back here.", true, StatusCopy.Action.RESUME_AFTER_VERIFYING)
+            StatusCopy("Instagram is asking you to verify your account.", "Open Instagram and follow its steps, then come back here. Retract isn't responsible for what Instagram does.", true, StatusCopy.Action.RESUME_AFTER_VERIFYING)
         app.delore.android.domain.PauseReason.REPEATED_FAILURES ->
-            StatusCopy("We've paused the cleanup to keep your account safe.", "Instagram isn't responding the way it should right now. Try again later.", true, StatusCopy.Action.TRY_AGAIN)
+            StatusCopy("Instagram isn't cooperating", "Instagram isn't responding the way it should right now. Try again later. Retract isn't responsible for what happens to your account.", true, StatusCopy.Action.TRY_AGAIN)
         app.delore.android.domain.PauseReason.OFFLINE ->
             StatusCopy("You're offline", "We'll carry on as soon as you're back online.", true, StatusCopy.Action.TRY_AGAIN)
         app.delore.android.domain.PauseReason.UNEXPECTED_RESPONSE ->
-            StatusCopy("We stopped to be safe", "Instagram replied in a way we didn't expect. Try again later; we'll double-check before touching anything.", true, StatusCopy.Action.TRY_AGAIN)
+            StatusCopy("We stopped", "Instagram replied in a way we didn't expect. Try again later; we'll double-check before touching anything.", true, StatusCopy.Action.TRY_AGAIN)
         app.delore.android.domain.PauseReason.INTEGRATION_UNAVAILABLE ->
             StatusCopy("We couldn't unsend just now", "Instagram didn't let this cleanup continue. Nothing else was changed.", true, StatusCopy.Action.NONE)
         app.delore.android.domain.PauseReason.STORAGE_FAILURE ->

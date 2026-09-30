@@ -1,6 +1,6 @@
 # Retract
 
-**Take it back.** A Gen-Z app for retracting the Instagram DMs *you* sent, in bulk, slowly and safely. iOS and Android clients live in this repo and follow the same product: Instagram-hosted login, on-device session, local unsend.
+**Take it back.** A Gen-Z app for retracting the Instagram DMs *you* sent, in bulk, slowly. iOS and Android clients live in this repo and follow the same product: Instagram-hosted login, on-device session, local unsend. Use is at the user's own risk.
 
 > Instagram has no official consumer DM-unsend API. Retract still performs the core action the same
 > way a live App Store competitor (UnSendAll) describes for iOS: the user signs in through
@@ -8,8 +8,9 @@
 > session. We do **not** collect passwords, spoof a mobile app identity, solve checkpoints, or
 > send DMs to a Retract server.
 >
-> - **Every build:** Instagram-hosted login (WKWebView) → Keychain session → inbox discovery → the
->   existing cleanup engine → website Unsend, with conservative pacing. Test on a real account.
+> - **Every build:** Instagram-hosted login (WKWebView / Android WebView) → on-device session →
+>   inbox discovery → cleanup engine → website Unsend. See [`docs/instagram-unsend.md`](docs/instagram-unsend.md).
+>   Launch steps: [`docs/LAUNCH.md`](docs/LAUNCH.md).
 
 ## What the app does
 
@@ -62,10 +63,6 @@ Configurations: **Debug** (verbose redacted logs), **Staging** (release optimisa
 TestFlight), and **Release** (warnings/errors only). Every configuration uses the live Instagram
 integration. Android uses the same live website session in every build.
 
-Configurations: **Debug** (verbose redacted logs), **Staging** (release optimisations, for
-TestFlight), and **Release** (warnings/errors only). Every configuration uses the live Instagram
-integration.
-
 ## Required external configuration
 
 All of it lives in `Config/Base.xcconfig`. No secrets are needed or committed.
@@ -74,8 +71,8 @@ All of it lives in `Config/Base.xcconfig`. No secrets are needed or committed.
 |---|---|
 | `DEVELOPMENT_TEAM` | Your Apple team ID (or set it in Xcode) |
 | `PRODUCT_BUNDLE_IDENTIFIER` | Your bundle ID (default `app.delore.ios`) |
-| `DL_PRIVACY_URL`, `DL_SUPPORT_URL` | Replace the `example.com` placeholders with real pages |
-| `DL_TERMS_URL` | Apple's standard EULA by default; replace if you publish your own |
+| `DL_PRIVACY_URL`, `DL_TERMS_URL` | Host `docs/legal/*.html` (needed for store consoles). The app shows Privacy/Terms in-app and does not open these in a browser |
+| `DL_SUPPORT_URL` | `mailto:contact@kandalintsev.com`. Support in the app opens the FAQ, then this email |
 | `DL_PRODUCT_*` | Must match App Store Connect (and `App/StoreKit/DeLore.storekit`) |
 | `DL_FREE_LIMIT` | Lifetime free messages (default 100) |
 
@@ -92,6 +89,22 @@ a checkpoint, CAPTCHA, or login challenge, the user completes it on Instagram's 
 stops on those signals; it never bypasses them. Disconnect wipes the session with everything else.
 
 The UI never mentions cookies, endpoints, or HTTP. Reconnect is "Reconnect Instagram".
+
+## How unsending works
+
+Full write-up: [`docs/instagram-unsend.md`](docs/instagram-unsend.md). Short version:
+
+1. Inbox and threads are read with Instagram’s website session (WebView `fetch` on Android,
+   because Instagram’s edge often drops the app HTTP stack).
+2. Unsend tries GraphQL `direct_unsend_message` on `www.instagram.com` first (Relay-only
+   headers and a real `fb_dtsg`). Extra Instagram API headers make Meta treat the session
+   as logged out.
+3. If GraphQL doesn’t confirm, empty-body POST delete on `i.instagram.com` from the same
+   origin. www has no delete route; a `_uid` form body returns 4415001.
+4. A message is marked unsent only when Instagram confirms it. Unexpected replies fail that
+   item and the job continues. Session, checkpoint, and rate-limit still pause.
+
+Desktop Chrome user-agent only. No Instagram-app spoofing. No checkpoint bypass.
 
 ## How the cleanup engine works
 
@@ -135,7 +148,7 @@ The UI never mentions cookies, endpoints, or HTTP. Reconnect is "Reconnect Insta
 | Attempts per item | 3, then `failed` |
 | Stop after failures | 5 consecutive: pause |
 | Session expired / verification | pause immediately; resume only after the user acts |
-| Unexpected response | stop safely; reconcile before retrying |
+| Unexpected response | fail that item and continue; session / checkpoint / rate-limit still pause |
 
 The ETA uses the observed speed (smoothed, including waits) and shows nothing until it has 5
 samples. No throughput is ever promised in the UI. The values can be tuned in
@@ -164,16 +177,14 @@ samples. No throughput is ever promised in the UI. The values can be tuned in
 
 - **Free:** 100 messages of cleanup (a lifetime allowance kept in the Keychain,
   charged only for messages actually cleaned).
-- **One-time cleanup** (`app.delore.cleanup.single`, consumable): one full cleanup at **$9.99**. Credited once
-  per verified transaction ID.
 - **Pro monthly** (`app.delore.pro.monthly`): **$19.99**/month after the free 100. Unlimited cleanup and filters.
 - **Pro yearly** (`app.delore.pro.yearly`): **$59.99**/year (~$5/month). Same Pro group.
+- `app.delore.cleanup.single` remains a leftover StoreKit ID and is not sold in the paywall.
 - Transactions are verified with `VerificationResult` and finished only after delivery. The app
   listens to `Transaction.updates` and handles `Transaction.unfinished`. Restore calls
   `AppStore.sync()`. There's also Manage subscription. If the store is unreachable, the app stays
   usable on the free tier.
-- **Local testing:** the schemes use `App/StoreKit/DeLore.storekit`. Consumables can't be restored
-  (an Apple rule), so the paywall copy says a pass covers one cleanup.
+- **Local testing:** the schemes use `App/StoreKit/DeLore.storekit`.
 
 ## Testing
 
@@ -207,11 +218,14 @@ logging scan.
 
 ## Remaining manual steps before App Store submission
 
-1. Set `DEVELOPMENT_TEAM` and the bundle ID. Register the app in App Store Connect.
-2. Create the three IAP products and the subscription group with these IDs, then add pricing,
-   localizations and review screenshots.
-3. Host the privacy policy and support pages, and replace the `example.com` URLs. The policy must
-   disclose on-device Instagram session storage (as UnSendAll's policy does).
+See [`docs/LAUNCH.md`](docs/LAUNCH.md) for store copy, IAP IDs, and review notes.
+
+1. Set `DEVELOPMENT_TEAM` and confirm the bundle ID. Register the app in App Store Connect.
+2. Create the subscription group and products (`app.delore.pro.monthly`, `app.delore.pro.yearly`).
+   Do not submit `app.delore.cleanup.single`. Add pricing, localizations and review screenshots.
+3. Host `docs/legal/privacy.html` (and terms) on https://kandalintsev.com/retract/ so App Store
+   Connect has a public privacy URL. In-app Support is the FAQ; unsatisfied users get
+   contact@kandalintsev.com. Terms stay in-app.
 4. Fill in the App Privacy "nutrition label": *Data Not Collected* by Retract. Instagram receives
    the same traffic the user would generate by unsending in a browser.
 5. Archive with the Release scheme, upload, and test purchases in Sandbox/TestFlight (Staging).
@@ -219,9 +233,11 @@ logging scan.
 
 ## Remaining manual steps before Play Store submission
 
-1. Open `Android/` in Android Studio, set a real `applicationId` if you don't want `app.delore.android`.
-2. Create the same three products in Play Console (`app.delore.cleanup.single`, `app.delore.pro.monthly`, `app.delore.pro.yearly`) at $9.99 / $19.99 / $59.99.
-3. Host privacy/support pages (same as iOS) and replace the `example.com` URLs in `Android/app/build.gradle.kts`.
+1. Open `Android/` in Android Studio. Keep `applicationId` `app.delore.android` unless you are
+   ready to migrate.
+2. Create `app.delore.pro.monthly` and `app.delore.pro.yearly` in Play Console at $19.99 / $59.99.
+3. Host the same privacy HTML and paste the URL in Play Console. Support email:
+   contact@kandalintsev.com. The app FAQ and Terms are in-app.
 4. Data safety form: data not collected by Retract. Instagram receives the same website traffic as unsending in Chrome.
 5. Upload an AAB from `assembleRelease`, complete content rating, and test license testers.
 

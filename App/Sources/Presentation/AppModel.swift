@@ -24,9 +24,18 @@ final class AppModel {
         var id: String { rawValue }
     }
 
+    enum TermsPrompt: String, Identifiable, Equatable {
+        case signup
+        case reminder
+
+        var id: String { rawValue }
+    }
+
     enum Sheet: Identifiable, Equatable {
         case settings
         case privacy
+        case support
+        case terms
         case chooseChats
         case included
         case setup(CleanupScope)
@@ -37,6 +46,8 @@ final class AppModel {
             switch self {
             case .settings: return "settings"
             case .privacy: return "privacy"
+            case .support: return "support"
+            case .terms: return "terms"
             case .chooseChats: return "chooseChats"
             case .included: return "included"
             case .setup: return "setup"
@@ -56,6 +67,8 @@ final class AppModel {
     var importModel: ImportModel?
     var inboxSyncModel: InboxSyncModel?
     var loginPurpose: LoginPurpose?
+    var termsPrompt: TermsPrompt?
+    private var termsNoticeDismissedThisLaunch = false
     private var pendingRetractIDs: Set<ConversationID> = []
     private var lastInboxJob: InboxSyncModel.Job = .list
     private(set) var overview: LibraryOverview?
@@ -83,6 +96,7 @@ final class AppModel {
         _ = await minimumSplash
         env.inboxHoldOffUntil = nil
         withAnimation { route = .home }
+        maybeShowTermsNotice()
     }
 
     private nonisolated static func splashDelay() async {
@@ -110,7 +124,41 @@ final class AppModel {
     // MARK: Onboarding & import
 
     func beginLogin(_ purpose: LoginPurpose = .connect) {
+        if purpose == .connect, !env.hasAcceptedTerms {
+            termsPrompt = .signup
+            loginPurpose = nil
+            return
+        }
+        termsPrompt = nil
         loginPurpose = purpose
+    }
+
+    func cancelTermsPrompt() {
+        if termsPrompt == .reminder { termsNoticeDismissedThisLaunch = true }
+        termsPrompt = nil
+    }
+
+    func acceptTermsPrompt(dontShowAgain: Bool = true) {
+        let prompt = termsPrompt
+        termsPrompt = nil
+        if prompt == .signup || dontShowAgain {
+            env.acceptedTermsVersion = LegalCopy.termsVersion
+        } else {
+            termsNoticeDismissedThisLaunch = true
+        }
+        guard prompt == .signup else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard env.hasAcceptedTerms else { return }
+            loginPurpose = .connect
+        }
+    }
+
+    func maybeShowTermsNotice() {
+        guard !env.hasAcceptedTerms, env.hasLiveSession, !termsNoticeDismissedThisLaunch else { return }
+        if isSessionPresented, let session, !session.isFinished { return }
+        guard termsPrompt == nil, loginPurpose == nil else { return }
+        termsPrompt = .reminder
     }
 
     func cancelLogin() {
@@ -133,10 +181,13 @@ final class AppModel {
         case .reconnect:
             shouldSync = !env.hasLibrary
         }
-        guard shouldSync else { return }
-        Task {
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            beginInboxSync(force: true)
+        if shouldSync {
+            Task {
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                beginInboxSync(force: true)
+            }
+        } else {
+            maybeShowTermsNotice()
         }
     }
 
@@ -144,11 +195,26 @@ final class AppModel {
         if !force, env.isInboxOnHold { return }
         env.inboxHoldOffUntil = nil
         lastInboxJob = job
+        sheet = nil
         let previous = inboxSyncModel?.latest.foundTitles ?? []
         inboxSyncModel?.cancel()
         let fromOverview = overview?.conversations.map(\.title) ?? []
-        let seed = fromOverview.isEmpty ? previous : fromOverview
-        let model = InboxSyncModel(env: env, job: job, seedTitles: seed)
+        let seed: [String]
+        var titlesByID: [String: String] = [:]
+        switch job {
+        case .list:
+            seed = fromOverview.isEmpty ? previous : fromOverview
+        case let .load(ids):
+            let people = overview?.conversations ?? []
+            titlesByID = Dictionary(
+                ids.map { id in
+                    (id.rawValue, people.first { $0.id.rawValue == id.rawValue }?.title ?? "Chat")
+                },
+                uniquingKeysWith: { first, _ in first }
+            )
+            seed = ids.map { titlesByID[$0.rawValue] ?? "Chat" }
+        }
+        let model = InboxSyncModel(env: env, job: job, seedTitles: seed, titlesByID: titlesByID)
         model.onFinished = { [weak self] _ in
             Task { await self?.finishInboxSync() }
         }
@@ -162,7 +228,8 @@ final class AppModel {
     func retractWith(_ ids: Set<ConversationID>) {
         guard !ids.isEmpty else { return }
         pendingRetractIDs = ids
-        let unread = (overview?.conversations ?? []).filter { ids.contains($0.id) && !$0.messagesLoaded }
+        let wanted = Set(ids.map(\.rawValue))
+        let unread = (overview?.conversations ?? []).filter { wanted.contains($0.id.rawValue) && !$0.messagesLoaded }
         if unread.isEmpty {
             pendingRetractIDs = []
             openSetup(.conversations(ids))
@@ -176,6 +243,7 @@ final class AppModel {
         inboxSyncModel?.cancel()
         inboxSyncModel = nil
         Task { await reloadOverview() }
+        maybeShowTermsNotice()
     }
 
     func acceptInboxHoldOff(later: Bool) {
@@ -249,9 +317,15 @@ final class AppModel {
         let ids = pendingRetractIDs
         pendingRetractIDs = []
         if !ids.isEmpty {
-            let cleanable = Set((overview?.cleanableConversations ?? []).map(\.id)).intersection(ids)
+            let wanted = Set(ids.map(\.rawValue))
+            let cleanable = Set(
+                (overview?.cleanableConversations ?? [])
+                    .filter { wanted.contains($0.id.rawValue) }
+                    .map(\.id)
+            )
             if !cleanable.isEmpty { openSetup(.conversations(cleanable)) }
         }
+        maybeShowTermsNotice()
     }
 
     func showConnect() {
@@ -338,6 +412,7 @@ final class AppModel {
         try? env.jobStore.discardActiveJob()
         await reloadOverview()
         if thenChooseChats { sheet = .chooseChats }
+        maybeShowTermsNotice()
     }
 
     // MARK: Erase
@@ -348,6 +423,7 @@ final class AppModel {
         session = nil
         sheet = nil
         loginPurpose = nil
+        termsPrompt = nil
         inboxSyncModel?.cancel()
         inboxSyncModel = nil
         do {

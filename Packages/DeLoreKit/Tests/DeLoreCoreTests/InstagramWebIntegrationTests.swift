@@ -61,6 +61,30 @@ final class InstagramWebIntegrationTests: XCTestCase {
         XCTAssertEqual(loaded.conversations.first { $0.id.rawValue == "t2" }?.messagesLoaded, false)
     }
 
+    func testFocusedLoadReportsMessagesFoundForThatChat() async throws {
+        let fake = FakeInstagramAPIClient.sampleInbox()
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = LocalLibraryStore(root: directory)
+        let session = Self.session(userID: fake.ownerID)
+        _ = try await InstagramInboxSync(client: fake, library: library, listingDelay: 0, clock: ManualClock())
+            .list(session: session)
+
+        var headlines: [String] = []
+        var details: [String] = []
+        let loaded = try await InstagramInboxSync(client: fake, library: library, listingDelay: 0, clock: ManualClock())
+            .load(session: session, ids: [ConversationID("t1")], titles: ["t1": "@maya"]) { progress in
+                headlines.append(progress.headline)
+                details.append(progress.detail)
+            }
+        let chat = try XCTUnwrap(loaded.conversations.first { $0.id.rawValue == "t1" })
+        XCTAssertTrue(chat.messagesLoaded)
+        XCTAssertEqual(chat.sentByOwner, 3)
+        XCTAssertTrue(headlines.contains(where: { $0.hasPrefix("Reading ") }))
+        XCTAssertTrue(details.contains(where: { $0.hasSuffix("messages found so far") }))
+        XCTAssertEqual(loaded.conversations.first { $0.id.rawValue == "t2" }?.messagesLoaded, false)
+    }
+
     func testUnsendOnlyDeletesOwnerItems() async throws {
         let fake = FakeInstagramAPIClient.sampleInbox()
         let service = InstagramWebUnsendService(client: fake, ownerID: { fake.ownerID })
@@ -222,6 +246,12 @@ final class InstagramWebIntegrationTests: XCTestCase {
         )
         XCTAssertNil(
             InstagramResponseClassifier.classify(
+                Self.body(["status": "fail", "message": "Item already deleted"], status: 200),
+                destructive: true
+            )
+        )
+        XCTAssertNil(
+            InstagramResponseClassifier.classify(
                 Self.body(
                     [
                         "status": "ok",
@@ -323,6 +353,27 @@ final class InstagramWebIntegrationTests: XCTestCase {
         XCTAssertEqual(transport.calls, 0)
     }
 
+    func testHTTPClientAllowsInstagramApiHostForUnsend() async throws {
+        let transport = RecordingTransport()
+        transport.response = HTTPResponse(statusCode: 200, headers: [:], body: Data("{\"status\":\"ok\"}".utf8))
+        let vault = SessionVault(store: InMemorySecretStore())
+        try vault.saveSession(Self.session(userID: "42", sessionID: "cookie-value-xyz"))
+        let client = InstagramHTTPClient(transport: transport, sessionProvider: { try vault.loadSession() })
+        _ = try await client.send(InstagramAPIRequest(
+            method: .post,
+            path: "/api/v1/direct_v2/threads/1/items/2/delete/",
+            form: ["_uuid": "device", "_uid": "42"],
+            host: InstagramWebConstants.apiHost,
+            isIdempotent: false,
+            destructive: true
+        ))
+        let sent = try XCTUnwrap(transport.last)
+        XCTAssertEqual(sent.url.host, "i.instagram.com")
+        XCTAssertTrue(sent.url.path.contains("/items/2/delete/"))
+        XCTAssertEqual(sent.method, .post)
+        XCTAssertNotNil(sent.body)
+    }
+
     func testSessionFromCookiesRequiresInstagramLoginCookies() {
         let facebookOnly = [
             InstagramWebSession.Cookie(name: "sessionid", value: "fb-session", domain: ".facebook.com", path: "/", isSecure: true),
@@ -374,6 +425,38 @@ final class InstagramWebIntegrationTests: XCTestCase {
         """.data(using: .utf8)!
         let page = try InstagramWebFormat.parseInbox(json)
         XCTAssertEqual(page.inbox?.threads.map(\.threadID.rawValue), ["t-v2", "t-classic"])
+    }
+
+    func testThreadParserClassifiesPhotosVsTexts() throws {
+        let json = """
+        {"thread":{"items":[
+          {"item_id":"1","user_id":"42","timestamp":1,"item_type":"text","text":"hi"},
+          {"item_id":"2","user_id":"42","timestamp":1,"media":{"image_versions2":{}}},
+          {"item_id":"3","user_id":"42","timestamp":1,"item_type":"text","media":{"video_versions":[]}},
+          {"item_id":"4","user_id":"42","timestamp":1,"item_type":"media_share","media":{"image_versions2":{}}},
+          {"item_id":"5","user_id":"42","timestamp":1,"voice_media":{}},
+          {"item_id":"6","user_id":"42","timestamp":1,"item_type":"generic_xma","xma":{}},
+          {"item_id":"7","user_id":"42","timestamp":1,"item_type":"raven_media"},
+          {"item_id":"8","user_id":"42","timestamp":1,"item_type":"placeholder"}
+        ]}}
+        """.data(using: .utf8)!
+        let kinds = try XCTUnwrap(try InstagramWebFormat.parseThread(json).thread?.items?.map(\.kind))
+        XCTAssertEqual(kinds, [.text, .media, .media, .link, .voice, .link, .media, .other])
+    }
+
+    func testItemKindDoesNotDefaultMissingTypeToText() {
+        XCTAssertEqual(
+            InstagramItemKind.classify(itemType: nil, hasVoice: false, hasPhotoVideo: true, hasShareOrLink: false, hasText: true),
+            .media
+        )
+        XCTAssertEqual(
+            InstagramItemKind.classify(itemType: "text", hasVoice: false, hasPhotoVideo: false, hasShareOrLink: true, hasText: true),
+            .link
+        )
+        XCTAssertEqual(
+            InstagramItemKind.classify(itemType: nil, hasVoice: false, hasPhotoVideo: false, hasShareOrLink: false, hasText: true),
+            .text
+        )
     }
 
     private static func session(userID: String, sessionID: String = "session-token") -> InstagramWebSession {

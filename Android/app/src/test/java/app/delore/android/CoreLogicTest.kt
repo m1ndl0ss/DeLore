@@ -18,8 +18,13 @@ import app.delore.android.domain.MessageRef
 import app.delore.android.domain.ParticipantID
 import app.delore.android.engine.QueueBuilder
 import app.delore.android.engine.RatePolicy
+import app.delore.android.instagram.InstagramHTTPClient
+import app.delore.android.instagram.InstagramItemKind
 import app.delore.android.instagram.InstagramLoginPolicy
 import app.delore.android.instagram.InstagramResponseClassifier
+import app.delore.android.instagram.InstagramWebBootstrap
+import app.delore.android.instagram.InstagramWebConstants
+import app.delore.android.instagram.InstagramWebFormat
 import app.delore.android.instagram.InstagramWebSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -154,6 +159,127 @@ class InstagramPolicyTest {
     }
 
     @Test
+    fun classifierTreatsGraphQLUnsendAsSuccess() {
+        val body = """{"data":{"direct_unsend_message":true}}""".toByteArray()
+        val error = InstagramResponseClassifier.classify(HTTPResponse(200, emptyMap(), body), destructive = true)
+        assertEquals(null, error)
+    }
+
+    @Test
+    fun classifierDoesNotTreatNonJsonUnsendAsSuccess() {
+        val facebook = """for (;;);{"__ar":1,"error":1357004}""".toByteArray()
+        val error = InstagramResponseClassifier.classify(HTTPResponse(200, emptyMap(), facebook), destructive = true)
+        assertTrue(error is IntegrationError.UnexpectedResponse)
+        val htmlish = "self.__next_f.push([1,\"not a delete\"])".toByteArray()
+        val htmlError = InstagramResponseClassifier.classify(HTTPResponse(200, emptyMap(), htmlish), destructive = true)
+        assertTrue(htmlError is IntegrationError.UnexpectedResponse)
+    }
+
+    @Test
+    fun classifierAcceptsFacebookPrefixedGraphQLUnsend() {
+        val body = """for (;;);{"data":{"direct_unsend_message":true}}""".toByteArray()
+        val error = InstagramResponseClassifier.classify(HTTPResponse(200, emptyMap(), body), destructive = true)
+        assertEquals(null, error)
+    }
+
+    @Test
+    fun unsendUrlUsesInstagramApiHost() {
+        val url = InstagramHTTPClient.instagramUrl(
+            "/api/v1/direct_v2/threads/1/items/2/delete/",
+            emptyMap(),
+            InstagramWebConstants.API_HOST,
+        )
+        assertTrue(url.startsWith("https://i.instagram.com/"))
+        assertTrue(url.contains("/items/2/delete/"))
+        val www = InstagramHTTPClient.instagramUrl(
+            "/api/v1/direct_v2/threads/1/items/2/delete/",
+            emptyMap(),
+            InstagramWebConstants.WWW_HOST,
+        )
+        assertTrue(www.startsWith("https://www.instagram.com/"))
+        assertTrue(www.contains("/items/2/delete/"))
+    }
+
+    @Test
+    fun unsendUrlRejectsNonInstagramHosts() {
+        try {
+            InstagramHTTPClient.instagramUrl("/api/v1/direct_v2/inbox/", emptyMap(), "evil.example")
+            org.junit.Assert.fail("expected rejection")
+        } catch (_: Exception) {
+        }
+    }
+
+    @Test
+    fun parseThreadKeepsLongNumericItemIds() {
+        val body = """{"thread":{"items":[{"item_id":32309391968822496455072488775221248,"user_id":42,"timestamp":1}]}}""".toByteArray()
+        val page = InstagramWebFormat.parseThread(body)
+        assertEquals("32309391968822496455072488775221248", page.items.single().itemID)
+    }
+
+    @Test
+    fun parseThreadClassifiesPhotosTextsSharesAndVoice() {
+        val body = """
+            {"thread":{"items":[
+              {"item_id":"1","user_id":"42","timestamp":1,"item_type":"text","text":"hi"},
+              {"item_id":"2","user_id":"42","timestamp":1,"media":{"image_versions2":{}}},
+              {"item_id":"3","user_id":"42","timestamp":1,"item_type":"text","media":{"video_versions":[]}},
+              {"item_id":"4","user_id":"42","timestamp":1,"item_type":"media_share","media":{"image_versions2":{}}},
+              {"item_id":"5","user_id":"42","timestamp":1,"voice_media":{}},
+              {"item_id":"6","user_id":"42","timestamp":1,"item_type":"generic_xma","xma":{}},
+              {"item_id":"7","user_id":"42","timestamp":1,"item_type":"raven_media"},
+              {"item_id":"8","user_id":"42","timestamp":1,"item_type":"placeholder"}
+            ]}}
+        """.trimIndent().toByteArray()
+        val kinds = InstagramWebFormat.parseThread(body).items.map { it.kind }
+        assertEquals(
+            listOf(
+                MessageKind.TEXT,
+                MessageKind.MEDIA,
+                MessageKind.MEDIA,
+                MessageKind.LINK,
+                MessageKind.VOICE,
+                MessageKind.LINK,
+                MessageKind.MEDIA,
+                MessageKind.OTHER,
+            ),
+            kinds,
+        )
+    }
+
+    @Test
+    fun itemKindDoesNotDefaultMissingTypeToText() {
+        assertEquals(
+            MessageKind.MEDIA,
+            InstagramItemKind.classify(null, hasVoice = false, hasPhotoVideo = true, hasShareOrLink = false, hasText = true),
+        )
+        assertEquals(
+            MessageKind.LINK,
+            InstagramItemKind.classify("text", hasVoice = false, hasPhotoVideo = false, hasShareOrLink = true, hasText = true),
+        )
+        assertEquals(
+            MessageKind.TEXT,
+            InstagramItemKind.classify(null, hasVoice = false, hasPhotoVideo = false, hasShareOrLink = false, hasText = true),
+        )
+    }
+
+    @Test
+    fun bootstrapReadsDtsgFromPageHtml() {
+        val html = """["DTSGInitialData",[],{"token":"NAcTESTTOKEN"}]"""
+        assertEquals("NAcTESTTOKEN", InstagramWebBootstrap.fbDtsg(html))
+        val escaped = "\\" + "u0022"
+        val unicode = """["DTSGInitialData",[],{${escaped}token${escaped}:${escaped}NAcUNICODE${escaped}}]"""
+        assertEquals("NAcUNICODE", InstagramWebBootstrap.fbDtsg(unicode))
+        assertEquals("2" + "NAcTESTTOKEN".sumOf { it.code }, InstagramWebBootstrap.jazoest("NAcTESTTOKEN"))
+    }
+
+    @Test
+    fun classifierTreatsGraphqlLoginContinueAsUnexpectedNotSession() {
+        val body = """for (;;);{"__ar":1,"error":1357001,"errorSummary":"Log in to continue"}""".toByteArray()
+        val error = InstagramResponseClassifier.classify(HTTPResponse(200, emptyMap(), body), destructive = true)
+        assertTrue(error is IntegrationError.UnexpectedResponse)
+    }
+
+    @Test
     fun classifierStillMapsTopLevelFeedbackRequired() {
         val body = """{"feedback_required":true,"spam":true,"status":"fail"}""".toByteArray()
         val error = InstagramResponseClassifier.classify(HTTPResponse(200, emptyMap(), body), destructive = false)
@@ -173,6 +299,14 @@ class InstagramPolicyTest {
         val done = InboxReadProgress(chatsFound = 40, chatsRead = 40, chatsTotal = 40, sendsFound = 90)
         assertTrue(done.isComplete)
         assertEquals(1.0, done.fraction, 0.0001)
+        val focused = InboxReadProgress(chatsTotal = 1, currentTitle = "@maya", sendsFound = 12)
+        assertEquals("Reading @maya", focused.headline)
+        assertEquals("12 messages found so far", focused.detail)
+        val starting = InboxReadProgress(chatsTotal = 1, chatsRead = 0, currentTitle = "@maya", sendsFound = 0)
+        assertFalse(starting.isComplete)
+        assertFalse(starting.isListing)
+        assertEquals("Reading @maya", starting.headline)
+        assertEquals("0 messages found so far", starting.detail)
     }
 
     @Test

@@ -412,21 +412,15 @@ final class CleanupEngineTests: XCTestCase {
         XCTAssertTrue(PauseReason.verificationRequired.requiresUserAction)
     }
 
-    func testUnexpectedResponseStopsSafelyAndReconcilesOnResume() async throws {
+    func testUnexpectedResponseFailsThatItemAndContinues() async throws {
         let harness = EngineHarness()
         try await harness.buildJob()
-        harness.fake.scriptFault(.unexpected(code: 418), onUnsendCall: 3)
+        harness.fake.scriptFault(.unexpected(code: 418), onUnsendCall: 1)
         let engine = try await harness.makeEngine()
-        let paused = try await harness.runToStop(engine)
-        XCTAssertEqual(paused.status, .paused(.unexpectedResponse))
-
-        let snapshot = await engine.itemsSnapshot()
-        let item = try XCTUnwrap(snapshot.first { $0.state == .retryWait })
-        XCTAssertTrue(item.needsReconcile)
-
-        let resumed = try await harness.runToStop(engine)
-        XCTAssertEqual(resumed.status, .completed)
-        XCTAssertEqual(harness.fake.presenceCalls, 1)
+        let progress = try await harness.runToStop(engine)
+        XCTAssertEqual(progress.status, .completed)
+        XCTAssertEqual(progress.failed, 1)
+        XCTAssertEqual(progress.completed, progress.total - 1)
     }
 
     func testUnavailableIntegrationPausesWithoutNetwork() async throws {

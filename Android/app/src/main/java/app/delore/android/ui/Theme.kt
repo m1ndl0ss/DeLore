@@ -4,6 +4,11 @@ import android.provider.Settings
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.EaseOut
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -34,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -183,7 +189,7 @@ fun reduceMotion(): Boolean {
 
 @Composable
 fun MeshBackground(modifier: Modifier = Modifier) {
-    GhostFibersBackground(modifier)
+    GhostFibersBackground(modifier.fillMaxSize())
 }
 
 @Composable
@@ -204,8 +210,8 @@ fun StampBox(
 
 @Composable
 fun Screen(content: @Composable ColumnScope.() -> Unit) {
-    Box(Modifier.fillMaxSize()) {
-        MeshBackground()
+    Box(Modifier.fillMaxSize().background(Palette.backgroundDark)) {
+        MeshBackground(Modifier.fillMaxSize())
         Column(
             Modifier
                 .fillMaxSize()
@@ -248,15 +254,27 @@ fun PrimaryButton(text: String, modifier: Modifier = Modifier, enabled: Boolean 
 
 @Composable
 fun ConnectButton(text: String = "Connect Instagram", modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+    val reduce = reduceMotion()
+    val clock = rememberInfiniteTransition(label = "connect-glow")
+    val pulse by clock.animateFloat(
+        initialValue = 0.72f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1600, easing = EaseInOut),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "connect-pulse",
+    )
+    val glow = if (reduce || !enabled) 1f else pulse
     Box(
         modifier
             .fillMaxWidth()
             .height(Metrics.button)
             .shadow(
-                elevation = if (enabled) 14.dp else 0.dp,
+                elevation = if (enabled) (12 + 8 * glow).dp else 0.dp,
                 shape = RoundedCornerShape(Radius.m),
-                ambientColor = Palette.accent.copy(alpha = 0.4f),
-                spotColor = Palette.accent.copy(alpha = 0.28f),
+                ambientColor = Palette.accent.copy(alpha = 0.28f * glow),
+                spotColor = Palette.accent.copy(alpha = 0.22f * glow),
             )
             .clip(RoundedCornerShape(Radius.m))
             .background(Palette.accent.copy(alpha = if (enabled) 1f else 0.4f))
@@ -429,6 +447,22 @@ fun QuietLink(title: String, enabled: Boolean = true, onClick: () -> Unit) {
 
 @Composable
 fun LoreProgressBar(fraction: Double) {
+    val reduce = reduceMotion()
+    val fill = remember { Animatable(fraction.toFloat().coerceIn(0f, 1f)) }
+    LaunchedEffect(fraction) {
+        fill.animateTo(fraction.toFloat().coerceIn(0f, 1f), tween(420, easing = EaseOut))
+    }
+    val clock = rememberInfiniteTransition(label = "progress-shimmer")
+    val shimmerPulse by clock.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "shimmer",
+    )
+    val shimmer = if (reduce) 0f else shimmerPulse
     Box(
         Modifier
             .fillMaxWidth()
@@ -438,9 +472,15 @@ fun LoreProgressBar(fraction: Double) {
     ) {
         Box(
             Modifier
-                .fillMaxWidth(fraction.toFloat().coerceIn(0f, 1f).coerceAtLeast(0.02f))
+                .fillMaxWidth(fill.value.coerceAtLeast(0.02f))
                 .height(Metrics.progress)
-                .background(Palette.accent),
+                .background(
+                    Brush.horizontalGradient(
+                        0f to Palette.accent,
+                        (shimmer * 0.85f).coerceIn(0f, 1f) to Palette.accent.copy(alpha = 0.55f),
+                        1f to Palette.accent,
+                    ),
+                ),
         )
     }
 }

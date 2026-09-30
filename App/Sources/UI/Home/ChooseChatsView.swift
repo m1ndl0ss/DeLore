@@ -9,13 +9,22 @@ struct ChooseChatsView: View {
     @State private var query = ""
 
     private var chats: [ConversationSummary] {
-        let sorted = overview.cleanableConversations.sorted { $0.sentByOwner > $1.sentByOwner }
+        let sorted = overview.conversations
+            .filter { !$0.messagesLoaded || $0.isCleanable }
+            .sorted {
+                if $0.messagesLoaded != $1.messagesLoaded { return !$0.messagesLoaded && $1.messagesLoaded }
+                return $0.sentByOwner > $1.sentByOwner
+            }
         guard !query.isEmpty else { return sorted }
         return sorted.filter { $0.title.localizedCaseInsensitiveContains(query) }
     }
 
+    private var unreadSelected: Int {
+        overview.conversations.filter { selection.contains($0.id) && !$0.messagesLoaded }.count
+    }
+
     private var selectedCount: Int {
-        overview.cleanableConversations.filter { selection.contains($0.id) }.reduce(0) { $0 + $1.sentByOwner }
+        overview.conversations.filter { selection.contains($0.id) && $0.messagesLoaded }.reduce(0) { $0 + $1.sentByOwner }
     }
 
     var body: some View {
@@ -31,7 +40,7 @@ struct ChooseChatsView: View {
                 .accessibilityAddTraits(selection.contains(chat.id) ? .isSelected : [])
             }
             .scrollContentBackground(.hidden)
-            .background(Palette.background)
+            .background(Color.clear)
             .searchable(text: $query, prompt: "Search chats")
             .overlay {
                 if chats.isEmpty {
@@ -47,10 +56,13 @@ struct ChooseChatsView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 Button {
-                    model.openSetup(.conversations(selection))
+                    dismiss()
+                    model.retractWith(selection)
                 } label: {
                     if selection.isEmpty {
                         Text("Pick at least one chat")
+                    } else if unreadSelected > 0 {
+                        Text(unreadSelected == 1 ? "Read 1 chat" : "Read \(unreadSelected) chats")
                     } else {
                         Text("Continue with ^[\(selectedCount) message](inflect: true)")
                     }
@@ -59,9 +71,10 @@ struct ChooseChatsView: View {
                 .disabled(selection.isEmpty)
                 .padding(.horizontal, Spacing.screen)
                 .padding(.vertical, Spacing.s)
-                .background(Palette.background.opacity(0.96))
+                .background(Palette.background.opacity(0.72))
             }
         }
+        .screenBackground()
     }
 
     private func toggle(_ id: ConversationID) {
@@ -106,6 +119,8 @@ struct ChatRow: View {
                 .strokeBorder(isSelected ? Palette.accent.opacity(0.5) : Color.clear, lineWidth: 1)
         )
         .contentShape(Rectangle())
+        .scaleEffect(isSelected ? 1.02 : 1)
+        .animation(.spring(duration: 0.22), value: isSelected)
         .accessibilityElement(children: .combine)
     }
 

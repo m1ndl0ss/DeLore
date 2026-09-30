@@ -23,12 +23,23 @@ struct RootView: View {
         .sheet(item: $model.sheet) { sheet in
             SheetContent(sheet: sheet)
                 .environment(model)
+                .paywallChrome(sheet)
         }
         .fullScreenCover(isPresented: sessionBinding) {
             if let session = model.session {
                 CleanupRunView(session: session)
                     .environment(model)
+                    .presentationBackground(.clear)
             }
+        }
+        .fullScreenCover(item: $model.termsPrompt) { prompt in
+            TermsAcceptView(
+                kind: prompt,
+                onPrimary: { dontShow in model.acceptTermsPrompt(dontShowAgain: dontShow) },
+                onCancel: { model.cancelTermsPrompt() }
+            )
+            .environment(model)
+            .presentationBackground(.clear)
         }
         .fullScreenCover(item: $model.loginPurpose) { purpose in
             InstagramLoginView(
@@ -36,14 +47,17 @@ struct RootView: View {
                 onCancel: { model.cancelLogin() }
             )
             .environment(model)
+            .presentationBackground(.clear)
         }
         .fullScreenCover(item: inboxSyncBinding) { sync in
             InboxSyncView(sync: sync)
                 .environment(model)
+                .presentationBackground(.clear)
         }
-        .fullScreenCover(item:         importBinding) { importModel in
+        .fullScreenCover(item: importBinding) { importModel in
             ImportProgressView(importModel: importModel)
                 .environment(model)
+                .presentationBackground(.clear)
         }
         .tint(Palette.volt)
         .onChange(of: scenePhase) { _, phase in
@@ -88,13 +102,12 @@ private struct MainTabs: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(AppModel.Tab.settings)
         }
-        .toolbarBackground(Palette.background, for: .tabBar)
-        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarBackground(.hidden, for: .tabBar)
         .toolbarColorScheme(.dark, for: .tabBar)
         .onAppear {
             let appearance = UITabBarAppearance()
-            appearance.configureWithOpaqueBackground()
-            appearance.backgroundColor = UIColor(Palette.background)
+            appearance.configureWithTransparentBackground()
+            appearance.backgroundColor = UIColor(Palette.background).withAlphaComponent(0.62)
             appearance.shadowColor = UIColor.white.withAlphaComponent(0.08)
             let item = UITabBarItemAppearance()
             item.normal.iconColor = UIColor.white.withAlphaComponent(0.4)
@@ -120,6 +133,10 @@ private struct SheetContent: View {
             SettingsView()
         case .privacy:
             NavigationStack { PrivacyView() }
+        case .support:
+            NavigationStack { FAQView() }
+        case .terms:
+            NavigationStack { TermsView() }
         case .chooseChats:
             if let overview = model.overview {
                 ChooseChatsView(overview: overview)
@@ -151,5 +168,16 @@ struct SplashView: View {
                 withAnimation(.easeOut(duration: 0.35)) { appeared = true }
             }
             .accessibilityLabel("Retract is loading")
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func paywallChrome(_ sheet: AppModel.Sheet) -> some View {
+        if case .paywall = sheet {
+            self.presentationBackground(Palette.background)
+        } else {
+            self
+        }
     }
 }

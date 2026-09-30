@@ -53,7 +53,7 @@ final class EntitlementManager {
         isLoadingProducts = true
         defer { isLoadingProducts = false }
         do {
-            products = try await service.products()
+            products = try await service.products().filter { $0.kind != .oneTimeCleanup }
             storeUnavailable = false
         } catch {
             storeUnavailable = true

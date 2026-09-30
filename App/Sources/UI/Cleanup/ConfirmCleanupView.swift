@@ -40,7 +40,8 @@ struct ConfirmCleanupView: View {
                             PromiseRow(symbol: "eye.fill", title: "Unsent messages may already have been seen, copied, screenshotted, or retained elsewhere.")
                             PromiseRow(symbol: "arrow.uturn.backward", title: "This can't be undone.")
                             PromiseRow(symbol: "person.fill.checkmark", title: "Only messages you sent.", detail: "Never anyone else's.")
-                            PromiseRow(symbol: "tortoise.fill", title: "Slow on purpose.", detail: "We pace things to keep your account safe, so big cleanups can take hours. Keep the app open while cleaning.")
+                            PromiseRow(symbol: "tortoise.fill", title: "Slow on purpose.", detail: "We pace unsends because Instagram rate-limits. Big cleanups can take hours. Keep the app open. That does not protect your account.")
+                            PromiseRow(symbol: "exclamationmark.triangle.fill", title: "We are not responsible for anything.", detail: "You use Retract at your own risk. We are not responsible for anything that happens — including Instagram bans, locks, lost messages, or failed unsends.")
                         }
 
                         allowanceSection
@@ -75,6 +76,7 @@ struct ConfirmCleanupView: View {
         .sheet(isPresented: $showingPaywall) {
             PaywallView(context: .limit)
                 .environment(model)
+                .presentationBackground(Palette.background)
         }
     }
 
@@ -126,10 +128,6 @@ struct ConfirmCleanupView: View {
                 Button("Unlock Pro") { showingPaywall = true }
                     .buttonStyle(.primary)
             }
-        case .allowed(_, true, _)?:
-            Label("Uses your one-time cleanup", systemImage: "ticket.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Palette.secondaryInk)
         default:
             EmptyView()
         }

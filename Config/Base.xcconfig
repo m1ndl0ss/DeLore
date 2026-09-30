@@ -11,11 +11,11 @@ DEVELOPMENT_TEAM =
 
 PRODUCT_BUNDLE_IDENTIFIER = app.delore.ios
 
-// MANUAL STEP before release: replace with your hosted pages.
-DL_PRIVACY_URL = https:/$()/example.com/retract/privacy
-DL_SUPPORT_URL = https:/$()/example.com/retract/support
-// Apple's standard EULA; replace if you publish custom terms.
-DL_TERMS_URL = https:/$()/www.apple.com/legal/internet-services/itunes/dev/stdeula/
+// Public copies of in-app Privacy / Terms for store listings. Host docs/legal/*.html
+// at these URLs before submitting. The app itself shows Privacy, FAQ, and Terms in-app.
+DL_PRIVACY_URL = https:/$()/kandalintsev.com/retract/privacy
+DL_SUPPORT_URL = mailto:contact@kandalintsev.com
+DL_TERMS_URL = https:/$()/kandalintsev.com/retract/terms
 
 // Must match App Store Connect and App/StoreKit/DeLore.storekit.
 DL_PRODUCT_ONE_TIME = app.delore.cleanup.single

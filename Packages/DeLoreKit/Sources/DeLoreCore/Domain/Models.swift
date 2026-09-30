@@ -215,11 +215,28 @@ public struct InboxReadProgress: Sendable, Equatable {
         return title
     }
 
+    public var headline: String {
+        if isComplete { return "All set" }
+        if isListing { return "Finding who you talked to…" }
+        if let name = displayChat { return "Reading \(name)" }
+        return "Reading this chat"
+    }
+
+    public var detail: String {
+        if isListing {
+            return chatsFound == 1 ? "1 person so far" : "\(chatsFound) people so far"
+        }
+        return sendsFound == 1 ? "1 message found so far" : "\(sendsFound) messages found so far"
+    }
+
     public var fraction: Double {
         guard let total = chatsTotal else {
             return min(0.16, 0.05 + Double(min(chatsFound, 80)) * 0.0014)
         }
         guard total > 0 else { return 1 }
+        if total == 1, chatsRead < 1 {
+            return min(0.82, max(0.2, 0.2 + 0.55 * (1 - 1 / (1 + Double(sendsFound) / 12))))
+        }
         let working = chatsRead < total ? 0.35 : 0
         return min(1, max(0.18, 0.18 + 0.82 * ((Double(chatsRead) + working) / Double(total))))
     }

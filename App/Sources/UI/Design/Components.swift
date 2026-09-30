@@ -73,16 +73,21 @@ struct ConnectButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 24.0, paused: reduceMotion || !isEnabled)) { timeline in
+            let glow = reduceMotion || !isEnabled
+                ? 0.4
+                : 0.28 + 0.18 * (0.5 + 0.5 * sin(timeline.date.timeIntervalSinceReferenceDate * 2.2))
+            configuration.label
             .font(Type.medium(17))
             .foregroundStyle(Palette.onAccent)
             .frame(maxWidth: .infinity)
             .frame(height: Metrics.buttonHeight)
             .background(RoundedRectangle(cornerRadius: Radius.m, style: .continuous).fill(Palette.accent))
-            .shadow(color: Palette.accent.opacity(isEnabled ? 0.4 : 0), radius: 14, y: 6)
+            .shadow(color: Palette.accent.opacity(isEnabled ? glow : 0), radius: 14, y: 6)
             .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.4)
             .scaleEffect(reduceMotion ? 1 : (configuration.isPressed ? 0.98 : 1))
             .contentShape(RoundedRectangle(cornerRadius: Radius.m, style: .continuous))
+        }
     }
 }
 
@@ -188,15 +193,19 @@ struct Pill: View {
 
 struct LoreProgressBar: View {
     let fraction: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Palette.surfaceElevated)
-                Capsule()
-                    .fill(Palette.accent)
-                    .frame(width: max(Metrics.progress, proxy.size.width * min(1, max(0, fraction))))
-                    .animation(.easeOut(duration: 0.3), value: fraction)
+            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 24.0, paused: reduceMotion)) { timeline in
+                let shimmer = reduceMotion ? 0.0 : abs(sin(timeline.date.timeIntervalSinceReferenceDate * 1.6))
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Palette.surfaceElevated)
+                    Capsule()
+                        .fill(Palette.accent.opacity(0.75 + 0.25 * shimmer))
+                        .frame(width: max(Metrics.progress, proxy.size.width * min(1, max(0, fraction))))
+                        .animation(.easeOut(duration: 0.3), value: fraction)
+                }
             }
         }
         .frame(height: Metrics.progress)

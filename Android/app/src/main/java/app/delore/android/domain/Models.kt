@@ -104,6 +104,20 @@ data class InboxReadProgress(
             return if (title.length > 28) title.take(27) + "…" else title
         }
 
+    val headline: String
+        get() = when {
+            isComplete -> "All set"
+            isListing -> "Finding who you talked to…"
+            else -> displayChat?.let { "Reading $it" } ?: "Reading this chat"
+        }
+
+    val detail: String
+        get() = if (isListing) {
+            "${inflect(chatsFound, "person", "people")} so far"
+        } else {
+            "${inflect(sendsFound, "message")} found so far"
+        }
+
     val fraction: Double
         get() {
             val total = chatsTotal
@@ -111,6 +125,9 @@ data class InboxReadProgress(
                 return (0.05 + chatsFound.coerceAtMost(80) * 0.0014).coerceAtMost(0.16)
             }
             if (total <= 0) return 1.0
+            if (total == 1 && chatsRead < 1) {
+                return (0.2 + 0.55 * (1.0 - 1.0 / (1.0 + sendsFound / 12.0))).coerceIn(0.2, 0.82)
+            }
             val working = if (chatsRead < total) 0.35 else 0.0
             return (0.18 + 0.82 * ((chatsRead + working) / total)).coerceIn(0.18, 1.0)
         }

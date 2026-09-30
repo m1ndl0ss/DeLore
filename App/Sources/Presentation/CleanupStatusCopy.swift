@@ -18,7 +18,7 @@ struct CleanupStatusCopy: Equatable {
             if let until = coolingDownUntil, until > now {
                 return CleanupStatusCopy(
                     headline: String(localized: "Instagram asked us to wait"),
-                    message: String(localized: "We're slowing down on purpose to keep your account safe. Back at it around \(until.formatted(date: .omitted, time: .shortened))."),
+                    message: String(localized: "We're slowing down because Instagram asked us to wait. Back at it around \(until.formatted(date: .omitted, time: .shortened))."),
                     tone: .caution,
                     action: .pause
                 )
@@ -42,17 +42,17 @@ struct CleanupStatusCopy: Equatable {
         case .interrupted:
             return CleanupStatusCopy(headline: String(localized: "Pick up where you left off"), message: String(localized: "The app closed mid-clean. Your progress is saved. Tap Resume — we won't unsend the same message twice."), tone: .normal, action: .resume)
         case .rateLimited:
-            return CleanupStatusCopy(headline: String(localized: "Instagram asked us to wait"), message: String(localized: "We've paused the cleanup to keep your account safe. Try again later."), tone: .caution, action: .tryAgain)
+            return CleanupStatusCopy(headline: String(localized: "Instagram asked us to wait"), message: String(localized: "We've paused because Instagram asked us to wait. Try again later."), tone: .caution, action: .tryAgain)
         case .sessionExpired:
             return CleanupStatusCopy(headline: String(localized: "Instagram signed you out"), message: String(localized: "Reconnect your account, then come back to continue. Nothing else was touched."), tone: .caution, action: .reconnect)
         case .verificationRequired:
-            return CleanupStatusCopy(headline: String(localized: "Instagram is asking you to verify your account."), message: String(localized: "We've paused the cleanup to keep your account safe. Open Instagram and follow its steps, then come back here."), tone: .caution, action: .resumeAfterVerifying)
+            return CleanupStatusCopy(headline: String(localized: "Instagram is asking you to verify your account."), message: String(localized: "Open Instagram and follow its steps, then come back here. Retract isn't responsible for what Instagram does."), tone: .caution, action: .resumeAfterVerifying)
         case .repeatedFailures:
-            return CleanupStatusCopy(headline: String(localized: "We've paused the cleanup to keep your account safe."), message: String(localized: "Instagram isn't responding the way it should right now. Try again later."), tone: .caution, action: .tryAgain)
+            return CleanupStatusCopy(headline: String(localized: "Instagram isn't cooperating"), message: String(localized: "Instagram isn't responding the way it should right now. Try again later. Retract isn't responsible for what happens to your account."), tone: .caution, action: .tryAgain)
         case .offline:
             return CleanupStatusCopy(headline: String(localized: "You're offline"), message: String(localized: "We'll carry on as soon as you're back online."), tone: .caution, action: .tryAgain)
         case .unexpectedResponse:
-            return CleanupStatusCopy(headline: String(localized: "We stopped to be safe"), message: String(localized: "Instagram replied in a way we didn't expect. Try again later; we'll double-check before touching anything."), tone: .caution, action: .tryAgain)
+            return CleanupStatusCopy(headline: String(localized: "We stopped"), message: String(localized: "Instagram replied in a way we didn't expect. Try again later; we'll double-check before touching anything."), tone: .caution, action: .tryAgain)
         case .integrationUnavailable:
             return CleanupStatusCopy(headline: String(localized: "We couldn't unsend just now"), message: String(localized: "Instagram didn't let this cleanup continue. Nothing else was changed."), tone: .caution, action: .none)
         case .storageFailure:

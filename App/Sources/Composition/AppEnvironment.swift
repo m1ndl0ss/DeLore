@@ -18,6 +18,7 @@ final class AppEnvironment {
     private let dataDirectory: URL
 
     private static let onboardingKey = "onboarding.completed"
+    private static let termsVersionKey = "terms.acceptedVersion"
     private static let inboxHoldOffKey = "inbox.holdOffUntil"
     private static let listFirstKey = "inbox.listFirst"
     private static let listCursorKey = "inbox.listCursor"
@@ -94,13 +95,17 @@ final class AppEnvironment {
         }.value
     }
 
-    func loadInbox(ids: [ConversationID], onProgress: (@Sendable (InboxReadProgress) -> Void)? = nil) async throws -> LibraryOverview {
+    func loadInbox(
+        ids: [ConversationID],
+        titles: [String: String] = [:],
+        onProgress: (@Sendable (InboxReadProgress) -> Void)? = nil
+    ) async throws -> LibraryOverview {
         guard let session = try sessionVault.loadSession(), session.hasLiveSession else {
             throw IntegrationError.sessionExpired
         }
         let sync = LiveIntegration.makeInboxSync(sessionVault: sessionVault, library: library, logger: logger)
         return try await Task.detached(priority: .userInitiated) {
-            try await sync.load(session: session, ids: ids, onProgress: onProgress)
+            try await sync.load(session: session, ids: ids, titles: titles, onProgress: onProgress)
         }.value
     }
 
@@ -126,6 +131,13 @@ final class AppEnvironment {
         get { UserDefaults.standard.bool(forKey: Self.onboardingKey) }
         set { UserDefaults.standard.set(newValue, forKey: Self.onboardingKey) }
     }
+
+    var acceptedTermsVersion: Int {
+        get { UserDefaults.standard.integer(forKey: Self.termsVersionKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.termsVersionKey) }
+    }
+
+    var hasAcceptedTerms: Bool { acceptedTermsVersion >= LegalCopy.termsVersion }
 
     var inboxHoldOffUntil: Date? {
         get {
@@ -181,6 +193,7 @@ final class AppEnvironment {
         try history.wipe()
         try eraser.eraseAll()
         UserDefaults.standard.removeObject(forKey: Self.onboardingKey)
+        UserDefaults.standard.removeObject(forKey: Self.termsVersionKey)
         UserDefaults.standard.removeObject(forKey: Self.inboxHoldOffKey)
         UserDefaults.standard.removeObject(forKey: Self.listFirstKey)
         UserDefaults.standard.removeObject(forKey: Self.listCursorKey)

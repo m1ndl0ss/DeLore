@@ -11,6 +11,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.annotation.Keep
+import app.delore.android.domain.HTTPMethod
 import app.delore.android.domain.HTTPResponse
 import app.delore.android.domain.IntegrationError
 import kotlinx.coroutines.CompletableDeferred
@@ -28,6 +29,11 @@ import java.util.concurrent.ConcurrentHashMap
  * Talks to Instagram the same way the signed-in website does: `fetch()` inside a WebView
  * already sitting on instagram.com. OkHttp's TLS stack is often dropped on the floor by
  * Instagram's edge, which is why login (Chromium) worked and inbox reads did not.
+ *
+ * Surfaces: GraphQL and token harvest on www.instagram.com; REST delete after navigating
+ * to i.instagram.com so the POST is same-origin. GraphQL uses Relay headers only
+ * (no X-Requested-With / ig-u-ds-user-id / X-IG-WWW-Claim). REST empty-body delete
+ * must not send `_uid`/`_uuid` form fields (Instagram returns 4415001).
  */
 class InstagramWebViewGateway {
     private val main = Handler(Looper.getMainLooper())
@@ -36,6 +42,11 @@ class InstagramWebViewGateway {
     private var webView: WebView? = null
     @Volatile private var pageReady = false
     private var readySignal: CompletableDeferred<Unit>? = null
+    @Volatile private var wwwClaim = "0"
+    @Volatile private var asbdID: String? = null
+    @Volatile private var ajaxHash: String? = null
+    @Volatile private var fbDtsg: String? = null
+    @Volatile private var lsdToken: String? = null
 
     val isAttached: Boolean get() = webView != null
 
@@ -86,6 +97,11 @@ class InstagramWebViewGateway {
         readySignal?.cancel()
         readySignal = null
         pageReady = false
+        wwwClaim = "0"
+        asbdID = null
+        ajaxHash = null
+        fbDtsg = null
+        lsdToken = null
         main.post {
             webView?.destroy()
             webView = null
@@ -95,13 +111,13 @@ class InstagramWebViewGateway {
     suspend fun send(request: InstagramAPIRequest, session: InstagramWebSession): HTTPResponse {
         if (!session.hasLiveSession) throw IntegrationError.SessionExpired
         val csrf = session.csrfToken?.takeIf { it.isNotEmpty() } ?: throw IntegrationError.SessionExpired
-        val url = InstagramHTTPClient.instagramUrl(request.path, request.query)
+        val url = InstagramHTTPClient.instagramUrl(request.path, request.query, request.host)
         return mutex.withLock {
-            ensureReady(session)
+            ensureReady(session, request)
             val id = UUID.randomUUID().toString()
             val deferred = CompletableDeferred<NativeResult>()
             pending[id] = deferred
-            val script = fetchScript(id, request.method.name, url, csrf)
+            val script = fetchScript(id, request, url, csrf, session.userID)
             withContext(Dispatchers.Main) {
                 val view = webView ?: throw IntegrationError.Unavailable
                 view.evaluateJavascript(script, null)
@@ -110,23 +126,33 @@ class InstagramWebViewGateway {
                 withTimeout(25_000) { deferred.await() }
             } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
                 pending.remove(id)
-                Log.e("Retract", "IG webview fetch timed out ${request.path}")
+                    Log.e("Retract", "IG webview fetch timed out ${request.host}${request.path}")
                 throw IntegrationError.TransportFailure(request.destructive)
             } finally {
                 pending.remove(id)
             }
             when (result) {
                 is NativeResult.Failed -> {
-                    Log.e("Retract", "IG webview fetch ${request.path}: ${result.message}")
+                    Log.e("Retract", "IG webview fetch ${request.host}${request.path}: ${result.message}")
                     throw IntegrationError.TransportFailure(request.destructive)
                 }
                 is NativeResult.Ok -> {
+                    val headers = parseHeaders(result.headersJson)
+                    headers["x-ig-set-www-claim"]?.takeIf { it.isNotEmpty() }?.let { wwwClaim = it }
                     Log.i(
                         "Retract",
-                        "IG webview ${request.method} ${request.path} -> ${result.status} bytes=${result.body.length} keys=${InstagramWebFormat.topKeys(result.body.toByteArray())}",
+                        "IG webview ${request.method} ${request.host}${request.path} -> ${result.status} bytes=${result.body.length} keys=${InstagramWebFormat.topKeys(result.body.toByteArray())} claim=${wwwClaim != "0"} dtsg=${!fbDtsg.isNullOrBlank()} prefix=${result.body.take(80).replace('\n', ' ')}",
                     )
-                    val mapped = HTTPResponse(result.status, emptyMap(), result.body.toByteArray())
-                    InstagramResponseClassifier.throwIfNeeded(mapped, request.destructive)
+                    val mapped = HTTPResponse(result.status, headers, result.body.toByteArray())
+                    try {
+                        InstagramResponseClassifier.throwIfNeeded(mapped, request.destructive)
+                    } catch (error: IntegrationError.UnexpectedResponse) {
+                        Log.e(
+                            "Retract",
+                            "IG unexpected ${request.host}${request.path} status=${result.status} body=${result.body.take(240)}",
+                        )
+                        throw error
+                    }
                     mapped
                 }
             }
@@ -146,56 +172,292 @@ class InstagramWebViewGateway {
         return webView ?: throw IntegrationError.Unavailable
     }
 
-    private suspend fun ensureReady(session: InstagramWebSession) {
+    private suspend fun ensureReady(session: InstagramWebSession, request: InstagramAPIRequest) {
         val view = awaitAttached()
         withContext(Dispatchers.Main) {
             session.installIntoCookieManager()
         }
+        session.wwwClaimCookie?.takeIf { it.isNotBlank() && it != "0" }?.let { wwwClaim = it }
+        val wantApiHost = request.host == InstagramWebConstants.API_HOST
+        val mutatingApi = wantApiHost && request.method != HTTPMethod.GET
         val alreadyReady = withContext(Dispatchers.Main) {
-            pageReady && InstagramLoginPolicy.isDirectSurface(view.url.orEmpty())
+            val url = view.url.orEmpty()
+            val onApi = InstagramLoginPolicy.isApiSurface(url)
+            val onWeb = InstagramLoginPolicy.isWebSurface(url)
+            pageReady && if (mutatingApi) onApi else (onApi || onWeb)
         }
-        if (alreadyReady) return
-        val wait = CompletableDeferred<Unit>()
-        readySignal = wait
-        pageReady = false
-        withContext(Dispatchers.Main) {
-            Log.i("Retract", "IG webview loading inbox")
-            view.loadUrl(InstagramWebConstants.INBOX_REFERER)
+        if (!alreadyReady) {
+            val wait = CompletableDeferred<Unit>()
+            readySignal = wait
+            pageReady = false
+            val loadUrl = if (wantApiHost) InstagramWebConstants.API_INBOX else InstagramWebConstants.INBOX_REFERER
+            withContext(Dispatchers.Main) {
+                Log.i("Retract", "IG webview loading $loadUrl")
+                view.loadUrl(loadUrl)
+            }
+            try {
+                withTimeout(22_000) { wait.await() }
+            } catch (error: IntegrationError.SessionExpired) {
+                readySignal = null
+                throw error
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                readySignal = null
+                val current = withContext(Dispatchers.Main) { view.url.orEmpty() }
+                Log.e("Retract", "IG webview page timed out at $current")
+                throw IntegrationError.TransportFailure(false)
+            }
+            val landed = withContext(Dispatchers.Main) { view.url.orEmpty() }
+            if (wantApiHost && !InstagramLoginPolicy.isApiSurface(landed)) {
+                Log.e("Retract", "IG api surface landed on $landed")
+                throw IntegrationError.TransportFailure(request.destructive)
+            }
+            if (!wantApiHost && !InstagramLoginPolicy.isWebSurface(landed)) {
+                Log.e("Retract", "IG web surface landed on $landed")
+                throw IntegrationError.TransportFailure(request.destructive)
+            }
         }
-        try {
-            withTimeout(22_000) { wait.await() }
-        } catch (error: IntegrationError.SessionExpired) {
-            readySignal = null
-            throw error
-        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
-            readySignal = null
-            val current = withContext(Dispatchers.Main) { view.url.orEmpty() }
-            Log.e("Retract", "IG webview inbox page timed out at $current")
-            throw IntegrationError.TransportFailure(false)
+        val onWww = withContext(Dispatchers.Main) {
+            InstagramLoginPolicy.isWebSurface(view.url.orEmpty())
         }
+        if (onWww) harvestTokens(view)
     }
 
-    private fun fetchScript(id: String, method: String, url: String, csrf: String): String {
+    private suspend fun harvestTokens(view: WebView) {
+        val deferred = CompletableDeferred<String>()
+        val storedDtsg = JSONObject.quote(fbDtsg.orEmpty())
+        val storedLsd = JSONObject.quote(lsdToken.orEmpty())
+        val script = """
+            (function(){
+              function decodeMeta(t) { return String(t || '').replace(/\\${"u0022"}/g, '"').replace(/\\"/g, '"'); }
+              function grab(html, re) {
+                var m = decodeMeta(html).match(re);
+                return (m && m[1]) ? m[1] : '';
+              }
+              var dtsg = '';
+              var src = '';
+              try {
+                if (typeof require === 'function') {
+                  dtsg = (require('DTSGInitialData') || {}).token || (require('DTSGInitData') || {}).token || '';
+                  if (dtsg) src = 'require';
+                }
+              } catch (e) {}
+              var html = '';
+              try { html = document.documentElement.innerHTML; } catch (e) {}
+              if (!dtsg) { dtsg = grab(html, /"DTSGInitialData"\s*,\s*\[\s*\]\s*,\s*\{[^}]{0,500}?"token"\s*:\s*"([^"]+)"/); if (dtsg) src = 'init'; }
+              if (!dtsg) { dtsg = grab(html, /"DTSGInitData"\s*,\s*\[\s*\]\s*,\s*\{[^}]{0,500}?"token"\s*:\s*"([^"]+)"/); if (dtsg) src = 'init2'; }
+              if (!dtsg) { dtsg = grab(html, /"dtsg"\s*:\s*\{\s*"token"\s*:\s*"([^"]+)"/); if (dtsg) src = 'obj'; }
+              if (!dtsg) { dtsg = grab(html, /name="fb_dtsg"[^>]*value="([^"]+)"/); if (dtsg) src = 'input'; }
+              var lsd = '';
+              try { if (typeof require === 'function') lsd = (require('LSD') || {}).token || ''; } catch (e) {}
+              if (!lsd) lsd = grab(html, /"LSD"\s*,\s*\[\s*\]\s*,\s*\{[^}]{0,200}?"token"\s*:\s*"([^"]+)"/)
+                || grab(html, /name="lsd"[^>]*value="([^"]+)"/);
+              if (!dtsg) dtsg = $storedDtsg;
+              if (!lsd) lsd = $storedLsd;
+              var appId = '';
+              try { appId = localStorage.getItem('instagramWebFBAppId') || ''; } catch (e) {}
+              return JSON.stringify({dtsg: dtsg || '', lsd: lsd || '', src: src, require: typeof require === 'function', appId: !!appId});
+            })();
+        """.trimIndent()
+        withContext(Dispatchers.Main) {
+            view.evaluateJavascript(script) { result -> deferred.complete(result ?: "null") }
+        }
+        val raw = try {
+            withTimeout(4_000) { deferred.await() }
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            Log.w("Retract", "IG harvest timed out")
+            return
+        }
+        val payload = runCatching {
+            JSONObject("{\"v\":$raw}").getString("v")
+        }.getOrNull() ?: return
+        val json = runCatching { JSONObject(payload) }.getOrNull() ?: return
+        json.optString("dtsg").takeIf { it.isNotBlank() }?.let { fbDtsg = it }
+        json.optString("lsd").takeIf { it.isNotBlank() }?.let { lsdToken = it }
+        Log.i(
+            "Retract",
+            "IG harvest dtsg=${!fbDtsg.isNullOrBlank()} len=${fbDtsg?.length ?: 0} src=${json.optString("src")} require=${json.optBoolean("require")} lsd=${!lsdToken.isNullOrBlank()} appId=${json.optBoolean("appId")}",
+        )
+    }
+
+    private fun fetchScript(
+        id: String,
+        request: InstagramAPIRequest,
+        url: String,
+        csrf: String,
+        userID: String,
+    ): String {
+        val crossSite = request.host == InstagramWebConstants.API_HOST
+        val graphql = request.path.contains("graphql")
         val headers = JSONObject()
             .put("X-CSRFToken", csrf)
             .put("X-IG-App-ID", InstagramWebConstants.WEB_APP_ID)
-            .put("X-Requested-With", "XMLHttpRequest")
-            .put("Accept", "application/json")
-            .put("X-IG-WWW-Claim", "0")
+            .put("Accept", "*/*")
+        if (graphql) {
+            headers.put("X-FB-Friendly-Name", "direct_unsend_message")
+            lsdToken?.takeIf { it.isNotBlank() }?.let { headers.put("X-FB-LSD", it) }
+        } else {
+            headers.put("X-Requested-With", "XMLHttpRequest")
+            headers.put("X-IG-WWW-Claim", wwwClaim)
+            if (!crossSite) {
+                asbdID?.let { headers.put("X-ASBD-ID", it) }
+                ajaxHash?.let { headers.put("X-Instagram-AJAX", it) }
+            }
+        }
+        val emptyBody = request.emptyBody
+        val mutating = request.method == HTTPMethod.POST || request.method == HTTPMethod.DELETE
+        if (mutating && !emptyBody) {
+            headers.put("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+        }
+        val formFields = if (emptyBody) {
+            emptyMap()
+        } else {
+            InstagramHTTPClient.signedForm(request.form, csrf, request.destructive).toMutableMap().also { fields ->
+                if (graphql) {
+                    fbDtsg?.takeIf { it.isNotBlank() }?.let { token ->
+                        fields.putIfAbsent("fb_dtsg", token)
+                        fields.putIfAbsent("jazoest", InstagramWebBootstrap.jazoest(token))
+                    }
+                    lsdToken?.takeIf { it.isNotBlank() }?.let { fields.putIfAbsent("lsd", it) }
+                }
+            }
+        }
+        val formBody = InstagramForm.encode(formFields)
+        val storedDtsg = JSONObject.quote(fbDtsg.orEmpty())
+        val storedLsd = JSONObject.quote(lsdToken.orEmpty())
+        val userIdLit = JSONObject.quote(userID)
         return """
             (function(){
               var headers = $headers;
+              var body = ${JSONObject.quote(formBody)};
+              var graphql = ${if (graphql) "true" else "false"};
+              var emptyBody = ${if (emptyBody) "true" else "false"};
+              var crossSite = ${if (crossSite) "true" else "false"};
+              var userId = $userIdLit;
+              function decodeMeta(t) {
+                return String(t || '').replace(/\\${"u0022"}/g, '"').replace(/\\"/g, '"');
+              }
+              function grab(html, re) {
+                var m = decodeMeta(html).match(re);
+                return (m && m[1]) ? m[1] : '';
+              }
+              function findTokens() {
+                var dtsg = '';
+                var lsd = '';
+                try {
+                  if (typeof require === 'function') {
+                    dtsg = (require('DTSGInitialData') || {}).token || (require('DTSGInitData') || {}).token || '';
+                    lsd = (require('LSD') || {}).token || '';
+                  }
+                } catch (e) {}
+                var html = '';
+                try { html = document.documentElement.innerHTML; } catch (e) {}
+                if (!dtsg) dtsg = grab(html, /"DTSGInitialData"\s*,\s*\[\s*\]\s*,\s*\{[^}]{0,500}?"token"\s*:\s*"([^"]+)"/)
+                  || grab(html, /"DTSGInitData"\s*,\s*\[\s*\]\s*,\s*\{[^}]{0,500}?"token"\s*:\s*"([^"]+)"/)
+                  || grab(html, /"dtsg"\s*:\s*\{\s*"token"\s*:\s*"([^"]+)"/)
+                  || grab(html, /name="fb_dtsg"[^>]*value="([^"]+)"/);
+                if (!lsd) lsd = grab(html, /"LSD"\s*,\s*\[\s*\]\s*,\s*\{[^}]{0,200}?"token"\s*:\s*"([^"]+)"/)
+                  || grab(html, /name="lsd"[^>]*value="([^"]+)"/);
+                if (!dtsg) dtsg = $storedDtsg;
+                if (!lsd) lsd = $storedLsd;
+                return {dtsg: dtsg || '', lsd: lsd || ''};
+              }
               try {
-                var match = document.cookie.match(/(?:^|; )ig_www_claim=([^;]*)/);
-                if (match) headers['X-IG-WWW-Claim'] = decodeURIComponent(match[1]);
+                var html = document.documentElement.innerHTML;
+                if (!graphql) {
+                  var claim = (html.match(/"www_claim"\s*:\s*"([^"]+)"/) || [])[1];
+                  if (claim && claim !== '0') headers['X-IG-WWW-Claim'] = claim;
+                  var asbd = (html.match(/"ASBD_ID"\s*:\s*"(\d+)"/) || [])[1];
+                  if (asbd && !crossSite) headers['X-ASBD-ID'] = asbd;
+                  var ajax = (html.match(/"rollout_hash"\s*:\s*"([^"]+)"/) || [])[1];
+                  if (ajax && !crossSite) headers['X-Instagram-AJAX'] = ajax;
+                  var cookieClaim = document.cookie.match(/(?:^|; )ig_www_claim=([^;]*)/);
+                  if (cookieClaim) {
+                    var value = decodeURIComponent(cookieClaim[1]);
+                    if (value && value !== '0') headers['X-IG-WWW-Claim'] = value;
+                  }
+                  try {
+                    var storedClaim = sessionStorage.getItem('www-claim-v2');
+                    if (storedClaim && storedClaim !== '0') headers['X-IG-WWW-Claim'] = storedClaim;
+                  } catch (e) {}
+                }
+                var csrfCookie = document.cookie.match(/(?:^|; )csrftoken=([^;]*)/);
+                if (csrfCookie) headers['X-CSRFToken'] = decodeURIComponent(csrfCookie[1]);
+                if (csrfCookie && body.indexOf('_csrftoken=') !== -1) {
+                  body = body.replace(/_csrftoken=[^&]*/, '_csrftoken=' + encodeURIComponent(decodeURIComponent(csrfCookie[1])));
+                }
+                try {
+                  var appId = localStorage.getItem('instagramWebFBAppId');
+                  if (appId) headers['X-IG-App-ID'] = appId;
+                } catch (e) {}
+                var tok = findTokens();
+                if (graphql) {
+                  var dtsg = tok.dtsg;
+                  var lsd = tok.lsd;
+                  var docId = grab(html, /"direct_unsend_message"[\s\S]{0,240}?"(\d{10,})"/);
+                  var params = new URLSearchParams();
+                  var actor = userId;
+                  try {
+                    if (typeof require === 'function') {
+                      var current = require('CurrentUserInitialData') || {};
+                      actor = current.USER_ID || current.ACCOUNT_ID || actor;
+                    }
+                  } catch (e) {}
+                  if (actor) { params.set('av', actor); params.set('__user', actor); }
+                  params.set('fb_api_caller_class', 'RelayModern');
+                  params.set('fb_api_req_friendly_name', 'direct_unsend_message');
+                  var existing = body.split('&');
+                  for (var i = 0; i < existing.length; i++) {
+                    var pair = existing[i].split('=');
+                    if (pair.length >= 2 && pair[0] === 'variables') params.set('variables', decodeURIComponent(pair.slice(1).join('=')));
+                    if (pair.length >= 2 && pair[0] === 'doc_id') params.set('doc_id', decodeURIComponent(pair[1]));
+                  }
+                  params.set('server_timestamps', 'true');
+                  if (docId) params.set('doc_id', docId);
+                  if (dtsg) {
+                    params.set('fb_dtsg', dtsg);
+                    var sum = 0;
+                    for (var j = 0; j < dtsg.length; j++) sum += dtsg.charCodeAt(j);
+                    params.set('jazoest', '2' + String(sum));
+                  }
+                  if (lsd) {
+                    params.set('lsd', lsd);
+                    headers['X-FB-LSD'] = lsd;
+                  }
+                  try {
+                    if (typeof require === 'function') {
+                      var site = require('SiteData') || {};
+                      if (site.__spin_r) params.set('__spin_r', String(site.__spin_r));
+                      if (site.hsi) params.set('__hsi', String(site.hsi));
+                      if (site.server_revision) params.set('__rev', String(site.server_revision));
+                    }
+                  } catch (e) {}
+                  body = params.toString();
+                }
               } catch (e) {}
-              fetch(${JSONObject.quote(url)}, {
-                method: ${JSONObject.quote(method)},
+              var tokOut = {dtsg: '', lsd: ''};
+              try { tokOut = findTokens(); } catch (e) {}
+              var opts = {
+                method: ${JSONObject.quote(request.method.name)},
                 credentials: 'include',
+                mode: 'cors',
                 headers: headers
-              }).then(function(r){
+              };
+              if ((opts.method === 'POST' || opts.method === 'DELETE') && !emptyBody) {
+                headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+                opts.body = body;
+              }
+              fetch(${JSONObject.quote(url)}, opts).then(function(r){
+                var headerBag = {};
+                try { r.headers.forEach(function(v, k){ headerBag[String(k).toLowerCase()] = v; }); } catch (e) {}
                 return r.text().then(function(t){
-                  DeloreNative.ok(${JSONObject.quote(id)}, r.status, t);
+                  DeloreNative.ok(${JSONObject.quote(id)}, r.status, t, JSON.stringify({
+                    response: headerBag,
+                    claim: headers['X-IG-WWW-Claim'] || '',
+                    asbd: headers['X-ASBD-ID'] || '',
+                    ajax: headers['X-Instagram-AJAX'] || '',
+                    dtsg: tokOut.dtsg || '',
+                    lsd: tokOut.lsd || ''
+                  }));
                 });
               }).catch(function(e){
                 DeloreNative.fail(${JSONObject.quote(id)}, String(e && e.message ? e.message : e));
@@ -204,11 +466,28 @@ class InstagramWebViewGateway {
         """.trimIndent()
     }
 
+    private fun parseHeaders(raw: String): Map<String, String> {
+        val json = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyMap()
+        json.optString("claim").takeIf { it.isNotBlank() && it != "0" }?.let { wwwClaim = it }
+        json.optString("asbd").takeIf { it.isNotBlank() }?.let { asbdID = it }
+        json.optString("ajax").takeIf { it.isNotBlank() }?.let { ajaxHash = it }
+        json.optString("dtsg").takeIf { it.isNotBlank() }?.let { fbDtsg = it }
+        json.optString("lsd").takeIf { it.isNotBlank() }?.let { lsdToken = it }
+        val response = json.optJSONObject("response") ?: json
+        val mapped = mutableMapOf<String, String>()
+        response.keys().forEach { key ->
+            val value = response.optString(key)
+            if (value.isNotEmpty()) mapped[key.lowercase()] = value
+        }
+        mapped["x-ig-set-www-claim"]?.takeIf { it.isNotEmpty() }?.let { wwwClaim = it }
+        return mapped
+    }
+
     @Keep
     private inner class NativeBridge {
         @JavascriptInterface
-        fun ok(id: String, status: Int, body: String) {
-            pending.remove(id)?.complete(NativeResult.Ok(status, body))
+        fun ok(id: String, status: Int, body: String, headersJson: String) {
+            pending.remove(id)?.complete(NativeResult.Ok(status, body, headersJson))
         }
 
         @JavascriptInterface
@@ -218,7 +497,7 @@ class InstagramWebViewGateway {
     }
 
     private sealed class NativeResult {
-        data class Ok(val status: Int, val body: String) : NativeResult()
+        data class Ok(val status: Int, val body: String, val headersJson: String) : NativeResult()
         data class Failed(val message: String) : NativeResult()
     }
 }

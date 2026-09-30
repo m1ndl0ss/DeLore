@@ -58,6 +58,13 @@ class AppEnvironment(private val context: Context) {
         get() = prefs.getBoolean("onboarding.completed", false)
         set(value) { prefs.edit().putBoolean("onboarding.completed", value).apply() }
 
+    var acceptedTermsVersion: Int
+        get() = prefs.getInt("terms.acceptedVersion", 0)
+        set(value) { prefs.edit().putInt("terms.acceptedVersion", value).apply() }
+
+    val hasAcceptedTerms: Boolean
+        get() = acceptedTermsVersion >= app.delore.android.ui.LegalCopy.TERMS_VERSION
+
     var inboxHoldOffUntilMillis: Long
         get() = prefs.getLong("inbox.holdOffUntil", 0L)
         set(value) { prefs.edit().putLong("inbox.holdOffUntil", value).apply() }
@@ -103,10 +110,14 @@ class AppEnvironment(private val context: Context) {
         }
     }
 
-    suspend fun loadInbox(ids: Collection<ConversationID>, onProgress: ((InboxReadProgress) -> Unit)?): LibraryOverview {
+    suspend fun loadInbox(
+        ids: Collection<ConversationID>,
+        titles: Map<String, String> = emptyMap(),
+        onProgress: ((InboxReadProgress) -> Unit)?,
+    ): LibraryOverview {
         val session = loadSession()?.takeIf { it.hasLiveSession } ?: throw app.delore.android.domain.IntegrationError.SessionExpired
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            InstagramInboxSync(http, library).load(session, ids, onProgress)
+            InstagramInboxSync(http, library).load(session, ids, titles, onProgress)
         }
     }
 
@@ -129,7 +140,7 @@ class AppEnvironment(private val context: Context) {
         library.wipe()
         history.wipe()
         BillingLedger.clearAll(prefs)
-        prefs.edit().remove("onboarding.completed").remove("inbox.holdOffUntil").remove("inbox.listFirst").remove("inbox.listCursor").apply()
+        prefs.edit().remove("onboarding.completed").remove("terms.acceptedVersion").remove("inbox.holdOffUntil").remove("inbox.listFirst").remove("inbox.listCursor").apply()
         webBrowser.destroy()
     }
 }

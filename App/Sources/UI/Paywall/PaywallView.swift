@@ -10,6 +10,7 @@ struct PaywallView: View {
     @State private var selectedID: String?
     @State private var notice: LocalizedStringKey?
     @State private var glow = false
+    @State private var legal: LegalDestination?
 
     private var entitlements: EntitlementManager { model.entitlements }
     private var plans: [StoreProduct] {
@@ -32,6 +33,10 @@ struct PaywallView: View {
                 Text("Unlimited unsends. Pick a plan.")
                     .font(Type.body(15))
                     .foregroundStyle(Palette.secondaryInk)
+                Text(LegalCopy.notResponsible)
+                    .font(Type.body(14))
+                    .foregroundStyle(Palette.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 plansBlock
 
@@ -51,8 +56,8 @@ struct PaywallView: View {
                             }
                         }
                     }
-                    Link("Terms", destination: model.env.configuration.termsURL)
-                    Link("Privacy", destination: model.env.configuration.privacyPolicyURL)
+                    Button("Terms") { legal = .terms }
+                    Button("Privacy") { legal = .privacy }
                     Spacer()
                 }
                 .font(Type.medium(14))
@@ -63,7 +68,23 @@ struct PaywallView: View {
             .padding(.bottom, Spacing.xl)
         }
         .scrollIndicators(.hidden)
-        .screenBackground()
+        .background(Palette.background)
+        .presentationBackground(Palette.background)
+        .sheet(item: $legal) { destination in
+            NavigationStack {
+                Group {
+                    switch destination {
+                    case .terms: TermsView()
+                    case .privacy: PrivacyView()
+                    }
+                }
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { legal = nil }
+                    }
+                }
+            }
+        }
         .task {
             model.env.analytics.track(.paywallShown(context: context))
             await entitlements.loadProducts()
@@ -193,4 +214,9 @@ struct PaywallView: View {
             }
         }
     }
+}
+
+private enum LegalDestination: String, Identifiable {
+    case terms, privacy
+    var id: String { rawValue }
 }

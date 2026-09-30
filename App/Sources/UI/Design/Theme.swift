@@ -91,18 +91,41 @@ struct Wordmark: View {
     }
 }
 
+private struct FibersInstalledKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var fibersInstalled: Bool {
+        get { self[FibersInstalledKey.self] }
+        set { self[FibersInstalledKey.self] = newValue }
+    }
+}
+
 struct ScreenBackground: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.fibersInstalled) private var already
 
     func body(content: Content) -> some View {
-        content
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background {
-                GhostFibersView(paused: reduceMotion)
+        if already {
+            content
+        } else {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background {
+                    ZStack {
+                        Palette.background
+                        GhostFibersFallback(paused: reduceMotion)
+                        if !reduceMotion {
+                            GhostFibersView(paused: false)
+                        }
+                    }
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
-            }
+                }
+                .environment(\.fibersInstalled, true)
+        }
     }
 }
 

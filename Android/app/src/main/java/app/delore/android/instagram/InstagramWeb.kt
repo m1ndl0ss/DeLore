@@ -12,10 +12,15 @@ import org.json.JSONObject
 import java.net.URI
 
 object InstagramWebConstants {
-    const val BASE = "https://www.instagram.com"
+    const val WWW_HOST = "www.instagram.com"
+    const val API_HOST = "i.instagram.com"
+    const val BASE = "https://$WWW_HOST"
     const val WEB_APP_ID = "936619743392459"
     const val LOGIN_URL = "https://www.instagram.com/accounts/login/"
     const val INBOX_REFERER = "https://www.instagram.com/direct/inbox/"
+    const val UNSEND_DOC_ID = "26948700068153789"
+    const val API_ORIGIN = "https://i.instagram.com"
+    const val API_INBOX = "https://i.instagram.com/"
     const val CHROME_USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.139 Safari/537.36"
 }
@@ -55,6 +60,18 @@ object InstagramLoginPolicy {
         if (!allowsNavigation(url)) return false
         val path = runCatching { URI(url).path?.lowercase().orEmpty() }.getOrDefault("")
         return path.startsWith("/direct/")
+    }
+
+    fun isApiSurface(url: String): Boolean {
+        if (!isPostLogin(url)) return false
+        val host = runCatching { URI(url).host?.lowercase()?.trim('.') }.getOrNull() ?: return false
+        return host == InstagramWebConstants.API_HOST
+    }
+
+    fun isWebSurface(url: String): Boolean {
+        if (!isPostLogin(url)) return false
+        val host = runCatching { URI(url).host?.lowercase()?.trim('.') }.getOrNull() ?: return false
+        return host == InstagramWebConstants.WWW_HOST || host == "instagram.com"
     }
 
     fun isInstagramCookieDomain(domain: String): Boolean {
@@ -106,6 +123,11 @@ data class InstagramWebSession(
             }
             manager.setCookie("https://www.instagram.com", header)
             manager.setCookie("https://instagram.com", header)
+            manager.setCookie("https://i.instagram.com", header)
+            manager.setCookie(
+                "https://i.instagram.com",
+                "${cookie.name}=${cookie.value}; Path=/; Secure",
+            )
         }
         manager.flush()
     }
@@ -152,17 +174,19 @@ object InstagramResponseClassifier {
     }
 
     private fun bodyError(body: ByteArray, destructive: Boolean): IntegrationError? {
-        if (body.isEmpty()) return null
-        val text = body.decodeToString()
+        if (body.isEmpty()) {
+            return if (destructive) IntegrationError.UnexpectedResponse(null) else null
+        }
+        val text = stripJsEnvelope(body.decodeToString())
         val objectJson = runCatching { JSONObject(text) }.getOrNull()
         if (objectJson == null) {
-            if (looksLikeHtml(body)) {
+            if (looksLikeHtml(text.toByteArray()) || looksLikeHtml(body)) {
                 val html = text.take(4_000).lowercase()
                 if ("checkpoint" in html || "/challenge" in html) return IntegrationError.VerificationRequired
                 if ("/accounts/login" in html || "login_required" in html) return IntegrationError.SessionExpired
                 return IntegrationError.UnexpectedResponse(null)
             }
-            return null
+            return if (destructive) IntegrationError.UnexpectedResponse(null) else null
         }
         val status = objectJson.optString("status").lowercase()
         val envelope = envelopeText(objectJson)
@@ -183,11 +207,19 @@ object InstagramResponseClassifier {
         }
         if (status == "ok" || status == "success") return null
         if (objectJson.has("inbox") || objectJson.has("thread") || objectJson.has("items")) return null
-        if (status == "fail" || status == "error") {
-            if ("not found" in envelope || "does not exist" in envelope || "no longer" in envelope) return null
+        objectJson.optJSONObject("data")?.let { data ->
+            if (data.optBoolean("direct_unsend_message")) return null
+        }
+        if (objectJson.has("errors") && !objectJson.has("inbox") && !objectJson.has("thread")) {
             return IntegrationError.UnexpectedResponse(null)
         }
-        return null
+        if (status == "fail" || status == "error") {
+            if ("not found" in envelope || "does not exist" in envelope || "no longer" in envelope || "already" in envelope) {
+                return null
+            }
+            return IntegrationError.UnexpectedResponse(null)
+        }
+        return if (destructive) IntegrationError.UnexpectedResponse(null) else null
     }
 
     /** Instagram's own error envelope — never nested DM text. */
@@ -204,20 +236,38 @@ object InstagramResponseClassifier {
     ).joinToString(" ").lowercase()
 
     fun looksLikeHtml(data: ByteArray): Boolean {
-        val prefix = data.decodeToString(0, minOf(32, data.size)).lowercase()
-        return prefix.contains("<!doctype") || prefix.contains("<html")
+        val prefix = data.decodeToString(0, minOf(200, data.size)).lowercase().trim()
+        return prefix.contains("<!doctype") || prefix.contains("<html") ||
+            prefix.contains("<head") || prefix.startsWith("<script") || prefix.startsWith("<!--")
+    }
+
+    fun stripJsEnvelope(raw: String): String {
+        var text = raw.trimStart('\uFEFF', ' ', '\n', '\r', '\t')
+        val prefixes = listOf("for (;;);", "while(1);", "while (1);", ")]}',", ")]}'")
+        for (prefix in prefixes) {
+            if (text.startsWith(prefix)) {
+                text = text.substring(prefix.length).trimStart()
+                break
+            }
+        }
+        return text
     }
 }
 
 object InstagramDeleteParse {
     fun outcome(from: HTTPResponse): UnsendOutcome {
-        val obj = runCatching { JSONObject(from.body.decodeToString()) }.getOrNull() ?: return UnsendOutcome.UNSENT
+        val obj = runCatching {
+            JSONObject(InstagramResponseClassifier.stripJsEnvelope(from.body.decodeToString()))
+        }.getOrNull() ?: throw IntegrationError.UnexpectedResponse(from.statusCode)
+        val data = obj.optJSONObject("data")
+        if (data?.optBoolean("direct_unsend_message") == true) return UnsendOutcome.UNSENT
         val blob = (obj.optString("message") + obj.optString("error_title")).lowercase()
-        return if ("not found" in blob || "already" in blob || "no longer" in blob) {
-            UnsendOutcome.ALREADY_GONE
-        } else {
-            UnsendOutcome.UNSENT
+        if ("not found" in blob || "already" in blob || "no longer" in blob) {
+            return UnsendOutcome.ALREADY_GONE
         }
+        val status = obj.optString("status").lowercase()
+        if (status == "ok" || status == "success") return UnsendOutcome.UNSENT
+        throw IntegrationError.UnexpectedResponse(from.statusCode)
     }
 }
 
@@ -247,6 +297,7 @@ data class ThreadItem(
     val kind: MessageKind,
     val isSystem: Boolean,
     val sentByViewer: Boolean?,
+    val webMessageID: String? = null,
 )
 
 data class ThreadPage(
@@ -258,23 +309,47 @@ data class ThreadPage(
 object InstagramWebBootstrap {
     private val asbd = Regex("\"ASBD_ID\"\\s*:\\s*\"(\\d+)\"")
     private val claim = Regex("\"www_claim\"\\s*:\\s*\"([^\"]+)\"")
+    private val dtsgPatterns = listOf(
+        Regex("DTSGInitialData[\\s\\S]{0,400}?\"token\"\\s*:\\s*\"([^\"]+)\""),
+        Regex("DTSGInitData[\\s\\S]{0,400}?\"token\"\\s*:\\s*\"([^\"]+)\""),
+        Regex("\"dtsg\"\\s*:\\s*\\{\\s*\"token\"\\s*:\\s*\"([^\"]+)\""),
+        Regex("name=\"fb_dtsg\"[^>]*value=\"([^\"]+)\""),
+    )
+    private val lsdPatterns = listOf(
+        Regex("\"LSD\"[\\s\\S]{0,200}?\"token\"\\s*:\\s*\"([^\"]+)\""),
+        Regex("name=\"lsd\"[^>]*value=\"([^\"]+)\""),
+    )
 
     fun asbdID(html: String): String? = asbd.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotEmpty() }
 
     fun wwwClaim(html: String): String? = claim.find(html)?.groupValues?.getOrNull(1)
         ?.takeIf { it.isNotEmpty() && it != "0" }
+
+    private val unicodeQuote = "\\" + "u0022"
+
+    fun decodeMetaJson(html: String): String = html.replace(unicodeQuote, "\"").replace("\\\"", "\"")
+
+    fun fbDtsg(html: String): String? = firstGroup(decodeMetaJson(html), dtsgPatterns)
+
+    fun lsd(html: String): String? = firstGroup(decodeMetaJson(html), lsdPatterns)
+
+    fun jazoest(dtsg: String): String = "2" + dtsg.sumOf { it.code }
+
+    private fun firstGroup(text: String, patterns: List<Regex>): String? =
+        patterns.firstNotNullOfOrNull { it.find(text)?.groupValues?.getOrNull(1) }?.takeIf { it.isNotBlank() }
 }
 
 object InstagramWebFormat {
     fun topKeys(body: ByteArray): String {
         if (body.isEmpty()) return "empty"
-        if (InstagramResponseClassifier.looksLikeHtml(body)) return "html"
-        val root = runCatching { JSONObject(body.decodeToString()) }.getOrNull() ?: return "not-json"
+        val text = InstagramResponseClassifier.stripJsEnvelope(body.decodeToString())
+        if (InstagramResponseClassifier.looksLikeHtml(text.toByteArray())) return "html"
+        val root = runCatching { JSONObject(text) }.getOrNull() ?: return "not-json"
         return root.keys().asSequence().take(12).joinToString(",")
     }
 
     fun parseInbox(body: ByteArray): InboxPage {
-        val root = JSONObject(body.decodeToString())
+        val root = JSONObject(quoteOversizedNumericIds(body.decodeToString()))
         val inbox = root.optJSONObject("inbox")
             ?: root.optJSONObject("data")?.optJSONObject("inbox")
             ?: throw IllegalArgumentException("missing inbox (${topKeys(body)})")
@@ -302,7 +377,7 @@ object InstagramWebFormat {
     }
 
     fun parseThread(body: ByteArray): ThreadPage {
-        val root = JSONObject(body.decodeToString())
+        val root = JSONObject(quoteOversizedNumericIds(body.decodeToString()))
         val thread = root.optJSONObject("thread")
             ?: root.optJSONObject("data")?.optJSONObject("thread")
             ?: throw IllegalArgumentException("missing thread (${topKeys(body)})")
@@ -355,14 +430,18 @@ object InstagramWebFormat {
     }
 
     private fun parseItem(obj: JSONObject): ThreadItem {
-        val type = obj.optString("item_type", "text").lowercase()
+        val type = InstagramItemKind.declaredType(obj)
+        val webMessageID = listOf("message_id", "client_context", "item_iid")
+            .map { flexibleId(obj, it) }
+            .firstOrNull { it.startsWith("mid.") }
         return ThreadItem(
-            itemID = flexibleId(obj, "item_id"),
+            itemID = flexibleId(obj, "item_id").ifEmpty { flexibleId(obj, "client_context") },
             authorID = flexibleIdOrNull(obj, "user_id"),
             sentAtMillis = dateFrom(obj.optLong("timestamp")),
-            kind = kindFor(type),
-            isSystem = type in setOf("action_log", "video_call_event", "profile", "live_viewer_invite", "info"),
+            kind = InstagramItemKind.of(obj),
+            isSystem = InstagramItemKind.isSystem(type),
             sentByViewer = if (obj.has("is_sent_by_viewer")) obj.optBoolean("is_sent_by_viewer") else null,
+            webMessageID = webMessageID,
         )
     }
 
@@ -372,20 +451,24 @@ object InstagramWebFormat {
         else -> raw * 1_000
     }
 
-    private fun kindFor(type: String): MessageKind = when (type) {
-        "voice_media", "audio" -> MessageKind.VOICE
-        "media", "raven_media", "animated_media", "clip", "media_share", "reel_share",
-        "story_share", "felix_share", "xma_media_share", "generic_xma",
-        -> MessageKind.MEDIA
-        "link", "xma_link" -> MessageKind.LINK
-        "text", "placeholder" -> MessageKind.TEXT
-        else -> MessageKind.OTHER
-    }
+    fun quoteOversizedNumericIds(raw: String): String =
+        OVERSIZED_NUMERIC_ID.replace(raw) { match ->
+            "\"${match.groupValues[1]}\":\"${match.groupValues[2]}\""
+        }
 
     private fun flexibleId(obj: JSONObject, key: String): String {
         if (!obj.has(key) || obj.isNull(key)) return ""
-        return obj.optString(key).ifBlank { obj.optLong(key).toString() }
+        return when (val value = obj.opt(key)) {
+            is String -> value
+            is Int, is Long -> value.toString()
+            is java.math.BigInteger -> value.toString()
+            is Number -> value.toString().substringBefore('.').substringBefore('E').substringBefore('e')
+            else -> obj.optString(key)
+        }
     }
+
+    private val OVERSIZED_NUMERIC_ID =
+        Regex("\"(item_id|thread_id|thread_v2_id|user_id|pk|client_context|id)\"\\s*:\\s*(\\d{16,})")
 
     private fun flexibleIdOrNull(obj: JSONObject, key: String): String? {
         val value = flexibleId(obj, key)

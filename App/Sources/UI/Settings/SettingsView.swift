@@ -31,9 +31,6 @@ struct SettingsView: View {
                                 .foregroundStyle(Palette.secondaryInk)
                         }
                     }
-                    if entitlements.state.cleanupPasses > 0 {
-                        Label("^[\(entitlements.state.cleanupPasses) one-time cleanup](inflect: true) ready", systemImage: "ticket.fill")
-                    }
                     if entitlements.isPro {
                         Button("Manage subscription") { managingSubscription = true }
                     } else {
@@ -66,9 +63,9 @@ struct SettingsView: View {
                 }
 
                 Section("Help") {
-                    Link("Support", destination: model.env.configuration.supportURL)
-                    Link("Privacy policy", destination: model.env.configuration.privacyPolicyURL)
-                    Link("Terms of use", destination: model.env.configuration.termsURL)
+                    NavigationLink("Support") { FAQView() }
+                    NavigationLink("Privacy policy") { PrivacyView() }
+                    NavigationLink("Terms of use") { TermsView() }
                 }
 
                 Section {
@@ -81,7 +78,7 @@ struct SettingsView: View {
                 Section {
                     EmptyView()
                 } footer: {
-                    Text("Retract \(appVersion) · No analytics. Not affiliated with Instagram or Meta.")
+                    Text("Retract \(appVersion) · No analytics. Not affiliated with Instagram or Meta. We are not responsible for anything that happens to your Instagram account.")
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -105,6 +102,7 @@ struct SettingsView: View {
             .sheet(isPresented: $showingPaywall) {
                 PaywallView(context: .settings)
                     .environment(model)
+                    .presentationBackground(Palette.background)
             }
             .manageSubscriptionsSheet(isPresented: $managingSubscription)
         }

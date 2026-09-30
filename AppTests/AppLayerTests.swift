@@ -66,26 +66,25 @@ final class PassLedgerTests: XCTestCase {
 
 @MainActor
 final class EntitlementManagerTests: XCTestCase {
-    func testOneTimePurchaseGrantsAPass() async throws {
+    func testPaywallOnlyOffersSubscriptions() async throws {
         let ledger = PassLedger(store: InMemorySecretStore())
         let manager = EntitlementManager(service: MockPurchaseService(ledger: ledger), ledger: ledger, freeLimit: 50, analytics: .disabled)
         await manager.loadProducts()
-        let single = try XCTUnwrap(manager.products.first { $0.kind == .oneTimeCleanup })
-        let outcome = await manager.purchase(single)
-        XCTAssertEqual(outcome, .purchased)
+        XCTAssertFalse(manager.products.contains { $0.kind == .oneTimeCleanup })
+        let yearly = try XCTUnwrap(manager.products.first { $0.kind == .proYearly })
+        _ = await manager.purchase(yearly)
+        XCTAssertTrue(manager.isPro)
+    }
+
+    func testExistingPassStillUnlocksACleanup() async throws {
+        let ledger = PassLedger(store: InMemorySecretStore())
+        XCTAssertTrue(try ledger.credit(transactionID: "legacy-pass"))
+        let manager = EntitlementManager(service: MockPurchaseService(ledger: ledger), ledger: ledger, freeLimit: 50, analytics: .disabled)
+        await manager.refresh()
         XCTAssertEqual(manager.state.cleanupPasses, 1)
         XCTAssertEqual(manager.allowance(requestedCount: 9_000, usesAdvancedFilters: false), .allowed(limit: nil, consumesPass: true, usesFreeAllowance: false))
         XCTAssertTrue(manager.consumePass())
         XCTAssertEqual(manager.state.cleanupPasses, 0)
-    }
-
-    func testSubscriptionUnlocksPro() async throws {
-        let ledger = PassLedger(store: InMemorySecretStore())
-        let manager = EntitlementManager(service: MockPurchaseService(ledger: ledger), ledger: ledger, freeLimit: 50, analytics: .disabled)
-        await manager.loadProducts()
-        let yearly = try XCTUnwrap(manager.products.first { $0.kind == .proYearly })
-        _ = await manager.purchase(yearly)
-        XCTAssertTrue(manager.isPro)
     }
 
     func testFreeTierIsLimited() {

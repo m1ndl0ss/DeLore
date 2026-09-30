@@ -134,7 +134,6 @@ class EntitlementManager(
     private fun fallbackProducts() = listOf(
         StoreProduct(BuildConfig.PRODUCT_PRO_YEARLY, StoreProduct.Kind.YEARLY, "Pro Yearly", "$59.99", "$5.00"),
         StoreProduct(BuildConfig.PRODUCT_PRO_MONTHLY, StoreProduct.Kind.MONTHLY, "Pro Monthly", "$19.99"),
-        StoreProduct(BuildConfig.PRODUCT_ONE_TIME, StoreProduct.Kind.ONE_TIME, "One-time cleanup", "$9.99"),
     )
 
     private suspend fun ensureClient() {
@@ -162,19 +161,16 @@ class EntitlementManager(
 
     private suspend fun queryProductDetails(): List<StoreProduct> {
         val client = billing ?: return emptyList()
-        val inApp = queryDetails(client, BillingClient.ProductType.INAPP, listOf(BuildConfig.PRODUCT_ONE_TIME))
         val subs = queryDetails(
             client,
             BillingClient.ProductType.SUBS,
             listOf(BuildConfig.PRODUCT_PRO_MONTHLY, BuildConfig.PRODUCT_PRO_YEARLY),
         )
-        details = (inApp + subs).associateBy { it.productId }
+        details = subs.associateBy { it.productId }
         return fallbackProducts().map { fallback ->
             val detail = details[fallback.id] ?: return@map fallback
-            val price = when (fallback.kind) {
-                StoreProduct.Kind.ONE_TIME -> detail.oneTimePurchaseOfferDetails?.formattedPrice
-                else -> detail.subscriptionOfferDetails?.firstOrNull()?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice
-            } ?: fallback.displayPrice
+            val price = detail.subscriptionOfferDetails?.firstOrNull()?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice
+                ?: fallback.displayPrice
             fallback.copy(displayPrice = price)
         }.sortedBy {
             when (it.kind) {

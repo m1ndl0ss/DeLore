@@ -28,18 +28,26 @@ final class InboxSyncModel: Identifiable {
     private(set) var retryAfter: TimeInterval?
     private let env: AppEnvironment
     private let job: Job
+    private let titlesByID: [String: String]
     var onFinished: ((LibraryOverview) -> Void)?
     var onFailed: (() -> Void)?
     private var work: Task<Void, Never>?
 
-    init(env: AppEnvironment, job: Job = .list, seedTitles: [String] = []) {
+    init(env: AppEnvironment, job: Job = .list, seedTitles: [String] = [], titlesByID: [String: String] = [:]) {
         self.env = env
         self.job = job
+        self.titlesByID = titlesByID
         switch job {
         case .list:
             latest = InboxReadProgress(chatsFound: seedTitles.count, foundTitles: seedTitles)
         case let .load(ids):
-            latest = InboxReadProgress(chatsFound: seedTitles.count, chatsTotal: ids.count, foundTitles: seedTitles)
+            latest = InboxReadProgress(
+                chatsFound: seedTitles.count,
+                chatsRead: 0,
+                chatsTotal: ids.count,
+                currentTitle: seedTitles.first,
+                foundTitles: seedTitles
+            )
         }
         phase = .running(latest)
     }
@@ -56,7 +64,7 @@ final class InboxSyncModel: Identifiable {
                         Task { @MainActor in self?.update(progress) }
                     }
                 case let .load(ids):
-                    overview = try await self.env.loadInbox(ids: ids) { [weak self] progress in
+                    overview = try await self.env.loadInbox(ids: ids, titles: self.titlesByID) { [weak self] progress in
                         Task { @MainActor in self?.update(progress) }
                     }
                 }

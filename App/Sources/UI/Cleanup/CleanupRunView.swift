@@ -106,11 +106,16 @@ struct CleanupRunView: View {
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Palette.secondaryInk)
                     .frame(maxWidth: .infinity)
-                Label("If Instagram asks us to wait, we wait — on purpose, to keep your account safe.", systemImage: "shield.lefthalf.filled")
+                Label("If Instagram asks us to wait, we wait. That does not mean your account is safe.", systemImage: "shield.lefthalf.filled")
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Palette.secondaryInk)
                     .frame(maxWidth: .infinity)
                     .multilineTextAlignment(.center)
+                Text(LegalCopy.notResponsible)
+                    .font(.footnote)
+                    .foregroundStyle(Palette.secondaryInk)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
 
                 primaryAction(copy.action)
 

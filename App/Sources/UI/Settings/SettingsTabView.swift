@@ -66,9 +66,9 @@ struct SettingsTabView: View {
                 VStack(spacing: 0) {
                     row(symbol: "hand.raised", title: "Privacy") { model.sheet = .privacy }
                     divider
-                    linkRow(symbol: "questionmark.circle", title: "Support", url: model.env.configuration.supportURL)
+                    row(symbol: "questionmark.circle", title: "Support") { model.sheet = .support }
                     divider
-                    linkRow(symbol: "doc", title: "Terms", url: model.env.configuration.termsURL)
+                    row(symbol: "doc", title: "Terms") { model.sheet = .terms }
                 }
                 .elevated()
 
@@ -124,25 +124,5 @@ struct SettingsTabView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-
-    private func linkRow(symbol: String, title: String, url: URL) -> some View {
-        Link(destination: url) {
-            HStack(spacing: Spacing.m) {
-                Image(systemName: symbol)
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Palette.secondaryInk)
-                    .frame(width: 24)
-                Text(title)
-                    .font(Type.body(17))
-                    .foregroundStyle(Palette.ink)
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Palette.tertiaryInk)
-            }
-            .frame(minHeight: Metrics.rowHeight)
-            .padding(.horizontal, Metrics.cardInset)
-        }
     }
 }

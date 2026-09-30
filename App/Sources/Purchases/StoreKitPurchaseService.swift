@@ -45,7 +45,7 @@ final class StoreKitPurchaseService: PurchaseService, @unchecked Sendable {
             throw PurchaseError.storeUnavailable
         }
         guard !storeProducts.isEmpty else { throw PurchaseError.storeUnavailable }
-        return storeProducts.compactMap(map).sorted { order($0.kind) < order($1.kind) }
+        return storeProducts.compactMap(map).filter { $0.kind != .oneTimeCleanup }.sorted { order($0.kind) < order($1.kind) }
     }
 
     func purchase(_ productID: String) async throws -> PurchaseOutcome {

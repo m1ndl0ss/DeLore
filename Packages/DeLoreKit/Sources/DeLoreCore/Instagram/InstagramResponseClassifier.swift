@@ -35,15 +35,18 @@ public enum InstagramResponseClassifier {
     }
 
     private static func bodyError(_ body: Data, statusCode: Int, destructive: Bool) -> IntegrationError? {
-        guard !body.isEmpty else { return nil }
-        guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
-            if looksLikeHTML(body) {
-                let html = String(data: body.prefix(4_000), encoding: .utf8)?.lowercased() ?? ""
+        if body.isEmpty {
+            return destructive ? .unexpectedResponse(code: statusCode) : nil
+        }
+        let stripped = stripJsEnvelope(body)
+        guard let object = try? JSONSerialization.jsonObject(with: stripped) as? [String: Any] else {
+            if looksLikeHTML(stripped) || looksLikeHTML(body) {
+                let html = String(data: stripped.prefix(4_000), encoding: .utf8)?.lowercased() ?? ""
                 if html.contains("checkpoint") || html.contains("/challenge") { return .verificationRequired }
                 if html.contains("/accounts/login") || html.contains("login_required") { return .sessionExpired }
                 return .unexpectedResponse(code: statusCode)
             }
-            return nil
+            return destructive ? .unexpectedResponse(code: statusCode) : nil
         }
         let status = (object["status"] as? String)?.lowercased() ?? ""
         let envelope = envelopeText(object)
@@ -65,13 +68,19 @@ public enum InstagramResponseClassifier {
         }
         if status == "ok" || status == "success" { return nil }
         if object["inbox"] != nil || object["thread"] != nil || object["items"] != nil { return nil }
+        if let data = object["data"] as? [String: Any], boolish(data["direct_unsend_message"]) {
+            return nil
+        }
+        if object["errors"] != nil && object["inbox"] == nil && object["thread"] == nil {
+            return .unexpectedResponse(code: nil)
+        }
         if status == "fail" || status == "error" {
-            if envelope.contains("not found") || envelope.contains("does not exist") || envelope.contains("no longer") {
+            if envelope.contains("not found") || envelope.contains("does not exist") || envelope.contains("no longer") || envelope.contains("already") {
                 return nil
             }
             return .unexpectedResponse(code: nil)
         }
-        return nil
+        return destructive ? .unexpectedResponse(code: statusCode) : nil
     }
 
     private static func envelopeText(_ object: [String: Any]) -> String {
@@ -91,7 +100,7 @@ public enum InstagramResponseClassifier {
         .lowercased()
     }
 
-    private static func boolish(_ value: Any?) -> Bool {
+    static func boolish(_ value: Any?) -> Bool {
         switch value {
         case let flag as Bool: return flag
         case let number as NSNumber: return number.boolValue
@@ -101,15 +110,30 @@ public enum InstagramResponseClassifier {
     }
 
     private static func looksLikeHTML(_ data: Data) -> Bool {
-        guard let prefix = String(data: data.prefix(32), encoding: .utf8)?.lowercased() else { return false }
-        return prefix.contains("<!doctype") || prefix.contains("<html")
+        guard let prefix = String(data: data.prefix(200), encoding: .utf8)?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        return prefix.contains("<!doctype") || prefix.contains("<html") || prefix.contains("<head") || prefix.hasPrefix("<script") || prefix.hasPrefix("<!--")
+    }
+
+    static func stripJsEnvelope(_ body: Data) -> Data {
+        guard var text = String(data: body, encoding: .utf8) else { return body }
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefixes = ["for (;;);", "while(1);", "while (1);", ")]}',", ")]}'"]
+        for prefix in prefixes where text.hasPrefix(prefix) {
+            text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            break
+        }
+        return Data(text.utf8)
     }
 }
 
 /// Success payload for a delete/unsend. `ok` and "already gone" are both terminal successes.
 public enum InstagramDeleteParse {
-    public static func outcome(from response: HTTPResponse) -> UnsendOutcome {
-        guard let object = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any] else {
+    public static func outcome(from response: HTTPResponse) throws -> UnsendOutcome {
+        let stripped = InstagramResponseClassifier.stripJsEnvelope(response.body)
+        guard let object = (try? JSONSerialization.jsonObject(with: stripped)) as? [String: Any] else {
+            throw IntegrationError.unexpectedResponse(code: response.statusCode)
+        }
+        if let data = object["data"] as? [String: Any], InstagramResponseClassifier.boolish(data["direct_unsend_message"]) {
             return .unsent
         }
         let blob = (object["message"] as? String ?? "").lowercased()
@@ -117,6 +141,8 @@ public enum InstagramDeleteParse {
         if blob.contains("not found") || blob.contains("already") || blob.contains("no longer") {
             return .alreadyGone
         }
-        return .unsent
+        let status = (object["status"] as? String)?.lowercased() ?? ""
+        if status == "ok" || status == "success" { return .unsent }
+        throw IntegrationError.unexpectedResponse(code: response.statusCode)
     }
 }

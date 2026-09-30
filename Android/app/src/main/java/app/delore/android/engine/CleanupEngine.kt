@@ -91,7 +91,10 @@ class CleanupEngine private constructor(
             if (restoredItems[index].state == CleanupItemState.RETRY_WAIT) retryIndices.add(index)
             counts[restoredItems[index].state] = (counts[restoredItems[index].state] ?: 0) + 1
         }
-        if (restored.status == JobStatus.Running || restored.status == JobStatus.Paused(PauseReason.APP_IN_BACKGROUND)) {
+        if (restored.status == JobStatus.Running ||
+            restored.status == JobStatus.Paused(PauseReason.APP_IN_BACKGROUND) ||
+            restored.status == JobStatus.Paused(PauseReason.UNEXPECTED_RESPONSE)
+        ) {
             restored = restored.copy(status = JobStatus.Paused(PauseReason.INTERRUPTED))
             deps.store.updateJob(restored)
         }
@@ -366,10 +369,9 @@ class CleanupEngine private constructor(
                 return
             }
             is IntegrationError.UnexpectedResponse -> {
-                if (destructive) items[index] = items[index].copy(needsReconcile = true, nextAttemptAt = null)
-                else items[index] = items[index].copy(nextAttemptAt = null)
-                transition(index, CleanupItemState.RETRY_WAIT)
-                stopLocked(PauseReason.UNEXPECTED_RESPONSE)
+                consecutiveFailures = 0
+                items[index] = items[index].copy(needsReconcile = false, nextAttemptAt = null)
+                transition(index, CleanupItemState.FAILED)
                 return
             }
             is IntegrationError.TransportFailure -> {

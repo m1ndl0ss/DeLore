@@ -16,10 +16,7 @@ struct InboxSyncView: View {
             }
             switch sync.phase {
             case let .running(progress):
-                tracker(
-                    title: progress.isListing ? "Finding who you talked to…" : "Reading selected chats…",
-                    progress: progress
-                )
+                tracker(title: progress.headline, progress: progress)
             case .finished:
                 tracker(title: "All set", progress: sync.latest)
             case let .failed(title, message, kind):
@@ -48,6 +45,7 @@ struct InboxSyncView: View {
     }
 
     private var titles: [String] {
+        if !sync.latest.isListing { return sync.latest.foundTitles }
         let fromSync = sync.latest.foundTitles
         if !fromSync.isEmpty { return fromSync }
         return model.overview?.conversations.map(\.title) ?? []
@@ -56,35 +54,26 @@ struct InboxSyncView: View {
     private var caption: String {
         if titles.isEmpty && !failed { return "Names land here as we find them" }
         if failed { return "Kept on this phone · \(titles.count)" }
+        if !sync.latest.isListing { return sync.latest.displayChat ?? "This chat" }
         return "Found so far · \(titles.count)"
     }
 
-    private func tracker(title: LocalizedStringKey, progress: InboxReadProgress) -> some View {
+    private func tracker(title: String, progress: InboxReadProgress) -> some View {
         VStack(spacing: Spacing.s) {
             Text(title)
                 .font(Type.medium(20))
                 .foregroundStyle(Palette.ink)
                 .multilineTextAlignment(.center)
 
-            Text(progress.isListing
-                 ? "\(progress.chatsFound.formatted()) people so far"
-                 : "\(progress.chatsRead.formatted()) / \((progress.chatsTotal ?? 0).formatted()) chats")
+            Text(progress.detail)
                 .font(Type.medium(15))
                 .foregroundStyle(Palette.accent)
                 .contentTransition(.numericText())
-                .animation(.snappy, value: progress.chatsRead + progress.chatsFound)
-                .accessibilityLabel(progress.isListing
-                    ? Text("\(progress.chatsFound) people so far")
-                    : Text("\(progress.chatsRead) of \(progress.chatsTotal ?? 0) chats"))
+                .animation(.snappy, value: progress.sendsFound + progress.chatsFound)
+                .accessibilityLabel(Text(progress.detail))
 
             LoreProgressBar(fraction: progress.fraction)
                 .frame(maxWidth: 280)
-
-            if progress.sendsFound > 0 {
-                Text("\(progress.sendsFound.formatted()) of your sends")
-                    .font(.subheadline)
-                    .foregroundStyle(Palette.secondaryInk)
-            }
         }
     }
 
@@ -187,8 +176,10 @@ private struct FoundPersonRow: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(newest ? Palette.accent.opacity(0.45) : Color.clear, lineWidth: 1)
+                .strokeBorder(newest ? Palette.accent.opacity(newest ? 0.7 : 0.45) : Color.clear, lineWidth: 1)
         )
+        .scaleEffect(newest ? 1.015 : 1)
+        .animation(.spring(duration: 0.28), value: newest)
     }
 }
 

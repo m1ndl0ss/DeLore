@@ -87,7 +87,7 @@ public actor CleanupEngine {
 
         // A fresh engine means a fresh process: whatever was running (or waiting for the app to
         // come back) was interrupted by termination.
-        if job.status == .running || job.status == .paused(.appInBackground) {
+        if job.status == .running || job.status == .paused(.appInBackground) || job.status == .paused(.unexpectedResponse) {
             job.status = .paused(.interrupted)
             try dependencies.store.updateJob(job)
         }
@@ -439,13 +439,10 @@ public actor CleanupEngine {
             stop(.offline)
             return
 
-        case let .unexpectedResponse(code):
-            // Unknown territory: assume it may have been applied and stop.
-            logger.error("unexpected response \(code.map(String.init) ?? "-"); stopping")
-            if destructive { items[index].needsReconcile = true }
+        case .unexpectedResponse:
+            items[index].needsReconcile = false
             items[index].nextAttemptAt = nil
-            transition(index, to: .retryWait)
-            stop(.unexpectedResponse)
+            transition(index, to: .failed)
             return
 
         case let .transportFailure(mayHaveBeenApplied):

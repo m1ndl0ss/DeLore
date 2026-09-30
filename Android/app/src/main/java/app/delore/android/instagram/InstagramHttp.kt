@@ -24,9 +24,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -36,7 +38,21 @@ data class InstagramAPIRequest(
     val query: Map<String, String> = emptyMap(),
     val isIdempotent: Boolean = method == HTTPMethod.GET,
     val destructive: Boolean = false,
+    val form: Map<String, String> = emptyMap(),
+    val host: String = InstagramWebConstants.WWW_HOST,
+    val emptyBody: Boolean = false,
 )
+
+object InstagramForm {
+    private val FORM = "application/x-www-form-urlencoded; charset=UTF-8".toMediaType()
+
+    fun mediaType() = FORM
+
+    fun encode(fields: Map<String, String>): String =
+        fields.entries.joinToString("&") { (key, value) ->
+            "${URLEncoder.encode(key, Charsets.UTF_8)}=${URLEncoder.encode(value, Charsets.UTF_8)}"
+        }
+}
 
 fun interface InstagramAPIClient {
     suspend fun send(request: InstagramAPIRequest): HTTPResponse
@@ -54,6 +70,8 @@ class InstagramHTTPClient(
 
     @Volatile private var wwwClaim = "0"
     @Volatile private var asbdID: String? = null
+    @Volatile private var fbDtsg: String? = null
+    @Volatile private var lsdToken: String? = null
     @Volatile private var warmedForUser: String? = null
 
     override suspend fun send(request: InstagramAPIRequest): HTTPResponse {
@@ -81,7 +99,8 @@ class InstagramHTTPClient(
         if (!session.hasLiveSession) throw IntegrationError.SessionExpired
         val csrf = session.csrfToken?.takeIf { it.isNotEmpty() } ?: throw IntegrationError.SessionExpired
         warmupIfNeeded(session, csrf)
-        val url = instagramUrl(request.path, request.query)
+        val url = instagramUrl(request.path, request.query, request.host)
+        val sameSite = request.host == InstagramWebConstants.API_HOST
         val builder = Request.Builder()
             .url(url)
             .header("Cookie", session.cookieHeader())
@@ -98,15 +117,31 @@ class InstagramHTTPClient(
             .header("ig-intended-user-id", session.userID)
             .header("Sec-Fetch-Dest", "empty")
             .header("Sec-Fetch-Mode", "cors")
-            .header("Sec-Fetch-Site", "same-origin")
+            .header("Sec-Fetch-Site", if (sameSite) "same-site" else "same-origin")
         asbdID?.let { builder.header("X-ASBD-ID", it) }
         when (request.method) {
             HTTPMethod.GET -> builder.get()
-            HTTPMethod.POST -> builder.post("".toRequestBody(null)).header(
-                "Content-Type",
-                "application/x-www-form-urlencoded; charset=UTF-8",
-            )
-            HTTPMethod.DELETE -> builder.delete()
+            HTTPMethod.POST -> {
+                if (request.emptyBody) {
+                    builder.post("".toRequestBody(null))
+                } else {
+                    val fields = signedForm(request.form, csrf, request.destructive).toMutableMap()
+                    if (request.path.contains("graphql")) {
+                        fbDtsg?.takeIf { it.isNotBlank() }?.let { token ->
+                            fields.putIfAbsent("fb_dtsg", token)
+                            fields.putIfAbsent("jazoest", InstagramWebBootstrap.jazoest(token))
+                        }
+                        lsdToken?.takeIf { it.isNotBlank() }?.let { fields.putIfAbsent("lsd", it) }
+                    }
+                    builder.post(InstagramForm.encode(fields).toRequestBody(InstagramForm.mediaType()))
+                        .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                }
+            }
+            HTTPMethod.DELETE -> {
+                val fields = signedForm(request.form, csrf, request.destructive)
+                if (fields.isEmpty()) builder.delete()
+                else builder.delete(InstagramForm.encode(fields).toRequestBody(InstagramForm.mediaType()))
+            }
         }
         val response = try {
             apiClient.newCall(builder.build()).execute()
@@ -129,7 +164,7 @@ class InstagramHTTPClient(
             val mapped = HTTPResponse(http.code, headers, body)
             Log.i(
                 "Retract",
-                "IG ${request.method} ${request.path} -> ${http.code} bytes=${body.size} keys=${InstagramWebFormat.topKeys(body)}",
+                "IG ${request.method} ${request.host}${request.path} -> ${http.code} bytes=${body.size} keys=${InstagramWebFormat.topKeys(body)}",
             )
             InstagramResponseClassifier.throwIfNeeded(mapped, request.destructive)
             return mapped
@@ -163,7 +198,9 @@ class InstagramHTTPClient(
                 val html = http.body?.string().orEmpty()
                 InstagramWebBootstrap.asbdID(html)?.let { asbdID = it }
                 InstagramWebBootstrap.wwwClaim(html)?.let { wwwClaim = it }
-                Log.i("Retract", "IG warmup -> ${http.code} htmlBytes=${html.length} hasClaim=${wwwClaim != "0"} hasAsbd=${asbdID != null}")
+                InstagramWebBootstrap.fbDtsg(html)?.let { fbDtsg = it }
+                InstagramWebBootstrap.lsd(html)?.let { lsdToken = it }
+                Log.i("Retract", "IG warmup -> ${http.code} htmlBytes=${html.length} hasClaim=${wwwClaim != "0"} hasAsbd=${asbdID != null} dtsg=${fbDtsg != null}")
             }
         } catch (error: CancellationException) {
             throw error
@@ -174,17 +211,36 @@ class InstagramHTTPClient(
     }
 
     companion object {
-        fun instagramUrl(path: String, query: Map<String, String>): String {
+        private val allowedHosts = setOf(
+            InstagramWebConstants.WWW_HOST,
+            "instagram.com",
+            InstagramWebConstants.API_HOST,
+        )
+
+        fun instagramUrl(
+            path: String,
+            query: Map<String, String> = emptyMap(),
+            host: String = InstagramWebConstants.WWW_HOST,
+        ): String {
             val normalized = if (path.startsWith("/")) path else "/$path"
             if ("://" in normalized || normalized.startsWith("//")) throw NetworkError("invalidResponse")
-            val httpUrl = (InstagramWebConstants.BASE + normalized).toHttpUrl().newBuilder()
+            val requested = host.lowercase()
+            if (requested !in allowedHosts) throw IntegrationError.Unavailable
+            val httpUrl = "https://$requested$normalized".toHttpUrl().newBuilder()
             query.forEach { (k, v) -> httpUrl.addQueryParameter(k, v) }
             val url = httpUrl.build()
-            val host = url.host.lowercase()
-            if (url.scheme != "https" || (host != "www.instagram.com" && host != "instagram.com")) {
+            val resolved = url.host.lowercase()
+            if (url.scheme != "https" || resolved !in allowedHosts) {
                 throw IntegrationError.Unavailable
             }
             return url.toString()
+        }
+
+        fun signedForm(form: Map<String, String>, csrf: String, destructive: Boolean): Map<String, String> {
+            if (form.isEmpty() && !destructive) return emptyMap()
+            val fields = form.toMutableMap()
+            fields.putIfAbsent("_csrftoken", csrf)
+            return fields
         }
     }
 }
@@ -198,6 +254,17 @@ fun defaultOkHttp(): OkHttpClient = OkHttpClient.Builder()
     .cookieJar(okhttp3.CookieJar.NO_COOKIES)
     .build()
 
+/**
+ * Unsend path that actually works against Instagram's website session:
+ * 1. GraphQL `direct_unsend_message` on www.instagram.com with Relay-only headers
+ *    (`fb_dtsg` from `require('DTSGInitialData')`). Extra Instagram API headers
+ *    (`X-Requested-With`, `ig-u-ds-user-id`, `X-IG-WWW-Claim`) make Meta's ajax
+ *    layer return "Log in to continue" even with a real token.
+ * 2. Fallback: empty-body POST to
+ *    `i.instagram.com/api/v1/direct_v2/threads/{thread}/items/{item}/delete/`
+ *    from the same-origin WebView (www delete is a 404 SPA; cross-origin fetch is CORS).
+ * Desktop Chrome UA only — never a spoofed Instagram app identity.
+ */
 class InstagramWebUnsendService(
     private val client: InstagramAPIClient,
     private val ownerID: () -> String?,
@@ -205,15 +272,43 @@ class InstagramWebUnsendService(
 ) : UnsendService {
     override suspend fun unsend(target: CleanupTarget): UnsendOutcome {
         if (!isOwned(target)) return UnsendOutcome.NOT_OWNED
-        val response = client.send(
-            InstagramAPIRequest(
-                method = HTTPMethod.POST,
-                path = deletePath(target.ref),
-                isIdempotent = false,
-                destructive = true,
-            ),
-        )
-        return InstagramDeleteParse.outcome(response)
+        val owner = ownerID()?.takeIf { it.isNotEmpty() } ?: throw IntegrationError.SessionExpired
+        val live = runCatching { liveUnsendIDs(target) }.getOrNull()
+        val itemId = live?.itemID?.ifBlank { null } ?: target.ref.messageID
+        val mid = live?.webMessageID
+        var last: IntegrationError? = null
+        if (!mid.isNullOrBlank()) {
+            try {
+                val response = client.send(graphqlUnsend(target, owner, mid))
+                val outcome = InstagramDeleteParse.outcome(response)
+                Log.i("Retract", "IG unsend ok graphql mid")
+                return outcome
+            } catch (error: IntegrationError.UnexpectedResponse) {
+                last = error
+                Log.w("Retract", "IG unsend skip graphql code=${error.code}")
+            } catch (error: IntegrationError.TransportFailure) {
+                last = error
+                Log.w("Retract", "IG unsend skip graphql transport")
+            }
+        } else {
+            Log.w("Retract", "IG unsend no mid.$ id for graphql")
+        }
+        val restId = itemId.takeIf { it.isNotBlank() && !it.startsWith("mid.") } ?: itemId
+        for (request in restUnsendAttempts(target, restId)) {
+            try {
+                val response = client.send(request)
+                val outcome = InstagramDeleteParse.outcome(response)
+                Log.i("Retract", "IG unsend ok ${request.host}${request.path} empty=${request.emptyBody}")
+                return outcome
+            } catch (error: IntegrationError.UnexpectedResponse) {
+                last = error
+                Log.w("Retract", "IG unsend skip ${request.host}${request.path} code=${error.code}")
+            } catch (error: IntegrationError.TransportFailure) {
+                last = error
+                Log.w("Retract", "IG unsend skip ${request.host}${request.path} transport")
+            }
+        }
+        throw last ?: IntegrationError.Unavailable
     }
 
     override suspend fun presence(of: CleanupTarget): MessagePresence {
@@ -242,24 +337,99 @@ class InstagramWebUnsendService(
         return target.authorID == ParticipantID("ig:$owner")
     }
 
-    private fun deletePath(ref: MessageRef): String {
-        val thread = URLEncoder.encode(ref.conversationID.rawValue, Charsets.UTF_8)
-        val item = URLEncoder.encode(ref.messageID, Charsets.UTF_8)
-        return "/api/v1/direct_v2/threads/$thread/items/$item/delete/"
+    private fun deletePath(thread: String, item: String): String {
+        val encodedThread = URLEncoder.encode(thread, Charsets.UTF_8)
+        val encodedItem = URLEncoder.encode(item, Charsets.UTF_8)
+        return "/api/v1/direct_v2/threads/$encodedThread/items/$encodedItem/delete/"
     }
 
-    private suspend fun fetchThread(id: String, cursor: String?): ThreadPage {
-        val query = mutableMapOf("limit" to "20")
-        if (cursor != null) {
-            query["cursor"] = cursor
-            query["direction"] = "older"
-        }
-        val encoded = URLEncoder.encode(id, Charsets.UTF_8)
-        val response = client.send(
-            InstagramAPIRequest(HTTPMethod.GET, "/api/v1/direct_v2/threads/$encoded/", query),
+    private fun restUnsendAttempts(target: CleanupTarget, itemId: String): List<InstagramAPIRequest> {
+        val path = deletePath(target.ref.conversationID.rawValue, itemId)
+        return listOf(
+            InstagramAPIRequest(
+                method = HTTPMethod.POST,
+                path = path,
+                host = InstagramWebConstants.API_HOST,
+                isIdempotent = false,
+                destructive = true,
+                emptyBody = true,
+            ),
         )
-        return InstagramWebFormat.parseThread(response.body)
     }
+
+    private fun graphqlUnsend(target: CleanupTarget, owner: String, messageID: String): InstagramAPIRequest {
+        val variables = JSONObject()
+            .put("message_id", messageID)
+            .put("send_data", JSONObject().put("thread_id", target.ref.conversationID.rawValue))
+            .toString()
+        return InstagramAPIRequest(
+            method = HTTPMethod.POST,
+            path = "/api/graphql",
+            form = mapOf(
+                "av" to owner,
+                "__user" to owner,
+                "fb_api_caller_class" to "RelayModern",
+                "fb_api_req_friendly_name" to "direct_unsend_message",
+                "variables" to variables,
+                "server_timestamps" to "true",
+                "doc_id" to InstagramWebConstants.UNSEND_DOC_ID,
+            ),
+            host = InstagramWebConstants.WWW_HOST,
+            isIdempotent = false,
+            destructive = true,
+        )
+    }
+
+    private data class LiveUnsendIDs(val itemID: String, val webMessageID: String?)
+
+    private suspend fun liveUnsendIDs(target: CleanupTarget): LiveUnsendIDs? {
+        var cursor: String? = null
+        repeat(maxOf(1, presencePageLimit)) {
+            val page = fetchThread(target.ref.conversationID.rawValue, cursor)
+            val item = page.items.firstOrNull { it.itemID == target.ref.messageID }
+            if (item != null) {
+                Log.i("Retract", "IG item mid=${item.webMessageID != null}")
+                return LiveUnsendIDs(item.itemID, item.webMessageID)
+            }
+            if (!page.hasOlder || page.oldestCursor == null) return null
+            cursor = page.oldestCursor
+        }
+        return null
+    }
+
+    private suspend fun fetchThread(id: String, cursor: String?): ThreadPage =
+        client.fetchDirectThread(id, cursor)
+}
+
+internal suspend fun InstagramAPIClient.fetchDirectThread(
+    id: String,
+    cursor: String?,
+    pageSize: Int = 20,
+): ThreadPage {
+    val query = mutableMapOf("limit" to pageSize.toString())
+    if (cursor != null) {
+        query["cursor"] = cursor
+        query["direction"] = "older"
+    }
+    val encoded = URLEncoder.encode(id, Charsets.UTF_8)
+    val path = "/api/v1/direct_v2/threads/$encoded/"
+    var last: Exception? = null
+    for (host in listOf(InstagramWebConstants.WWW_HOST, InstagramWebConstants.API_HOST)) {
+        try {
+            val response = send(InstagramAPIRequest(HTTPMethod.GET, path, query, host = host))
+            return runCatching { InstagramWebFormat.parseThread(response.body) }.getOrElse {
+                Log.w("Retract", "IG thread parse $host keys=${InstagramWebFormat.topKeys(response.body)}")
+                throw IntegrationError.UnexpectedResponse(response.statusCode)
+            }
+        } catch (error: IntegrationError.UnexpectedResponse) {
+            last = error
+            Log.w("Retract", "IG thread $host skip code=${error.code}")
+        } catch (error: IntegrationError.TransportFailure) {
+            last = error
+            Log.w("Retract", "IG thread $host skip transport")
+        }
+    }
+    throw last ?: IntegrationError.Unavailable
 }
 
 class InstagramInboxSync(
@@ -271,7 +441,7 @@ class InstagramInboxSync(
 ) {
     suspend fun run(session: InstagramWebSession, onProgress: ((InboxReadProgress) -> Unit)? = null): LibraryOverview {
         val listed = list(session, onProgress = onProgress)
-        return load(session, listed.conversations.map { it.id }, onProgress)
+        return load(session, listed.conversations.map { it.id }, onProgress = onProgress)
     }
 
     suspend fun list(
@@ -339,13 +509,40 @@ class InstagramInboxSync(
     suspend fun load(
         session: InstagramWebSession,
         ids: Collection<ConversationID>,
+        titles: Map<String, String> = emptyMap(),
         onProgress: ((InboxReadProgress) -> Unit)? = null,
     ): LibraryOverview {
         val ownerID = session.userID
-        val wanted = library.conversations().filter { it.id in ids }
+        val wantedIDs = ids.map { it.rawValue }.distinct()
+        val existing = try {
+            library.conversations().associateBy { it.id.rawValue }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+        val wanted = wantedIDs.map { raw ->
+            existing[raw] ?: ConversationSummary(
+                id = ConversationID(raw),
+                title = titles[raw] ?: "Chat",
+                sentByOwner = 0,
+                receivedFromOthers = 0,
+                messagesLoaded = false,
+            )
+        }
         val total = wanted.size
         var sends = 0
-        var overview = LibraryOverview(library.conversations())
+        var overview = LibraryOverview(existing.values.toList())
+        if (wanted.isNotEmpty()) {
+            onProgress?.invoke(
+                InboxReadProgress(
+                    chatsFound = total,
+                    chatsRead = 0,
+                    chatsTotal = total,
+                    sendsFound = 0,
+                    currentTitle = wanted.first().title,
+                    foundTitles = wanted.map { it.title },
+                ),
+            )
+        }
         wanted.forEachIndexed { index, listed ->
             val conversation = loadConversation(listed.id.rawValue, listed.title, ownerID) { partial ->
                 onProgress?.invoke(
@@ -408,8 +605,9 @@ class InstagramInboxSync(
         var cursor: String? = null
         var hasOlder = true
         val seen = HashSet<String>()
+        var lastCursor: String? = null
         while (hasOlder) {
-            val page = fetchThread(threadID, cursor)
+            val page = client.fetchDirectThread(threadID, cursor, pageSize)
             for (item in page.items) {
                 if (item.isSystem || item.itemID.isEmpty()) continue
                 if (!seen.add(item.itemID)) continue
@@ -433,7 +631,8 @@ class InstagramInboxSync(
             }
             hasOlder = page.hasOlder
             cursor = page.oldestCursor
-            if (cursor == null) hasOlder = false
+            if (cursor == null || cursor == lastCursor) hasOlder = false
+            lastCursor = cursor
             onPartial?.invoke(ownerMessages.size)
             if (hasOlder && listingDelaySeconds > 0) clock.sleep(listingDelaySeconds)
         }
@@ -451,25 +650,5 @@ class InstagramInboxSync(
             messagesLoaded = true,
         )
         return summary to ownerMessages
-    }
-
-    private suspend fun fetchThread(id: String, cursor: String?): ThreadPage {
-        val query = mutableMapOf("limit" to pageSize.toString())
-        if (cursor != null) {
-            query["cursor"] = cursor
-            query["direction"] = "older"
-        }
-        val encoded = URLEncoder.encode(id, Charsets.UTF_8)
-        val response = client.send(
-            InstagramAPIRequest(HTTPMethod.GET, "/api/v1/direct_v2/threads/$encoded/", query),
-        )
-        return runCatching { InstagramWebFormat.parseThread(response.body) }
-            .getOrElse {
-                Log.e(
-                    "Retract",
-                    "IG thread parse: ${it.javaClass.simpleName}: ${it.message} keys=${InstagramWebFormat.topKeys(response.body)}",
-                )
-                throw IntegrationError.UnexpectedResponse(response.statusCode)
-            }
     }
 }

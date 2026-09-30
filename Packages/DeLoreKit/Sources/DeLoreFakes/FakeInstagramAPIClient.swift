@@ -85,7 +85,7 @@ public final class FakeInstagramAPIClient: InstagramAPIClient, @unchecked Sendab
             return response
         }
         let response: HTTPResponse
-        if request.path.contains("/delete/") {
+        if request.path.contains("/delete/") || request.path.contains("item_unsend") || request.path.contains("/api/graphql") {
             response = try delete(request)
         } else if request.path.contains("/inbox/") {
             response = inbox(request)
@@ -118,13 +118,10 @@ public final class FakeInstagramAPIClient: InstagramAPIClient, @unchecked Sendab
     }
 
     private func delete(_ request: InstagramAPIRequest) throws -> HTTPResponse {
-        let parts = request.path.split(separator: "/").map(String.init)
-        guard let threadIndex = parts.firstIndex(of: "threads"),
-              parts.count > threadIndex + 3 else {
+        let parsed = unsendIDs(from: request)
+        guard let threadID = parsed.thread, let itemID = parsed.item else {
             return json(404, ["status": "fail"])
         }
-        let threadID = parts[threadIndex + 1]
-        let itemID = parts[threadIndex + 3]
         return lock.withLock {
             deleteCalls += 1
             guard let tIndex = threads.firstIndex(where: { $0.id == threadID }) else {
@@ -141,6 +138,26 @@ public final class FakeInstagramAPIClient: InstagramAPIClient, @unchecked Sendab
             deletedIDs.append(itemID)
             return json(200, ["status": "ok"])
         }
+    }
+
+    private func unsendIDs(from request: InstagramAPIRequest) -> (thread: String?, item: String?) {
+        if let thread = request.form["thread_id"], let item = request.form["item_id"] {
+            return (thread, item)
+        }
+        if let variables = request.form["variables"],
+           let data = variables.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let item = object["message_id"] as? String
+            let thread = (object["send_data"] as? [String: Any])?["thread_id"] as? String
+            if thread != nil || item != nil { return (thread, item) }
+        }
+        let parts = request.path.split(separator: "/").map(String.init)
+        guard let threadIndex = parts.firstIndex(of: "threads"),
+              parts.count > threadIndex + 3,
+              parts[threadIndex + 2] == "items" else {
+            return (nil, nil)
+        }
+        return (parts[threadIndex + 1], parts[threadIndex + 3])
     }
 
     private func inbox(_ request: InstagramAPIRequest) -> HTTPResponse {

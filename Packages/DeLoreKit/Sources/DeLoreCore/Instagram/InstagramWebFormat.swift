@@ -126,26 +126,53 @@ enum InstagramWebFormat {
         let kind: MessageKind
         let isSystem: Bool
         let sentByViewer: Bool?
+        let webMessageID: String?
 
         private enum CodingKeys: String, CodingKey {
             case itemID = "item_id"
+            case clientContext = "client_context"
+            case messageID = "message_id"
             case userID = "user_id"
             case timestamp
             case itemType = "item_type"
+            case itemTypeCamel = "itemType"
             case isSentByViewer = "is_sent_by_viewer"
+            case text, media, clip, link, xma, audio
+            case visualMedia = "visual_media"
+            case voiceMedia = "voice_media"
+            case animatedMedia = "animated_media"
+            case ravenMedia = "raven_media"
+            case mediaShare = "media_share"
+            case reelShare = "reel_share"
+            case storyShare = "story_share"
+            case felixShare = "felix_share"
         }
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             let id = try container.decodeIfPresent(FlexibleID.self, forKey: .itemID)
+                ?? container.decodeIfPresent(FlexibleID.self, forKey: .clientContext)
             itemID = id?.rawValue ?? ""
             authorID = try container.decodeIfPresent(FlexibleID.self, forKey: .userID)?.rawValue
             let rawTimestamp = try container.decodeIfPresent(Int64.self, forKey: .timestamp) ?? 0
             sentAt = Self.date(from: rawTimestamp)
-            let type = (try container.decodeIfPresent(String.self, forKey: .itemType) ?? "text").lowercased()
-            kind = Self.kind(for: type)
-            isSystem = Self.isSystem(type)
+            let type = (try container.decodeIfPresent(String.self, forKey: .itemType)
+                ?? container.decodeIfPresent(String.self, forKey: .itemTypeCamel))
+            kind = InstagramItemKind.classify(
+                itemType: type,
+                hasVoice: container.contains(.voiceMedia) || container.contains(.audio),
+                hasPhotoVideo: container.contains(.visualMedia) || container.contains(.ravenMedia)
+                    || container.contains(.animatedMedia) || container.contains(.clip)
+                    || container.contains(.media),
+                hasShareOrLink: container.contains(.link) || container.contains(.xma)
+                    || container.contains(.mediaShare) || container.contains(.reelShare)
+                    || container.contains(.storyShare) || container.contains(.felixShare),
+                hasText: container.contains(.text)
+            )
+            isSystem = InstagramItemKind.isSystem(type)
             sentByViewer = try container.decodeIfPresent(Bool.self, forKey: .isSentByViewer)
+            let message = try container.decodeIfPresent(FlexibleID.self, forKey: .messageID)?.rawValue
+            webMessageID = message?.hasPrefix("mid.") == true ? message : nil
         }
 
         /// Direct timestamps are microseconds when they're 16+ digits.
@@ -159,20 +186,6 @@ enum InstagramWebFormat {
             return Date(timeIntervalSince1970: Double(raw))
         }
 
-        private static func kind(for type: String) -> MessageKind {
-            switch type {
-            case "voice_media", "audio": return .voice
-            case "media", "raven_media", "animated_media", "clip", "media_share", "reel_share",
-                 "story_share", "felix_share", "xma_media_share", "generic_xma": return .media
-            case "link", "xma_link": return .link
-            case "text", "placeholder": return .text
-            default: return .other
-            }
-        }
-
-        private static func isSystem(_ type: String) -> Bool {
-            ["action_log", "video_call_event", "profile", "live_viewer_invite", "info"].contains(type)
-        }
     }
 
     static func title(for stub: InboxPage.ThreadStub, ownerID: String) -> String {
@@ -197,7 +210,8 @@ enum InstagramWebFormat {
     }
 
     static func parseInbox(_ body: Data) throws -> InboxPage {
-        let root = try JSONSerialization.jsonObject(with: body)
+        let quoted = quoteOversizedNumericIDs(body)
+        let root = try JSONSerialization.jsonObject(with: quoted)
         guard let object = root as? [String: Any] else {
             throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "inbox root"))
         }
@@ -205,7 +219,7 @@ enum InstagramWebFormat {
         if object["inbox"] == nil, let data = object["data"] as? [String: Any], data["inbox"] != nil {
             payload = try JSONSerialization.data(withJSONObject: data)
         } else {
-            payload = body
+            payload = quoted
         }
         let page = try JSONDecoder().decode(InboxPage.self, from: payload)
         guard page.inbox != nil else {
@@ -218,7 +232,8 @@ enum InstagramWebFormat {
     }
 
     static func parseThread(_ body: Data) throws -> ThreadPage {
-        let root = try JSONSerialization.jsonObject(with: body)
+        let quoted = quoteOversizedNumericIDs(body)
+        let root = try JSONSerialization.jsonObject(with: quoted)
         guard let object = root as? [String: Any] else {
             throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "thread root"))
         }
@@ -226,7 +241,7 @@ enum InstagramWebFormat {
         if object["thread"] == nil, let data = object["data"] as? [String: Any], data["thread"] != nil {
             payload = try JSONSerialization.data(withJSONObject: data)
         } else {
-            payload = body
+            payload = quoted
         }
         let page = try JSONDecoder().decode(ThreadPage.self, from: payload)
         guard page.thread != nil else {
@@ -236,6 +251,15 @@ enum InstagramWebFormat {
             )
         }
         return page
+    }
+
+    static func quoteOversizedNumericIDs(_ body: Data) -> Data {
+        guard var text = String(data: body, encoding: .utf8) else { return body }
+        let pattern = "\"(item_id|thread_id|thread_v2_id|user_id|pk|client_context|id)\"\\s*:\\s*(\\d{16,})"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return body }
+        let range = NSRange(text.startIndex..., in: text)
+        text = regex.stringByReplacingMatches(in: text, range: range, withTemplate: "\"$1\":\"$2\"")
+        return Data(text.utf8)
     }
 
     private static func looksLikeHTML(_ data: Data) -> Bool {
