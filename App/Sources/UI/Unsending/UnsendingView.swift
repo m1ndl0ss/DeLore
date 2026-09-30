@@ -123,10 +123,15 @@ struct UnsendingView: View {
         return VStack(alignment: .leading, spacing: Spacing.m) {
             VStack(alignment: .leading, spacing: Spacing.s) {
                 LoreHeadline(text: "Pick who to retract with.")
-                Text("\(overview.conversations.count == 1 ? "1 person" : "\(overview.conversations.count) people") in your DMs. We only load a chat after you pick it.")
-                    .font(Type.body(15))
-                    .foregroundStyle(Palette.secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("\(overview.conversations.count == 1 ? "1 person" : "\(overview.conversations.count) people") in your DMs. We only load a chat after you pick it.")
+                        .font(Type.body(15))
+                        .foregroundStyle(Palette.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !selection.isEmpty {
+                        Pill(text: "\(selection.count) picked")
+                    }
+                }
             }
             .padding(.horizontal, Spacing.screen)
 
@@ -135,26 +140,50 @@ struct UnsendingView: View {
                     .padding(.horizontal, Spacing.screen)
             }
 
-            TextField("Search @username", text: $query)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: Radius.m, style: .continuous).fill(Palette.surface))
-                .padding(.horizontal, Spacing.screen)
-
-            List(filtered) { chat in
-                Button {
-                    toggle(chat.id)
-                } label: {
-                    ChatRow(chat: chat, isSelected: selection.contains(chat.id))
+            HStack(spacing: Spacing.s) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(Palette.secondaryInk)
+                    .accessibilityHidden(true)
+                TextField("Search @username", text: $query)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                if !query.isEmpty {
+                    Button {
+                        query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(Palette.tertiaryInk)
+                    }
+                    .accessibilityLabel("Clear search")
                 }
-                .buttonStyle(.plain)
-                .listRowBackground(Palette.surface)
-                .listRowSeparator(.hidden)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(Color.clear)
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: Radius.m, style: .continuous).fill(Palette.surface))
+            .padding(.horizontal, Spacing.screen)
+
+            if filtered.isEmpty && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("No one matches that.")
+                    .font(Type.body(15))
+                    .foregroundStyle(Palette.secondaryInk)
+                    .padding(.horizontal, Spacing.screen)
+                Spacer()
+            } else {
+                List(filtered) { chat in
+                    Button {
+                        toggle(chat.id)
+                    } label: {
+                        ChatRow(chat: chat, isSelected: selection.contains(chat.id))
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 4, leading: Spacing.screen, bottom: 4, trailing: Spacing.screen))
+                    .accessibilityAddTraits(selection.contains(chat.id) ? .isSelected : [])
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }

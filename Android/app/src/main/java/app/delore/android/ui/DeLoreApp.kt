@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Info
@@ -51,11 +52,13 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.AutoDelete
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
@@ -97,6 +100,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -470,39 +474,25 @@ private fun InboxSyncScreen(model: AppViewModel) {
                 state.overview?.conversations?.map { it.title }.orEmpty()
             }
             if (state.syncErrorTitle != null) {
-                Spacer(Modifier.height(Spacing.l))
-                Icon(Icons.Filled.Shield, null, tint = Palette.ink(), modifier = Modifier.size(40.dp))
-                Spacer(Modifier.height(Spacing.s))
-                Text(state.syncErrorTitle!!, color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp, textAlign = TextAlign.Center)
-                Text(state.syncErrorMessage.orEmpty(), color = Palette.secondaryInk(), textAlign = TextAlign.Center)
+                Spacer(Modifier.height(Spacing.m))
+                Text(state.syncErrorTitle!!, color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 20.sp, textAlign = TextAlign.Center)
+                Text(state.syncErrorMessage.orEmpty(), color = Palette.secondaryInk(), textAlign = TextAlign.Center, fontSize = 14.sp)
                 Spacer(Modifier.height(Spacing.m))
                 when (state.syncPauseKind) {
-                    SyncPauseKind.HOLD_OFF, null -> {
-                        ConnectButton("Keep going") { model.retryInboxNow() }
-                        QuietButton("I'll wait") { model.acceptInboxHoldOff(later = false) }
-                    }
-                    SyncPauseKind.RECONNECT -> {
-                        ConnectButton("Sign in again") { model.signInAgainFromSync() }
-                        QuietButton("Not now") { model.dismissSync() }
-                    }
-                    SyncPauseKind.VERIFY -> {
-                        ConnectButton("I'll handle it") { model.dismissSync() }
-                        QuietButton("Not now") { model.dismissSync() }
-                    }
-                    SyncPauseKind.OFFLINE -> {
-                        ConnectButton("Try again") { model.retryInboxWhenAllowed() }
-                        QuietButton("Not now") { model.dismissSync() }
-                    }
+                    SyncPauseKind.HOLD_OFF, null -> OverlayChoiceRow("Keep going", { model.retryInboxNow() }, "I'll wait") { model.acceptInboxHoldOff(later = false) }
+                    SyncPauseKind.RECONNECT -> OverlayChoiceRow("Sign in again", { model.signInAgainFromSync() }, "Not now") { model.dismissSync() }
+                    SyncPauseKind.VERIFY -> OverlayChoiceRow("I'll handle it", { model.dismissSync() }, "Not now") { model.dismissSync() }
+                    SyncPauseKind.OFFLINE -> OverlayChoiceRow("Try again", { model.retryInboxWhenAllowed() }, "Not now") { model.dismissSync() }
                 }
             } else {
                 val read = state.inboxRead
                 val numbers = NumberFormat.getIntegerInstance(Locale.US)
-                Spacer(Modifier.height(Spacing.m))
+                Spacer(Modifier.height(Spacing.s))
                 Text(
                     if (read.isComplete) "All set" else if (read.isListing) "Finding who you talked to…" else "Reading selected chats…",
                     color = Palette.ink(),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 20.sp,
                     textAlign = TextAlign.Center,
                 )
                 Text(
@@ -511,7 +501,7 @@ private fun InboxSyncScreen(model: AppViewModel) {
                     color = Palette.accent,
                     fontFamily = Type.sans,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp,
+                    fontSize = 15.sp,
                 )
                 Spacer(Modifier.height(Spacing.s))
                 LoreProgressBar(read.fraction)
@@ -520,40 +510,32 @@ private fun InboxSyncScreen(model: AppViewModel) {
                         "${numbers.format(read.sendsFound)} of your sends",
                         color = Palette.secondaryInk(),
                         fontFamily = Type.sans,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                     )
                 }
             }
+            Spacer(Modifier.height(Spacing.m))
+            Text(
+                when {
+                    titles.isEmpty() && state.syncErrorTitle == null -> "Names land here as we find them"
+                    state.syncErrorTitle != null -> "Kept on this phone · ${titles.size}"
+                    else -> "Found so far · ${titles.size}"
+                },
+                color = Palette.secondaryInk(),
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(Spacing.s))
             if (titles.isNotEmpty()) {
-                Spacer(Modifier.height(Spacing.m))
-                Text(
-                    if (state.syncErrorTitle != null) "Kept on this phone" else "Found so far",
-                    color = Palette.secondaryInk(),
-                    fontFamily = Type.sans,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(Spacing.s))
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     reverseLayout = true,
                 ) {
-                    itemsIndexed(titles, key = { index, name -> "$index-$name" }) { _, name ->
-                        Text(
-                            name,
-                            color = Palette.ink(),
-                            fontFamily = Type.sans,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 16.sp,
-                            maxLines = 1,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Palette.surface())
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                        )
+                    itemsIndexed(titles, key = { index, name -> "$index-$name" }) { index, name ->
+                        FoundPersonRow(name = name, newest = index == titles.lastIndex)
                     }
                 }
             } else {
@@ -636,7 +618,10 @@ private fun HomeScreen(model: AppViewModel) {
                 }
             }
             if (overview != null && overview.conversations.isNotEmpty()) {
-                LoreHeadline("Pick who to retract with.")
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                    Box(Modifier.weight(1f)) { LoreHeadline("Pick who to retract with.") }
+                    if (selection.isNotEmpty()) Pill("${selection.size} picked")
+                }
                 Text(
                     "${inflect(overview.conversations.size, "person", "people")} in your DMs. We only load a chat after you pick it.",
                     color = Palette.secondaryInk(),
@@ -656,6 +641,17 @@ private fun HomeScreen(model: AppViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     placeholder = { Text("Search @username", color = Palette.secondaryInk()) },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = Palette.secondaryInk()) },
+                    trailingIcon = if (query.isNotEmpty()) {
+                        {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Clear search",
+                                tint = Palette.secondaryInk(),
+                                modifier = Modifier.clickable { query = "" },
+                            )
+                        }
+                    } else null,
                     shape = RoundedCornerShape(Radius.m),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Palette.ink(),
@@ -667,14 +663,24 @@ private fun HomeScreen(model: AppViewModel) {
                         unfocusedContainerColor = Palette.surface(),
                     ),
                 )
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.s),
-                    contentPadding = PaddingValues(bottom = 88.dp),
-                ) {
-                    items(people, key = { it.id.rawValue }) { chat ->
-                        ChatRow(chat, chat.id in selection) {
-                            selection = if (chat.id in selection) selection - chat.id else selection + chat.id
+                if (people.isEmpty() && query.isNotBlank()) {
+                    Text(
+                        "No one matches that.",
+                        color = Palette.secondaryInk(),
+                        fontFamily = Type.sans,
+                        fontSize = 15.sp,
+                    )
+                    Spacer(Modifier.weight(1f))
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.s),
+                        contentPadding = PaddingValues(bottom = 88.dp),
+                    ) {
+                        items(people, key = { it.id.rawValue }) { chat ->
+                            ChatRow(chat, chat.id in selection) {
+                                selection = if (chat.id in selection) selection - chat.id else selection + chat.id
+                            }
                         }
                     }
                 }
@@ -800,7 +806,7 @@ private fun SettingsSheet(model: AppViewModel) {
 @Composable
 private fun PrivacySheet() {
     Column(Modifier.verticalScroll(rememberScrollState()).padding(Spacing.screen), verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
-        Text("Privacy", color = Palette.ink(), fontWeight = FontWeight.Black, fontSize = 28.sp)
+        Text("Privacy", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
         PromiseRow(Icons.Filled.PhoneAndroid, "Your Instagram content is processed on your phone.")
         PromiseRow(Icons.Filled.Lock, "We don't sell or store your messages.")
         PromiseRow(Icons.Filled.Visibility, "We don't need your message content to provide the cleanup.")
@@ -825,7 +831,7 @@ private fun PrivacySheet() {
 @Composable
 private fun IncludedSheet(overview: LibraryOverview) {
     Column(Modifier.verticalScroll(rememberScrollState()).padding(Spacing.screen), verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
-        Text("What's included", color = Palette.ink(), fontWeight = FontWeight.Black, fontSize = 28.sp)
+        Text("What's included", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
         Card {
             Text("Messages you sent", color = Palette.ink(), fontWeight = FontWeight.Bold)
             KindLine("Texts", overview.sentByKind[MessageKind.TEXT] ?: 0)
@@ -857,7 +863,7 @@ private fun ChooseChatsSheet(model: AppViewModel, overview: LibraryOverview) {
     val chats = overview.cleanableConversations.sortedByDescending { it.sentByOwner }
     val selectedCount = overview.cleanableConversations.filter { it.id in selection }.sumOf { it.sentByOwner }
     Column(Modifier.fillMaxSize().padding(Spacing.screen)) {
-        Text("Choose chats", color = Palette.ink(), fontWeight = FontWeight.Black, fontSize = 28.sp)
+        Text("Choose chats", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
         Spacer(Modifier.height(Spacing.m))
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
             chats.forEach { chat ->
@@ -875,32 +881,133 @@ private fun ChooseChatsSheet(model: AppViewModel, overview: LibraryOverview) {
 }
 
 @Composable
+private fun OverlayChoiceRow(primary: String, onPrimary: () -> Unit, secondary: String, onSecondary: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .weight(1f)
+                .height(44.dp)
+                .clip(RoundedCornerShape(Radius.m))
+                .background(Palette.accent)
+                .clickable(onClick = onPrimary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(primary, color = Palette.onAccent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+        }
+        Box(
+            Modifier
+                .weight(1f)
+                .height(44.dp)
+                .clickable(onClick = onSecondary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(secondary, color = Palette.secondaryInk(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+        }
+    }
+}
+
+@Composable
+private fun FoundPersonRow(name: String, newest: Boolean) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (newest) Palette.surfaceElevated else Palette.surface())
+            .then(
+                if (newest) Modifier.border(1.dp, Palette.accent.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                else Modifier,
+            )
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(Palette.accent.copy(alpha = 0.22f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                personInitial(name),
+                color = Palette.accent,
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+            )
+        }
+        Text(
+            name,
+            color = Palette.ink(),
+            fontFamily = Type.sans,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 16.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (newest) {
+            Text("new", color = Palette.accent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+        }
+    }
+}
+
+private fun personInitial(name: String): String {
+    val cleaned = name.trim().trimStart('@')
+    return cleaned.firstOrNull()?.uppercase() ?: "?"
+}
+
+@Composable
 private fun ChatRow(chat: ConversationSummary, selected: Boolean, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Palette.surface())
+            .background(if (selected) Palette.surfaceElevated else Palette.surface())
+            .border(
+                1.dp,
+                if (selected) Palette.accent.copy(alpha = 0.5f) else Color.Transparent,
+                RoundedCornerShape(16.dp),
+            )
             .clickable(onClick = onClick)
             .padding(Spacing.m),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(44.dp).clip(CircleShape).background(Palette.lilac), contentAlignment = Alignment.Center) {
-            Text(chat.title.trimStart('@').take(1).uppercase(), color = Palette.onVolt, fontWeight = FontWeight.Black)
+        Box(
+            Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(Palette.accent.copy(alpha = if (selected) 1f else 0.22f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                personInitial(chat.title),
+                color = if (selected) Palette.onAccent else Palette.accent,
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
         Spacer(Modifier.size(Spacing.m))
         Column(Modifier.weight(1f)) {
-            Text(chat.title, color = Palette.ink(), fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(chat.title, color = Palette.ink(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 when {
-                    !chat.messagesLoaded -> "Not read yet"
+                    !chat.messagesLoaded -> "Name only · tap to load"
                     chat.sentByOwner == 0 -> "Nothing from you"
                     else -> "${inflect(chat.sentByOwner, "message")} from you"
                 },
                 color = Palette.secondaryInk(),
             )
         }
-        Icon(if (selected) Icons.Filled.CheckCircle else Icons.Filled.Check, null, tint = if (selected) Palette.accentInk() else Palette.hairline())
+        Icon(
+            if (selected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
+            contentDescription = if (selected) "Selected" else "Not selected",
+            tint = if (selected) Palette.accent else Palette.hairline(),
+        )
     }
 }
 
@@ -917,7 +1024,7 @@ private fun CleanupSetupSheet(model: AppViewModel, overview: LibraryOverview, sc
     var showPaywall by remember { mutableStateOf(false) }
     var showDate by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.screen)) {
-        Text("Clean up", color = Palette.ink(), fontWeight = FontWeight.Black, fontSize = 28.sp)
+        Text("Clean up", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
         Spacer(Modifier.height(Spacing.l))
         Text("What should go?", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 20.sp)
         Spacer(Modifier.height(Spacing.s))
@@ -942,7 +1049,7 @@ private fun CleanupSetupSheet(model: AppViewModel, overview: LibraryOverview, sc
             Row {
                 Text("Messages you sent", color = Palette.ink(), fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
-                Text(NumberFormat.getIntegerInstance().format(setup.estimatedCount), color = Palette.ink(), fontWeight = FontWeight.Black, fontSize = 22.sp)
+                Text(NumberFormat.getIntegerInstance().format(setup.estimatedCount), color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 22.sp)
             }
             Row {
                 Icon(Icons.Filled.Lock, null, tint = Palette.secondaryInk())
@@ -1046,11 +1153,11 @@ private fun ConfirmBlock(model: AppViewModel, setup: CleanupSetupState, prepared
     val scope = rememberCoroutineScope()
     Spacer(Modifier.height(Spacing.l))
     if (prepared.count == 0) {
-        Text("Nothing to clean here", color = Palette.ink(), fontWeight = FontWeight.Black, fontSize = 28.sp)
+        Text("Nothing to clean here", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
         Text("Everything you picked is already gone, or doesn't match your filters.", color = Palette.secondaryInk())
         return
     }
-    Text("You're about to unsend ${inflect(prepared.count, "message")}.", color = Palette.ink(), fontWeight = FontWeight.Black, fontSize = 28.sp)
+    Text("You're about to unsend ${inflect(prepared.count, "message")}.", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
     model.ratePolicy.estimatedDuration(prepared.count)?.let {
         Text(StatusCopyFactory.timeRemaining(it), color = Palette.secondaryInk(), fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
     }
@@ -1347,7 +1454,7 @@ private fun PlanCard(
 private fun UnavailableSheet(onClose: () -> Unit) {
     Column(Modifier.padding(Spacing.screen)) {
         Row { Spacer(Modifier.weight(1f)); CloseButton(onClose) }
-        Text("Sign in to Instagram first", color = Palette.ink(), fontWeight = FontWeight.Black, fontSize = 28.sp)
+        Text("Sign in to Instagram first", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
         Text("Cleaning uses Instagram's own Unsend action from this phone. Reconnect your account, then try again.", color = Palette.secondaryInk())
         Spacer(Modifier.height(Spacing.m))
         Card {

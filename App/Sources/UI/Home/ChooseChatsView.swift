@@ -27,7 +27,7 @@ struct ChooseChatsView: View {
                     ChatRow(chat: chat, isSelected: selection.contains(chat.id))
                 }
                 .buttonStyle(.plain)
-                .listRowBackground(Palette.surface)
+                .listRowBackground(Color.clear)
                 .accessibilityAddTraits(selection.contains(chat.id) ? .isSelected : [])
             }
             .scrollContentBackground(.hidden)
@@ -76,14 +76,14 @@ struct ChatRow: View {
     var body: some View {
         HStack(spacing: Spacing.m) {
             Text(initials)
-                .font(.system(.headline, design: .rounded, weight: .heavy))
-                .foregroundStyle(Palette.onVolt)
+                .font(Type.medium(16))
+                .foregroundStyle(isSelected ? Palette.onAccent : Palette.accent)
                 .frame(width: 44, height: 44)
-                .background(Circle().fill(Palette.lilac))
+                .background(Circle().fill(isSelected ? Palette.accent : Palette.accent.opacity(0.22)))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(chat.title)
-                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .font(Type.medium(16))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
                 Text(subtitle)
@@ -96,13 +96,21 @@ struct ChatRow: View {
                 .foregroundStyle(isSelected ? Palette.accentInk : Palette.hairline)
                 .accessibilityHidden(true)
         }
-        .padding(.vertical, 4)
+        .padding(Spacing.m)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isSelected ? Palette.surfaceElevated : Palette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(isSelected ? Palette.accent.opacity(0.5) : Color.clear, lineWidth: 1)
+        )
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
 
     private var subtitle: String {
-        if !chat.messagesLoaded { return "Not read yet" }
+        if !chat.messagesLoaded { return "Name only · tap to load" }
         if chat.sentByOwner == 0 { return "Nothing from you" }
         return chat.sentByOwner == 1 ? "1 message from you" : "\(chat.sentByOwner) messages from you"
     }
