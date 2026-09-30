@@ -6,7 +6,7 @@ struct InboxSyncView: View {
     let sync: InboxSyncModel
 
     var body: some View {
-        VStack(spacing: Spacing.l) {
+        VStack(spacing: Spacing.m) {
             HStack {
                 Wordmark()
                 Spacer()
@@ -14,7 +14,6 @@ struct InboxSyncView: View {
                     CloseButton { model.dismissSync() }
                 }
             }
-            Spacer()
             switch sync.phase {
             case let .running(progress):
                 tracker(
@@ -26,7 +25,18 @@ struct InboxSyncView: View {
             case let .failed(title, message, kind):
                 failure(title: title, message: message, kind: kind)
             }
-            Spacer()
+            if !titles.isEmpty {
+                peopleList(
+                    titles: titles,
+                    caption: failed ? "Kept on this phone" : "Found so far"
+                )
+            } else {
+                Spacer()
+            }
+            Text("This happens on your phone. Nothing is uploaded.")
+                .font(.subheadline)
+                .foregroundStyle(Palette.secondaryInk)
+                .multilineTextAlignment(.center)
         }
         .padding(.horizontal, Spacing.screen)
         .padding(.vertical, Spacing.m)
@@ -36,61 +46,50 @@ struct InboxSyncView: View {
 
     private var showsClose: Bool { true }
 
+    private var failed: Bool {
+        if case .failed = sync.phase { return true }
+        return false
+    }
+
+    private var titles: [String] {
+        let fromSync = sync.latest.foundTitles
+        if !fromSync.isEmpty { return fromSync }
+        return model.overview?.conversations.map(\.title) ?? []
+    }
+
     private func tracker(title: LocalizedStringKey, progress: InboxReadProgress) -> some View {
-        VStack(spacing: Spacing.l) {
+        VStack(spacing: Spacing.s) {
             Text(title)
-                .font(.title(.title))
+                .font(.title(.title2))
                 .foregroundStyle(Palette.ink)
                 .multilineTextAlignment(.center)
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text((progress.isListing ? progress.chatsFound : progress.chatsRead).formatted())
-                    .font(Type.medium(48))
-                    .contentTransition(.numericText(value: Double(progress.isListing ? progress.chatsFound : progress.chatsRead)))
-                    .animation(.snappy, value: progress.chatsRead + progress.chatsFound)
-                if !progress.isListing {
-                    Text("/ \((progress.chatsTotal ?? 0).formatted())")
-                        .font(Type.medium(20))
-                        .foregroundStyle(Palette.secondaryInk)
-                }
-            }
-            .foregroundStyle(Palette.ink)
-            .monospacedDigit()
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(progress.isListing
-                ? Text("\(progress.chatsFound) people so far")
-                : Text("\(progress.chatsRead) of \(progress.chatsTotal ?? 0) chats"))
-
-            Text(progress.isListing ? "people so far" : "chats")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Palette.secondaryInk)
+            Text(progress.isListing
+                 ? "\(progress.chatsFound.formatted()) people so far"
+                 : "\(progress.chatsRead.formatted()) / \((progress.chatsTotal ?? 0).formatted()) chats")
+                .font(Type.medium(16))
+                .foregroundStyle(Palette.accent)
+                .contentTransition(.numericText())
+                .animation(.snappy, value: progress.chatsRead + progress.chatsFound)
+                .accessibilityLabel(progress.isListing
+                    ? Text("\(progress.chatsFound) people so far")
+                    : Text("\(progress.chatsRead) of \(progress.chatsTotal ?? 0) chats"))
 
             LoreProgressBar(fraction: progress.fraction)
                 .frame(maxWidth: 280)
 
             if progress.sendsFound > 0 {
                 Text("\(progress.sendsFound.formatted()) of your sends")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Palette.accent)
-            }
-            if let chat = progress.displayChat {
-                Text("in \(chat)")
                     .font(.subheadline)
                     .foregroundStyle(Palette.secondaryInk)
-                    .multilineTextAlignment(.center)
             }
-
-            Text("This happens on your phone. Nothing is uploaded.")
-                .font(.subheadline)
-                .foregroundStyle(Palette.secondaryInk)
-                .multilineTextAlignment(.center)
         }
     }
 
     private func failure(title: String, message: String, kind: InboxSyncModel.Kind) -> some View {
-        VStack(spacing: Spacing.l) {
+        VStack(spacing: Spacing.s) {
             Image(systemName: "exclamationmark.shield")
-                .font(.system(size: 56, weight: .semibold))
+                .font(.system(size: 40, weight: .semibold))
                 .foregroundStyle(Palette.ink)
                 .accessibilityHidden(true)
             VStack(spacing: Spacing.s) {
@@ -105,7 +104,7 @@ struct InboxSyncView: View {
             }
             switch kind {
             case .holdOff:
-                Button("Try reading") { model.retryInboxNow() }
+                Button("Keep going") { model.retryInboxNow() }
                     .buttonStyle(.connect)
                 Button("I'll wait") { model.acceptInboxHoldOff(later: false) }
                     .buttonStyle(.text)
@@ -126,5 +125,31 @@ struct InboxSyncView: View {
                     .buttonStyle(.text)
             }
         }
+    }
+
+    private func peopleList(titles: [String], caption: String) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.s) {
+            Text(caption)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Palette.secondaryInk)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(titles.enumerated()).reversed(), id: \.offset) { _, name in
+                        Text(name)
+                            .font(Type.medium(16))
+                            .foregroundStyle(Palette.ink)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Palette.surface)
+                            )
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }

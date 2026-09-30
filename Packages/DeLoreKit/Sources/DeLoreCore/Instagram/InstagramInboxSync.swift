@@ -36,15 +36,21 @@ public struct InstagramInboxSync: Sendable {
 
     public func list(
         session: InstagramWebSession,
-        onProgress: (@Sendable (InboxReadProgress) -> Void)? = nil
+        resumeCursor: String? = nil,
+        onProgress: (@Sendable (InboxReadProgress) -> Void)? = nil,
+        onCursor: (@Sendable (String?) -> Void)? = nil
     ) async throws -> LibraryOverview {
         let ownerID = session.userID
         var displayName = session.displayName
-        var stubs: [InstagramWebFormat.InboxPage.ThreadStub] = []
-        var seen = Set<String>()
-        var cursor: String?
+        var summaries: [String: ConversationSummary] = [:]
+        var order: [String] = []
+        for existing in (try? await library.conversations()) ?? [] {
+            if summaries[existing.id.rawValue] == nil { order.append(existing.id.rawValue) }
+            summaries[existing.id.rawValue] = existing
+        }
+        var cursor = resumeCursor
         var inboxHasOlder = true
-        onProgress?(InboxReadProgress())
+        emitListing(order: order, summaries: summaries, onProgress: onProgress)
 
         while inboxHasOlder {
             try Task.checkCancellation()
@@ -52,29 +58,55 @@ public struct InstagramInboxSync: Sendable {
             if displayName == nil, let username = page.viewer?.username, !username.isEmpty {
                 displayName = username
             }
-            for stub in page.inbox?.threads ?? [] where seen.insert(stub.threadID.rawValue).inserted {
-                stubs.append(stub)
+            for stub in page.inbox?.threads ?? [] {
+                let id = stub.threadID.rawValue
+                let title = InstagramWebFormat.title(for: stub, ownerID: ownerID)
+                if summaries[id] == nil { order.append(id) }
+                if let prior = summaries[id], prior.messagesLoaded {
+                    summaries[id] = ConversationSummary(
+                        id: prior.id,
+                        title: title,
+                        sentByOwner: prior.sentByOwner,
+                        receivedFromOthers: prior.receivedFromOthers,
+                        firstSentAt: prior.firstSentAt,
+                        lastSentAt: prior.lastSentAt,
+                        sentByKind: prior.sentByKind,
+                        ownershipAmbiguous: prior.ownershipAmbiguous,
+                        messagesLoaded: true
+                    )
+                } else {
+                    summaries[id] = ConversationSummary(
+                        id: ConversationID(id),
+                        title: title,
+                        sentByOwner: 0,
+                        receivedFromOthers: 0,
+                        firstSentAt: nil,
+                        lastSentAt: nil,
+                        messagesLoaded: false
+                    )
+                }
             }
             inboxHasOlder = page.inbox?.hasOlder ?? false
             cursor = page.inbox?.oldestCursor
             if cursor == nil { inboxHasOlder = false }
-            onProgress?(InboxReadProgress(chatsFound: stubs.count))
+            let account = AccountIdentity(ownerID: ParticipantID("ig:" + ownerID), displayName: displayName ?? "you")
+            let snapshot = order.compactMap { summaries[$0] }
+            _ = try library.mergeListing(account: account, stubs: snapshot)
+            onCursor?(inboxHasOlder ? cursor : nil)
+            emitListing(order: order, summaries: summaries, onProgress: onProgress)
             if listingDelay > 0 { try await clock.sleep(for: listingDelay) }
         }
 
-        let account = AccountIdentity(ownerID: ParticipantID("ig:" + ownerID), displayName: displayName ?? "you")
-        let summaries = stubs.map { stub in
-            ConversationSummary(
-                id: ConversationID(stub.threadID.rawValue),
-                title: InstagramWebFormat.title(for: stub, ownerID: ownerID),
-                sentByOwner: 0,
-                receivedFromOthers: 0,
-                firstSentAt: nil,
-                lastSentAt: nil,
-                messagesLoaded: false
-            )
-        }
-        return try library.mergeListing(account: account, stubs: summaries)
+        return LibraryOverview(conversations: order.compactMap { summaries[$0] })
+    }
+
+    private func emitListing(
+        order: [String],
+        summaries: [String: ConversationSummary],
+        onProgress: (@Sendable (InboxReadProgress) -> Void)?
+    ) {
+        let titles = order.compactMap { summaries[$0]?.title }
+        onProgress?(InboxReadProgress(chatsFound: titles.count, foundTitles: titles))
     }
 
     public func load(
@@ -96,7 +128,8 @@ public struct InstagramInboxSync: Sendable {
                     chatsRead: index,
                     chatsTotal: total,
                     sendsFound: sendsSoFar + partial,
-                    currentTitle: listed.title
+                    currentTitle: listed.title,
+                    foundTitles: wanted.map(\.title)
                 ))
             }
             overview = try library.upsertLoaded(summary: conversation.summary, messages: conversation.messages)
@@ -106,7 +139,8 @@ public struct InstagramInboxSync: Sendable {
                 chatsRead: index + 1,
                 chatsTotal: total,
                 sendsFound: sends,
-                currentTitle: listed.title
+                currentTitle: listed.title,
+                foundTitles: wanted.map(\.title)
             ))
             if listingDelay > 0 { try await clock.sleep(for: listingDelay) }
         }

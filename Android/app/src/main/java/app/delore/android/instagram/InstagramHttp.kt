@@ -270,38 +270,70 @@ class InstagramInboxSync(
     private val clock: EngineClock = SystemClock,
 ) {
     suspend fun run(session: InstagramWebSession, onProgress: ((InboxReadProgress) -> Unit)? = null): LibraryOverview {
-        val listed = list(session, onProgress)
+        val listed = list(session, onProgress = onProgress)
         return load(session, listed.conversations.map { it.id }, onProgress)
     }
 
-    suspend fun list(session: InstagramWebSession, onProgress: ((InboxReadProgress) -> Unit)? = null): LibraryOverview {
+    suspend fun list(
+        session: InstagramWebSession,
+        resumeCursor: String? = null,
+        onProgress: ((InboxReadProgress) -> Unit)? = null,
+        onCursor: ((String?) -> Unit)? = null,
+    ): LibraryOverview {
         val ownerID = session.userID
         var displayName = session.displayName
-        val stubs = LinkedHashMap<String, InboxThreadStub>()
-        var cursor: String? = null
+        val summaries = LinkedHashMap<String, ConversationSummary>()
+        val existing = try {
+            library.conversations()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        for (prior in existing) {
+            summaries[prior.id.rawValue] = prior
+        }
+        var cursor = resumeCursor
         var inboxHasOlder = true
-        onProgress?.invoke(InboxReadProgress())
+        emitListing(summaries, onProgress)
         while (inboxHasOlder) {
             val page = fetchInbox(cursor)
             if (displayName == null && !page.viewerUsername.isNullOrEmpty()) displayName = page.viewerUsername
-            for (stub in page.threads) stubs[stub.threadID] = stub
+            for (stub in page.threads) {
+                val title = InstagramWebFormat.title(stub, ownerID)
+                val prior = summaries[stub.threadID]
+                summaries[stub.threadID] = if (prior?.messagesLoaded == true) {
+                    prior.copy(title = title)
+                } else {
+                    ConversationSummary(
+                        id = ConversationID(stub.threadID),
+                        title = title,
+                        sentByOwner = 0,
+                        receivedFromOthers = 0,
+                        messagesLoaded = false,
+                    )
+                }
+            }
             inboxHasOlder = page.hasOlder
             cursor = page.oldestCursor
             if (cursor == null) inboxHasOlder = false
-            onProgress?.invoke(InboxReadProgress(chatsFound = stubs.size))
+            val account = session.copy(displayName = displayName).account
+            library.mergeListing(account, summaries.values.toList())
+            onCursor?.invoke(if (inboxHasOlder) cursor else null)
+            emitListing(summaries, onProgress)
             if (listingDelaySeconds > 0) clock.sleep(listingDelaySeconds)
         }
-        val account = session.copy(displayName = displayName).account
-        val summaries = stubs.values.map { stub ->
-            ConversationSummary(
-                id = ConversationID(stub.threadID),
-                title = InstagramWebFormat.title(stub, ownerID),
-                sentByOwner = 0,
-                receivedFromOthers = 0,
-                messagesLoaded = false,
-            )
-        }
-        return library.mergeListing(account, summaries)
+        return LibraryOverview(summaries.values.toList())
+    }
+
+    private fun emitListing(
+        summaries: Map<String, ConversationSummary>,
+        onProgress: ((InboxReadProgress) -> Unit)?,
+    ) {
+        onProgress?.invoke(
+            InboxReadProgress(
+                chatsFound = summaries.size,
+                foundTitles = summaries.values.map { it.title },
+            ),
+        )
     }
 
     suspend fun load(
@@ -323,6 +355,7 @@ class InstagramInboxSync(
                         chatsTotal = total,
                         sendsFound = sends + partial,
                         currentTitle = listed.title,
+                        foundTitles = wanted.map { it.title },
                     ),
                 )
             }
@@ -335,6 +368,7 @@ class InstagramInboxSync(
                     chatsTotal = total,
                     sendsFound = sends,
                     currentTitle = listed.title,
+                    foundTitles = wanted.map { it.title },
                 ),
             )
             if (listingDelaySeconds > 0) clock.sleep(listingDelaySeconds)

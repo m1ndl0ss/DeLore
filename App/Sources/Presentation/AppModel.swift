@@ -144,10 +144,16 @@ final class AppModel {
         if !force, env.isInboxOnHold { return }
         env.inboxHoldOffUntil = nil
         lastInboxJob = job
+        let previous = inboxSyncModel?.latest.foundTitles ?? []
         inboxSyncModel?.cancel()
-        let model = InboxSyncModel(env: env, job: job)
+        let fromOverview = overview?.conversations.map(\.title) ?? []
+        let seed = fromOverview.isEmpty ? previous : fromOverview
+        let model = InboxSyncModel(env: env, job: job, seedTitles: seed)
         model.onFinished = { [weak self] _ in
             Task { await self?.finishInboxSync() }
+        }
+        model.onFailed = { [weak self] in
+            Task { await self?.reloadOverview() }
         }
         inboxSyncModel = model
         model.start()
@@ -169,6 +175,7 @@ final class AppModel {
         pendingRetractIDs = []
         inboxSyncModel?.cancel()
         inboxSyncModel = nil
+        Task { await reloadOverview() }
     }
 
     func acceptInboxHoldOff(later: Bool) {
@@ -200,6 +207,7 @@ final class AppModel {
         if env.hasLiveSession {
             lastInboxJob = .list
             pendingRetractIDs = []
+            env.inboxListCursor = nil
             beginInboxSync(force: true, job: .list)
         } else {
             beginLogin(.refresh)

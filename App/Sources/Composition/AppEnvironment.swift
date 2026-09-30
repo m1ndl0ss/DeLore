@@ -20,6 +20,7 @@ final class AppEnvironment {
     private static let onboardingKey = "onboarding.completed"
     private static let inboxHoldOffKey = "inbox.holdOffUntil"
     private static let listFirstKey = "inbox.listFirst"
+    private static let listCursorKey = "inbox.listCursor"
 
     init(configuration: AppConfiguration = .load()) {
         self.configuration = configuration
@@ -79,9 +80,17 @@ final class AppEnvironment {
         guard let session = try sessionVault.loadSession(), session.hasLiveSession else {
             throw IntegrationError.sessionExpired
         }
+        let resume = inboxListCursor
+        let cursorKey = Self.listCursorKey
         let sync = LiveIntegration.makeInboxSync(sessionVault: sessionVault, library: library, logger: logger)
         return try await Task.detached(priority: .userInitiated) {
-            try await sync.list(session: session, onProgress: onProgress)
+            try await sync.list(session: session, resumeCursor: resume, onProgress: onProgress) { cursor in
+                if let cursor, !cursor.isEmpty {
+                    UserDefaults.standard.set(cursor, forKey: cursorKey)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: cursorKey)
+                }
+            }
         }.value
     }
 
@@ -138,11 +147,26 @@ final class AppEnvironment {
         return until > Date()
     }
 
+    var inboxListCursor: String? {
+        get {
+            let value = UserDefaults.standard.string(forKey: Self.listCursorKey)
+            return value?.isEmpty == false ? value : nil
+        }
+        set {
+            if let newValue, !newValue.isEmpty {
+                UserDefaults.standard.set(newValue, forKey: Self.listCursorKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.listCursorKey)
+            }
+        }
+    }
+
     func dropStaleFullInbox() {
         guard !UserDefaults.standard.bool(forKey: Self.listFirstKey) else { return }
         try? library.wipe()
         try? jobStore.wipe()
         UserDefaults.standard.set(true, forKey: Self.listFirstKey)
+        UserDefaults.standard.removeObject(forKey: Self.listCursorKey)
     }
 
     /// Disconnects and removes everything sensitive. Purchases (unused passes, free usage)
@@ -159,6 +183,7 @@ final class AppEnvironment {
         UserDefaults.standard.removeObject(forKey: Self.onboardingKey)
         UserDefaults.standard.removeObject(forKey: Self.inboxHoldOffKey)
         UserDefaults.standard.removeObject(forKey: Self.listFirstKey)
+        UserDefaults.standard.removeObject(forKey: Self.listCursorKey)
         for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix(CleanupBilling.keyPrefix) {
             UserDefaults.standard.removeObject(forKey: key)
         }

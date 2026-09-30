@@ -184,19 +184,22 @@ public struct InboxReadProgress: Sendable, Equatable {
     public var chatsTotal: Int?
     public var sendsFound: Int
     public var currentTitle: String?
+    public var foundTitles: [String]
 
     public init(
         chatsFound: Int = 0,
         chatsRead: Int = 0,
         chatsTotal: Int? = nil,
         sendsFound: Int = 0,
-        currentTitle: String? = nil
+        currentTitle: String? = nil,
+        foundTitles: [String] = []
     ) {
         self.chatsFound = chatsFound
         self.chatsRead = chatsRead
         self.chatsTotal = chatsTotal
         self.sendsFound = sendsFound
         self.currentTitle = currentTitle
+        self.foundTitles = foundTitles
     }
 
     public var isListing: Bool { chatsTotal == nil }

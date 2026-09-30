@@ -139,10 +139,17 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         }
         env.inboxHoldOffUntilMillis = 0L
         inboxLoadIds = loadIds
+        val seedTitles = _state.value.overview?.conversations?.map { it.title }
+            ?.ifEmpty { _state.value.inboxRead.foundTitles }
+            ?: _state.value.inboxRead.foundTitles
         _state.update {
             it.copy(
                 syncing = true,
-                inboxRead = InboxReadProgress(),
+                inboxRead = InboxReadProgress(
+                    chatsFound = seedTitles.size,
+                    chatsTotal = loadIds?.size,
+                    foundTitles = seedTitles,
+                ),
                 syncErrorTitle = null,
                 syncErrorMessage = null,
                 syncPauseKind = null,
@@ -171,17 +178,25 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
                     if (cleanable.isNotEmpty()) openSetup(CleanupScope.Conversations(cleanable))
                 }
             } catch (_: kotlinx.coroutines.CancellationException) {
+                reloadOverview()
                 _state.update { it.copy(syncing = false) }
             } catch (error: Exception) {
                 android.util.Log.e("Retract", "Inbox sync failed: ${error.javaClass.simpleName}: ${error.message}")
+                reloadOverview()
+                val saved = _state.value.overview?.conversations?.map { it.title }.orEmpty()
                 val pause = SyncPause.from(error)
                 _state.update {
+                    val titles = it.inboxRead.foundTitles.ifEmpty { saved }
                     it.copy(
                         syncing = false,
                         syncErrorTitle = pause.title,
                         syncErrorMessage = pause.message,
                         syncPauseKind = pause.kind,
                         syncRetryAfterSeconds = pause.retryAfterSeconds,
+                        inboxRead = it.inboxRead.copy(
+                            chatsFound = maxOf(it.inboxRead.chatsFound, titles.size),
+                            foundTitles = titles,
+                        ),
                     )
                 }
             }
@@ -203,6 +218,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
     fun dismissSync() {
         inboxJob?.cancel()
         pendingRetractIds = emptySet()
+        viewModelScope.launch { reloadOverview() }
         _state.update {
             it.copy(
                 syncing = false,
@@ -238,6 +254,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
     fun refreshChats() {
         if (env.hasLiveSession) {
             pendingRetractIds = emptySet()
+            env.inboxListCursor = null
             beginInboxSync(force = true, loadIds = null)
         } else {
             beginLogin(LoginPurpose.REFRESH)

@@ -29,11 +29,19 @@ final class InboxSyncModel: Identifiable {
     private let env: AppEnvironment
     private let job: Job
     var onFinished: ((LibraryOverview) -> Void)?
+    var onFailed: (() -> Void)?
     private var work: Task<Void, Never>?
 
-    init(env: AppEnvironment, job: Job = .list) {
+    init(env: AppEnvironment, job: Job = .list, seedTitles: [String] = []) {
         self.env = env
         self.job = job
+        switch job {
+        case .list:
+            latest = InboxReadProgress(chatsFound: seedTitles.count, foundTitles: seedTitles)
+        case let .load(ids):
+            latest = InboxReadProgress(chatsFound: seedTitles.count, chatsTotal: ids.count, foundTitles: seedTitles)
+        }
+        phase = .running(latest)
     }
 
     func start() {
@@ -62,6 +70,7 @@ final class InboxSyncModel: Identifiable {
                 let pause = Self.pause(for: error)
                 self.retryAfter = pause.retryAfter
                 self.phase = .failed(title: pause.title, message: pause.message, kind: pause.kind)
+                self.onFailed?()
             }
         }
     }

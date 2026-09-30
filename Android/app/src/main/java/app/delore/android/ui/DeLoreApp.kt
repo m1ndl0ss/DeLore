@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -465,16 +466,19 @@ private fun InboxSyncScreen(model: AppViewModel) {
                 Spacer(Modifier.weight(1f))
                 CloseButton { model.dismissSync() }
             }
-            Spacer(Modifier.weight(1f))
+            val titles = state.inboxRead.foundTitles.ifEmpty {
+                state.overview?.conversations?.map { it.title }.orEmpty()
+            }
             if (state.syncErrorTitle != null) {
-                Icon(Icons.Filled.Shield, null, tint = Palette.ink(), modifier = Modifier.size(56.dp))
-                Spacer(Modifier.height(Spacing.m))
+                Spacer(Modifier.height(Spacing.l))
+                Icon(Icons.Filled.Shield, null, tint = Palette.ink(), modifier = Modifier.size(40.dp))
+                Spacer(Modifier.height(Spacing.s))
                 Text(state.syncErrorTitle!!, color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp, textAlign = TextAlign.Center)
                 Text(state.syncErrorMessage.orEmpty(), color = Palette.secondaryInk(), textAlign = TextAlign.Center)
-                Spacer(Modifier.height(Spacing.l))
+                Spacer(Modifier.height(Spacing.m))
                 when (state.syncPauseKind) {
                     SyncPauseKind.HOLD_OFF, null -> {
-                        ConnectButton("Try reading") { model.retryInboxNow() }
+                        ConnectButton("Keep going") { model.retryInboxNow() }
                         QuietButton("I'll wait") { model.acceptInboxHoldOff(later = false) }
                     }
                     SyncPauseKind.RECONNECT -> {
@@ -493,64 +497,70 @@ private fun InboxSyncScreen(model: AppViewModel) {
             } else {
                 val read = state.inboxRead
                 val numbers = NumberFormat.getIntegerInstance(Locale.US)
+                Spacer(Modifier.height(Spacing.m))
                 Text(
                     if (read.isComplete) "All set" else if (read.isListing) "Finding who you talked to…" else "Reading selected chats…",
                     color = Palette.ink(),
                     fontWeight = FontWeight.Bold,
-                    fontSize = 24.sp,
+                    fontSize = 22.sp,
                     textAlign = TextAlign.Center,
                 )
-                Spacer(Modifier.height(Spacing.m))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        numbers.format(if (read.isListing) read.chatsFound else read.chatsRead),
-                        color = Palette.ink(),
-                        fontFamily = Type.sans,
-                        fontSize = 48.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        lineHeight = 52.sp,
-                    )
-                    if (!read.isListing) {
-                        Text(
-                            " / ${numbers.format(read.chatsTotal ?: 0)}",
-                            color = Palette.secondaryInk(),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 22.sp,
-                        )
-                    }
-                }
                 Text(
-                    if (read.isListing) "people so far" else "chats",
-                    color = Palette.secondaryInk(),
+                    if (read.isListing) "${numbers.format(read.chatsFound)} people so far"
+                    else "${numbers.format(read.chatsRead)} / ${numbers.format(read.chatsTotal ?: 0)} chats",
+                    color = Palette.accent,
                     fontFamily = Type.sans,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
+                    fontSize = 16.sp,
                 )
-                Spacer(Modifier.height(Spacing.m))
+                Spacer(Modifier.height(Spacing.s))
                 LoreProgressBar(read.fraction)
                 if (read.sendsFound > 0) {
-                    Spacer(Modifier.height(Spacing.s))
                     Text(
                         "${numbers.format(read.sendsFound)} of your sends",
-                        color = Palette.accent,
-                        fontFamily = Type.sans,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp,
-                    )
-                }
-                read.displayChat?.let { chat ->
-                    Text(
-                        "in $chat",
                         color = Palette.secondaryInk(),
                         fontFamily = Type.sans,
                         fontSize = 14.sp,
-                        textAlign = TextAlign.Center,
                     )
                 }
-                Spacer(Modifier.height(Spacing.l))
-                Text("This happens on your phone. Nothing is uploaded.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
             }
-            Spacer(Modifier.weight(1f))
+            if (titles.isNotEmpty()) {
+                Spacer(Modifier.height(Spacing.m))
+                Text(
+                    if (state.syncErrorTitle != null) "Kept on this phone" else "Found so far",
+                    color = Palette.secondaryInk(),
+                    fontFamily = Type.sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(Spacing.s))
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    reverseLayout = true,
+                ) {
+                    itemsIndexed(titles, key = { index, name -> "$index-$name" }) { _, name ->
+                        Text(
+                            name,
+                            color = Palette.ink(),
+                            fontFamily = Type.sans,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Palette.surface())
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(Spacing.s))
+            Text("This happens on your phone. Nothing is uploaded.", color = Palette.secondaryInk(), textAlign = TextAlign.Center, fontSize = 13.sp)
         }
     }
 }

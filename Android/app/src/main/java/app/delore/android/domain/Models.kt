@@ -92,6 +92,7 @@ data class InboxReadProgress(
     val chatsTotal: Int? = null,
     val sendsFound: Int = 0,
     val currentTitle: String? = null,
+    val foundTitles: List<String> = emptyList(),
 ) {
     val isListing: Boolean get() = chatsTotal == null
     val isComplete: Boolean get() = chatsTotal != null && chatsRead >= chatsTotal

@@ -62,11 +62,19 @@ class AppEnvironment(private val context: Context) {
         get() = prefs.getLong("inbox.holdOffUntil", 0L)
         set(value) { prefs.edit().putLong("inbox.holdOffUntil", value).apply() }
 
+    var inboxListCursor: String?
+        get() = prefs.getString("inbox.listCursor", null)?.ifBlank { null }
+        set(value) {
+            val editor = prefs.edit()
+            if (value.isNullOrBlank()) editor.remove("inbox.listCursor") else editor.putString("inbox.listCursor", value)
+            editor.apply()
+        }
+
     fun dropStaleFullInbox() {
         if (prefs.getBoolean("inbox.listFirst", false)) return
         library.wipe()
         jobStore.wipe()
-        prefs.edit().putBoolean("inbox.listFirst", true).apply()
+        prefs.edit().putBoolean("inbox.listFirst", true).remove("inbox.listCursor").apply()
     }
 
     fun isOnline(): Boolean {
@@ -87,8 +95,11 @@ class AppEnvironment(private val context: Context) {
 
     suspend fun listInbox(onProgress: ((InboxReadProgress) -> Unit)?): LibraryOverview {
         val session = loadSession()?.takeIf { it.hasLiveSession } ?: throw app.delore.android.domain.IntegrationError.SessionExpired
+        val resume = inboxListCursor
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            InstagramInboxSync(http, library).list(session, onProgress)
+            InstagramInboxSync(http, library).list(session, resume, onProgress) { cursor ->
+                inboxListCursor = cursor
+            }
         }
     }
 
@@ -118,7 +129,7 @@ class AppEnvironment(private val context: Context) {
         library.wipe()
         history.wipe()
         BillingLedger.clearAll(prefs)
-        prefs.edit().remove("onboarding.completed").remove("inbox.holdOffUntil").remove("inbox.listFirst").apply()
+        prefs.edit().remove("onboarding.completed").remove("inbox.holdOffUntil").remove("inbox.listFirst").remove("inbox.listCursor").apply()
         webBrowser.destroy()
     }
 }
