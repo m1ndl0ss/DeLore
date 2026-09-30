@@ -16,6 +16,7 @@ public struct CleanupEngineDependencies: Sendable {
     public var random: RandomSource
     public var analytics: Analytics
     public var logger: AppLogger
+    public var history: CleanupHistoryStore?
 
     public init(
         store: JobStore,
@@ -24,7 +25,8 @@ public struct CleanupEngineDependencies: Sendable {
         clock: EngineClock = SystemClock(),
         random: RandomSource = SystemRandom(),
         analytics: Analytics = .disabled,
-        logger: AppLogger = .disabled
+        logger: AppLogger = .disabled,
+        history: CleanupHistoryStore? = nil
     ) {
         self.store = store
         self.unsender = unsender
@@ -33,6 +35,7 @@ public struct CleanupEngineDependencies: Sendable {
         self.random = random
         self.analytics = analytics
         self.logger = logger
+        self.history = history
     }
 }
 
@@ -370,6 +373,14 @@ public actor CleanupEngine {
         } catch {
             logger.error("ledger write failed: \(error.safeDescription)")
         }
+        let item = items[index]
+        try? deps.history?.append(CleanupHistoryEntry(
+            key: item.ref.key,
+            conversationID: item.ref.conversationID.rawValue,
+            kind: item.kind,
+            sentAt: item.sentAt,
+            cleanedAt: deps.clock.now
+        ))
     }
 
     private func handleFailure(_ index: Int, error: Error, destructive: Bool) {

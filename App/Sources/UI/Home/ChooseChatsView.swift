@@ -69,7 +69,7 @@ struct ChooseChatsView: View {
     }
 }
 
-private struct ChatRow: View {
+struct ChatRow: View {
     let chat: ConversationSummary
     let isSelected: Bool
 
@@ -86,7 +86,7 @@ private struct ChatRow: View {
                     .font(.system(.body, design: .rounded, weight: .semibold))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
-                Text("^[\(chat.sentByOwner) message](inflect: true) from you")
+                Text(subtitle)
                     .font(.subheadline)
                     .foregroundStyle(Palette.secondaryInk)
             }
@@ -101,8 +101,15 @@ private struct ChatRow: View {
         .accessibilityElement(children: .combine)
     }
 
+    private var subtitle: String {
+        if !chat.messagesLoaded { return "Not read yet" }
+        if chat.sentByOwner == 0 { return "Nothing from you" }
+        return chat.sentByOwner == 1 ? "1 message from you" : "\(chat.sentByOwner) messages from you"
+    }
+
     private var initials: String {
-        let letters = chat.title.split(separator: " ").prefix(2).compactMap(\.first)
+        let cleaned = chat.title.trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+        let letters = cleaned.split(separator: " ").prefix(2).compactMap(\.first)
         return letters.isEmpty ? "?" : String(letters).uppercased()
     }
 }

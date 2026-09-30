@@ -24,7 +24,7 @@ struct PrivacyView: View {
                 Card {
                     Text("What leaves this phone")
                         .font(.title(.headline))
-                    Text("Cleanup talks to Instagram from this phone, the same way you would unsend a message yourself. Nothing from your DMs is sent to a DeLore server. We don't collect analytics, advertising IDs, or other identifiers. There's no tracking or ads. Purchases are handled by Apple.")
+                    Text("Cleanup talks to Instagram from this phone, the same way you would unsend a message yourself. Nothing from your DMs is sent to a Retract server. We don't collect analytics, advertising IDs, or other identifiers. There's no tracking or ads. Purchases are handled by Apple.")
                         .font(.subheadline)
                         .foregroundStyle(Palette.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
@@ -39,7 +39,7 @@ struct PrivacyView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text("DeLore isn't affiliated with, endorsed by, or connected to Instagram or Meta.")
+                Text("Retract isn't affiliated with, endorsed by, or connected to Instagram or Meta.")
                     .font(.footnote)
                     .foregroundStyle(Palette.secondaryInk)
             }

@@ -29,6 +29,15 @@
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<key>UIAppFonts</key>
+	<array>
+		<string>unbounded-extrabold.ttf</string>
+		<string>geist-regular.ttf</string>
+		<string>geist-semibold.ttf</string>
+		<string>Fonts/unbounded-extrabold.ttf</string>
+		<string>Fonts/geist-regular.ttf</string>
+		<string>Fonts/geist-semibold.ttf</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

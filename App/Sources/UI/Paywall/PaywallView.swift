@@ -4,56 +4,76 @@ import SwiftUI
 struct PaywallView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let context: AnalyticsEvent.PaywallContext
+    var embedded = false
     @State private var selectedID: String?
     @State private var notice: LocalizedStringKey?
+    @State private var glow = false
 
     private var entitlements: EntitlementManager { model.entitlements }
+    private var plans: [StoreProduct] {
+        entitlements.products.filter { $0.kind == .proYearly || $0.kind == .proMonthly }
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.l) {
-                HStack {
-                    Spacer()
-                    CloseButton { dismiss() }
+                if !embedded {
+                    HStack {
+                        Spacer()
+                        CloseButton { dismiss() }
+                    }
                 }
 
-                VStack(alignment: .leading, spacing: Spacing.s) {
-                    Text("Clean it all.")
-                        .font(.display())
-                        .foregroundStyle(Palette.ink)
-                        .accessibilityAddTraits(.isHeader)
-                    Text("First \(entitlements.freeLimit) messages are free. After that, Pro is \(monthlyPriceCopy) a month — or clean once without a subscription.")
-                        .foregroundStyle(Palette.secondaryInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text("Go Pro")
+                    .font(Type.medium(28))
+                    .foregroundStyle(Palette.ink)
+                Text("Unlimited unsends. Pick a plan.")
+                    .font(Type.body(15))
+                    .foregroundStyle(Palette.secondaryInk)
 
-                VStack(alignment: .leading, spacing: Spacing.m) {
-                    PromiseRow(symbol: "infinity", title: "Unlimited cleanup", detail: "Every chat, every message you sent.")
-                    PromiseRow(symbol: "slider.horizontal.3", title: "Date & type filters", detail: "Only old stuff. Only photos. Your call.")
-                    PromiseRow(symbol: "hand.raised.fill", title: "No analytics. No identifiers.", detail: "We don't collect Apple IDs, device IDs, or usage stats.")
-                    PromiseRow(symbol: "sparkles", title: "New features as they land", detail: "Included with Pro.")
-                }
-
-                plans
+                plansBlock
 
                 if let notice {
                     Text(notice)
-                        .font(.subheadline.weight(.semibold))
+                        .font(Type.body(14))
                         .foregroundStyle(Palette.secondaryInk)
                 }
+
+                HStack(spacing: Spacing.l) {
+                    Button("Restore") {
+                        Task {
+                            if await entitlements.restore() {
+                                if !entitlements.isPro { notice = "No Pro plan on this Apple ID." }
+                            } else {
+                                notice = "App Store isn’t reachable."
+                            }
+                        }
+                    }
+                    Link("Terms", destination: model.env.configuration.termsURL)
+                    Link("Privacy", destination: model.env.configuration.privacyPolicyURL)
+                    Spacer()
+                }
+                .font(Type.medium(14))
+                .foregroundStyle(Palette.secondaryInk)
             }
-            .padding(Spacing.screen)
+            .padding(.horizontal, Spacing.screen)
+            .padding(.top, Spacing.m)
+            .padding(.bottom, Spacing.xl)
         }
+        .scrollIndicators(.hidden)
         .screenBackground()
-        .safeAreaInset(edge: .bottom) { footer }
         .task {
             model.env.analytics.track(.paywallShown(context: context))
             await entitlements.loadProducts()
             if selectedID == nil {
-                selectedID = entitlements.products.first { $0.kind == .proMonthly }?.id
-                    ?? entitlements.products.first?.id
+                selectedID = plans.first { $0.kind == .proYearly }?.id ?? plans.first?.id
             }
+        }
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) { glow = true }
         }
         .onChange(of: entitlements.isPro) { _, isPro in
             if isPro { dismiss() }
@@ -61,151 +81,116 @@ struct PaywallView: View {
     }
 
     @ViewBuilder
-    private var plans: some View {
-        if entitlements.isLoadingProducts && entitlements.products.isEmpty {
-            ProgressView()
-                .frame(maxWidth: .infinity, minHeight: 120)
-        } else if entitlements.products.isEmpty {
-            Card {
-                Text("The App Store isn't reachable right now")
-                    .font(.title(.headline))
-                    .foregroundStyle(Palette.ink)
-                Text("You can keep using the free version. Try again in a bit.")
-                    .font(.subheadline)
-                    .foregroundStyle(Palette.secondaryInk)
-                Button("Try again") {
-                    Task { await entitlements.loadProducts() }
-                }
-                .buttonStyle(.secondary)
+    private var plansBlock: some View {
+        if entitlements.isLoadingProducts && plans.isEmpty {
+            ProgressView().tint(Palette.accent).frame(maxWidth: .infinity, minHeight: 80)
+        } else if plans.isEmpty {
+            VStack(alignment: .leading, spacing: Spacing.m) {
+                Text("Plans unavailable")
+                    .font(Type.medium(17))
+                Button("Retry") { Task { await entitlements.loadProducts() } }
+                    .buttonStyle(.secondary)
             }
         } else {
-            VStack(spacing: Spacing.s) {
-                ForEach(entitlements.products) { product in
-                    Button {
-                        selectedID = product.id
-                    } label: {
-                        PlanCard(product: product, isSelected: product.id == selectedID)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(product.id == selectedID ? .isSelected : [])
+            VStack(spacing: Spacing.m) {
+                ForEach(plans) { product in
+                    planCard(product)
                 }
             }
         }
     }
 
-    private var footer: some View {
-        VStack(spacing: Spacing.xs) {
-            Button {
-                purchase()
-            } label: {
-                if entitlements.isPurchasing { ProgressView().tint(Palette.onVolt) } else { Text("Continue") }
-            }
-            .buttonStyle(.primary)
-            .disabled(selectedProduct == nil || entitlements.isPurchasing)
-            .accessibilityIdentifier("purchase")
-
-            HStack(spacing: Spacing.m) {
-                Button("Restore purchases") {
-                    Task {
-                        if await entitlements.restore() {
-                            if !entitlements.isPro { notice = "No active Pro plan found." }
-                        } else {
-                            notice = "We couldn't reach the App Store. Try again later."
-                        }
-                    }
+    private func planCard(_ product: StoreProduct) -> some View {
+        let on = product.id == selectedID
+        let yearly = product.kind == .proYearly
+        return VStack(alignment: .leading, spacing: Spacing.m) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(yearly ? "Yearly" : "Monthly")
+                    .font(Type.medium(yearly ? 22 : 17))
+                Spacer()
+                if yearly {
+                    Text("Best value")
+                        .font(Type.medium(11))
+                        .foregroundStyle(Palette.onCtaSoft)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(
+                                LinearGradient(
+                                    colors: [Palette.valueGold, Palette.valuePink],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                        )
                 }
-                Link("Terms", destination: model.env.configuration.termsURL)
-                Link("Privacy", destination: model.env.configuration.privacyPolicyURL)
             }
-            .buttonStyle(.text)
-            .font(.footnote)
-
-            Text("Pro renews automatically until you cancel in Settings. A one-time cleanup covers one full cleanup and doesn't renew.")
-                .font(.caption2)
-                .foregroundStyle(Palette.secondaryInk)
-                .multilineTextAlignment(.center)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(product.displayPrice)
+                    .font(Type.medium(yearly ? 34 : 24))
+                Text(yearly ? "/ year" : "/ month")
+                    .font(Type.body(15))
+                    .foregroundStyle(Palette.secondaryInk)
+            }
+            .foregroundStyle(Palette.ink)
+            if yearly, let monthly = product.monthlyEquivalent {
+                Text("\(monthly) / mo")
+                    .font(Type.body(14))
+                    .foregroundStyle(Palette.accent)
+            }
+            if yearly {
+                Button {
+                    selectedID = product.id
+                    purchase(product)
+                } label: {
+                    Text("Subscribe yearly")
+                }
+                .buttonStyle(.primary)
+                .disabled(entitlements.isPurchasing || entitlements.isPro)
+                .accessibilityIdentifier("purchaseYearly")
+            } else {
+                Button {
+                    selectedID = product.id
+                    purchase(product)
+                } label: {
+                    Text("Subscribe monthly")
+                }
+                .buttonStyle(.secondary)
+                .disabled(entitlements.isPurchasing || entitlements.isPro)
+                .accessibilityIdentifier("purchaseMonthly")
+            }
         }
-        .padding(.horizontal, Spacing.screen)
-        .padding(.vertical, Spacing.s)
-        .background(Palette.background.opacity(0.96))
+        .padding(yearly ? 20 : 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Radius.l, style: .continuous)
+                .fill(yearly ? Palette.surfaceElevated : Palette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.l, style: .continuous)
+                .strokeBorder(
+                    yearly
+                        ? Palette.cta.opacity(glow && on ? 1 : 0.72)
+                        : Palette.accent.opacity(on ? 0.85 : 0.5),
+                    lineWidth: yearly ? 1.8 : 1.4
+                )
+        )
+        .shadow(color: (yearly ? Palette.cta : Palette.accent).opacity(yearly ? 0.32 : 0.18), radius: yearly && glow ? 22 : 12, y: 8)
+        .onTapGesture { selectedID = product.id }
     }
 
-    private var selectedProduct: StoreProduct? {
-        entitlements.products.first { $0.id == selectedID }
-    }
-
-    private var monthlyPriceCopy: String {
-        entitlements.products.first { $0.kind == .proMonthly }?.displayPrice ?? "$19.99"
-    }
-
-    private func purchase() {
-        guard let product = selectedProduct else { return }
+    private func purchase(_ product: StoreProduct) {
         Task {
             switch await entitlements.purchase(product) {
             case .purchased?:
                 dismiss()
             case .pending?:
-                notice = "Waiting for approval. We'll unlock things as soon as it goes through."
+                notice = "Waiting for approval."
             case .cancelled?:
                 break
             case nil:
-                notice = "That didn't go through. You haven't been charged."
+                notice = "Not charged."
             }
-        }
-    }
-}
-
-private struct PlanCard: View {
-    let product: StoreProduct
-    let isSelected: Bool
-
-    var body: some View {
-        HStack(spacing: Spacing.m) {
-            Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                .font(.title2)
-                .foregroundStyle(isSelected ? Palette.onVolt : Palette.secondaryInk)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                if product.kind == .proYearly {
-                    Pill(text: "Best value", filled: !isSelected)
-                        .padding(.bottom, 2)
-                }
-                Text(title)
-                    .font(.title(.headline))
-                Text(subtitle)
-                    .font(.subheadline)
-                    .opacity(0.75)
-            }
-            Spacer()
-            Text(product.displayPrice)
-                .font(.system(.headline, design: .rounded, weight: .heavy))
-        }
-        .foregroundStyle(isSelected ? Palette.onVolt : Palette.ink)
-        .padding(Spacing.m)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(isSelected ? Palette.volt : Palette.surface)
-        )
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Palette.hairline))
-        .contentShape(RoundedRectangle(cornerRadius: 20))
-        .accessibilityElement(children: .combine)
-    }
-
-    private var title: LocalizedStringKey {
-        switch product.kind {
-        case .proYearly: return "Pro · Yearly"
-        case .proMonthly: return "Pro · Monthly"
-        case .oneTimeCleanup: return "One-time cleanup"
-        }
-    }
-
-    private var subtitle: LocalizedStringKey {
-        switch product.kind {
-        case .proYearly:
-            if let monthly = product.monthlyEquivalent { return "Just \(monthly)/month, billed yearly" }
-            return "Billed yearly"
-        case .proMonthly: return "After your free messages. Cancel anytime."
-        case .oneTimeCleanup: return "Clean everything once. No subscription."
         }
     }
 }

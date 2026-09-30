@@ -6,6 +6,7 @@ import app.delore.android.domain.ConversationSummary
 import app.delore.android.domain.DiscoveredMessage
 import app.delore.android.domain.HTTPMethod
 import app.delore.android.domain.HTTPResponse
+import app.delore.android.domain.InboxReadProgress
 import app.delore.android.domain.IntegrationError
 import app.delore.android.domain.LibraryOverview
 import app.delore.android.domain.MessageKind
@@ -18,7 +19,10 @@ import app.delore.android.domain.UnsendService
 import app.delore.android.engine.EngineClock
 import app.delore.android.engine.SystemClock
 import app.delore.android.persist.LocalLibraryStore
+import android.util.Log
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -41,22 +45,61 @@ fun interface InstagramAPIClient {
 class InstagramHTTPClient(
     private val client: OkHttpClient,
     private val sessionProvider: () -> InstagramWebSession?,
+    private val browser: InstagramWebViewGateway? = null,
 ) : InstagramAPIClient {
+    private val apiClient = client.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
+    @Volatile private var wwwClaim = "0"
+    @Volatile private var asbdID: String? = null
+    @Volatile private var warmedForUser: String? = null
+
     override suspend fun send(request: InstagramAPIRequest): HTTPResponse {
+        var last: Exception? = null
+        repeat(2) { attempt ->
+            try {
+                val session = sessionProvider() ?: throw IntegrationError.SessionExpired
+                if (!session.hasLiveSession) throw IntegrationError.SessionExpired
+                val gateway = browser
+                if (gateway != null) {
+                    return gateway.send(request, session)
+                }
+                return withContext(Dispatchers.IO) { sendOnce(request) }
+            } catch (error: IntegrationError.UnexpectedResponse) {
+                if (attempt == 1 || (error.code != 403 && error.code != 400)) throw error
+                last = error
+                kotlinx.coroutines.delay(450)
+            }
+        }
+        throw last ?: IntegrationError.Unavailable
+    }
+
+    private fun sendOnce(request: InstagramAPIRequest): HTTPResponse {
         val session = sessionProvider() ?: throw IntegrationError.SessionExpired
         if (!session.hasLiveSession) throw IntegrationError.SessionExpired
         val csrf = session.csrfToken?.takeIf { it.isNotEmpty() } ?: throw IntegrationError.SessionExpired
+        warmupIfNeeded(session, csrf)
         val url = instagramUrl(request.path, request.query)
         val builder = Request.Builder()
             .url(url)
             .header("Cookie", session.cookieHeader())
             .header("X-CSRFToken", csrf)
             .header("X-IG-App-ID", InstagramWebConstants.WEB_APP_ID)
+            .header("X-IG-WWW-Claim", wwwClaim)
             .header("X-Requested-With", "XMLHttpRequest")
             .header("Referer", InstagramWebConstants.INBOX_REFERER)
             .header("Origin", InstagramWebConstants.BASE)
             .header("Accept", "application/json")
+            .header("Accept-Language", "en-US,en;q=0.9")
             .header("User-Agent", InstagramWebConstants.CHROME_USER_AGENT)
+            .header("ig-u-ds-user-id", session.userID)
+            .header("ig-intended-user-id", session.userID)
+            .header("Sec-Fetch-Dest", "empty")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Site", "same-origin")
+        asbdID?.let { builder.header("X-ASBD-ID", it) }
         when (request.method) {
             HTTPMethod.GET -> builder.get()
             HTTPMethod.POST -> builder.post("".toRequestBody(null)).header(
@@ -66,23 +109,68 @@ class InstagramHTTPClient(
             HTTPMethod.DELETE -> builder.delete()
         }
         val response = try {
-            client.newCall(builder.build()).execute()
+            apiClient.newCall(builder.build()).execute()
         } catch (_: java.net.UnknownHostException) {
             throw IntegrationError.Offline
         } catch (_: java.net.SocketTimeoutException) {
             throw IntegrationError.TransportFailure(request.destructive)
         } catch (error: CancellationException) {
             throw error
-        } catch (_: Exception) {
+        } catch (error: IntegrationError) {
+            throw error
+        } catch (error: Exception) {
+            Log.e("Retract", "IG transport ${request.path}: ${error.javaClass.simpleName}: ${error.message}")
             throw IntegrationError.TransportFailure(request.destructive)
         }
         response.use { http ->
+            http.header("x-ig-set-www-claim")?.takeIf { it.isNotEmpty() }?.let { wwwClaim = it }
             val headers = http.headers.toMultimap().mapValues { it.value.last() }
             val body = http.body?.bytes() ?: ByteArray(0)
             val mapped = HTTPResponse(http.code, headers, body)
+            Log.i(
+                "Retract",
+                "IG ${request.method} ${request.path} -> ${http.code} bytes=${body.size} keys=${InstagramWebFormat.topKeys(body)}",
+            )
             InstagramResponseClassifier.throwIfNeeded(mapped, request.destructive)
             return mapped
         }
+    }
+
+    private fun warmupIfNeeded(session: InstagramWebSession, csrf: String) {
+        if (warmedForUser == session.userID) return
+        wwwClaim = session.wwwClaimCookie ?: "0"
+        asbdID = null
+        try {
+            val warmup = Request.Builder()
+                .url(InstagramWebConstants.INBOX_REFERER)
+                .header("Cookie", session.cookieHeader())
+                .header("X-CSRFToken", csrf)
+                .header("X-IG-App-ID", InstagramWebConstants.WEB_APP_ID)
+                .header("User-Agent", InstagramWebConstants.CHROME_USER_AGENT)
+                .header("Accept", "text/html,application/xhtml+xml")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .get()
+                .build()
+            client.newBuilder()
+                .connectTimeout(12, TimeUnit.SECONDS)
+                .readTimeout(12, TimeUnit.SECONDS)
+                .callTimeout(12, TimeUnit.SECONDS)
+                .build()
+                .newCall(warmup)
+                .execute()
+                .use { http ->
+                http.header("x-ig-set-www-claim")?.takeIf { it.isNotEmpty() }?.let { wwwClaim = it }
+                val html = http.body?.string().orEmpty()
+                InstagramWebBootstrap.asbdID(html)?.let { asbdID = it }
+                InstagramWebBootstrap.wwwClaim(html)?.let { wwwClaim = it }
+                Log.i("Retract", "IG warmup -> ${http.code} htmlBytes=${html.length} hasClaim=${wwwClaim != "0"} hasAsbd=${asbdID != null}")
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Log.w("Retract", "IG inbox warmup: ${error.javaClass.simpleName}: ${error.message}")
+        }
+        warmedForUser = session.userID
     }
 
     companion object {
@@ -181,31 +269,77 @@ class InstagramInboxSync(
     private val listingDelaySeconds: Double = 0.4,
     private val clock: EngineClock = SystemClock,
 ) {
-    suspend fun run(session: InstagramWebSession, onProgress: ((Double) -> Unit)? = null): LibraryOverview {
+    suspend fun run(session: InstagramWebSession, onProgress: ((InboxReadProgress) -> Unit)? = null): LibraryOverview {
+        val listed = list(session, onProgress)
+        return load(session, listed.conversations.map { it.id }, onProgress)
+    }
+
+    suspend fun list(session: InstagramWebSession, onProgress: ((InboxReadProgress) -> Unit)? = null): LibraryOverview {
         val ownerID = session.userID
         var displayName = session.displayName
-        val stubs = mutableListOf<InboxThreadStub>()
+        val stubs = LinkedHashMap<String, InboxThreadStub>()
         var cursor: String? = null
         var inboxHasOlder = true
+        onProgress?.invoke(InboxReadProgress())
         while (inboxHasOlder) {
             val page = fetchInbox(cursor)
             if (displayName == null && !page.viewerUsername.isNullOrEmpty()) displayName = page.viewerUsername
-            stubs.addAll(page.threads)
+            for (stub in page.threads) stubs[stub.threadID] = stub
             inboxHasOlder = page.hasOlder
             cursor = page.oldestCursor
             if (cursor == null) inboxHasOlder = false
+            onProgress?.invoke(InboxReadProgress(chatsFound = stubs.size))
             if (listingDelaySeconds > 0) clock.sleep(listingDelaySeconds)
         }
         val account = session.copy(displayName = displayName).account
-        val writer = library.beginImport(account)
-        val total = maxOf(stubs.size, 1)
-        stubs.forEachIndexed { index, stub ->
-            val conversation = loadConversation(stub, ownerID)
-            writer.add(conversation.first, conversation.second)
-            onProgress?.invoke((index + 1).toDouble() / total)
+        val summaries = stubs.values.map { stub ->
+            ConversationSummary(
+                id = ConversationID(stub.threadID),
+                title = InstagramWebFormat.title(stub, ownerID),
+                sentByOwner = 0,
+                receivedFromOthers = 0,
+                messagesLoaded = false,
+            )
+        }
+        return library.mergeListing(account, summaries)
+    }
+
+    suspend fun load(
+        session: InstagramWebSession,
+        ids: Collection<ConversationID>,
+        onProgress: ((InboxReadProgress) -> Unit)? = null,
+    ): LibraryOverview {
+        val ownerID = session.userID
+        val wanted = library.conversations().filter { it.id in ids }
+        val total = wanted.size
+        var sends = 0
+        var overview = LibraryOverview(library.conversations())
+        wanted.forEachIndexed { index, listed ->
+            val conversation = loadConversation(listed.id.rawValue, listed.title, ownerID) { partial ->
+                onProgress?.invoke(
+                    InboxReadProgress(
+                        chatsFound = total,
+                        chatsRead = index,
+                        chatsTotal = total,
+                        sendsFound = sends + partial,
+                        currentTitle = listed.title,
+                    ),
+                )
+            }
+            overview = library.upsertLoaded(conversation.first, conversation.second)
+            sends += conversation.second.size
+            onProgress?.invoke(
+                InboxReadProgress(
+                    chatsFound = total,
+                    chatsRead = index + 1,
+                    chatsTotal = total,
+                    sendsFound = sends,
+                    currentTitle = listed.title,
+                ),
+            )
             if (listingDelaySeconds > 0) clock.sleep(listingDelaySeconds)
         }
-        return writer.commit()
+        return overview
     }
 
     private suspend fun fetchInbox(cursor: String?): InboxPage {
@@ -213,26 +347,35 @@ class InstagramInboxSync(
             "persistentBadging" to "true",
             "folder" to "inbox",
             "limit" to pageSize.toString(),
-            "thread_message_limit" to "1",
+            "thread_message_limit" to "0",
+            "visual_message_return_type" to "unseen",
         )
         if (cursor != null) query["cursor"] = cursor
         val response = client.send(InstagramAPIRequest(HTTPMethod.GET, "/api/v1/direct_v2/inbox/", query))
         return runCatching { InstagramWebFormat.parseInbox(response.body) }
-            .getOrElse { throw IntegrationError.UnexpectedResponse(response.statusCode) }
+            .getOrElse {
+                Log.e(
+                    "Retract",
+                    "IG inbox parse: ${it.javaClass.simpleName}: ${it.message} keys=${InstagramWebFormat.topKeys(response.body)}",
+                )
+                throw IntegrationError.UnexpectedResponse(response.statusCode)
+            }
     }
 
     private suspend fun loadConversation(
-        stub: InboxThreadStub,
+        threadID: String,
+        title: String,
         ownerID: String,
+        onPartial: ((Int) -> Unit)? = null,
     ): Pair<ConversationSummary, List<DiscoveredMessage>> {
-        val conversationID = ConversationID(stub.threadID)
+        val conversationID = ConversationID(threadID)
         val ownerMessages = mutableListOf<DiscoveredMessage>()
         var received = 0
         var cursor: String? = null
         var hasOlder = true
         val seen = HashSet<String>()
         while (hasOlder) {
-            val page = fetchThread(stub.threadID, cursor)
+            val page = fetchThread(threadID, cursor)
             for (item in page.items) {
                 if (item.isSystem || item.itemID.isEmpty()) continue
                 if (!seen.add(item.itemID)) continue
@@ -257,6 +400,7 @@ class InstagramInboxSync(
             hasOlder = page.hasOlder
             cursor = page.oldestCursor
             if (cursor == null) hasOlder = false
+            onPartial?.invoke(ownerMessages.size)
             if (hasOlder && listingDelaySeconds > 0) clock.sleep(listingDelaySeconds)
         }
         ownerMessages.sortWith(compareBy({ it.sentAtMillis }, { it.ref.messageID }))
@@ -264,12 +408,13 @@ class InstagramInboxSync(
         for (message in ownerMessages) byKind[message.kind] = (byKind[message.kind] ?: 0) + 1
         val summary = ConversationSummary(
             id = conversationID,
-            title = InstagramWebFormat.title(stub, ownerID),
+            title = title,
             sentByOwner = ownerMessages.size,
             receivedFromOthers = received,
             firstSentAt = ownerMessages.firstOrNull()?.sentAtMillis,
             lastSentAt = ownerMessages.lastOrNull()?.sentAtMillis,
             sentByKind = byKind,
+            messagesLoaded = true,
         )
         return summary to ownerMessages
     }
@@ -285,6 +430,12 @@ class InstagramInboxSync(
             InstagramAPIRequest(HTTPMethod.GET, "/api/v1/direct_v2/threads/$encoded/", query),
         )
         return runCatching { InstagramWebFormat.parseThread(response.body) }
-            .getOrElse { throw IntegrationError.UnexpectedResponse(response.statusCode) }
+            .getOrElse {
+                Log.e(
+                    "Retract",
+                    "IG thread parse: ${it.javaClass.simpleName}: ${it.message} keys=${InstagramWebFormat.topKeys(response.body)}",
+                )
+                throw IntegrationError.UnexpectedResponse(response.statusCode)
+            }
     }
 }

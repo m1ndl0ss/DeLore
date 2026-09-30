@@ -12,6 +12,8 @@ import app.delore.android.domain.MessagePresence
 import app.delore.android.domain.PauseReason
 import app.delore.android.domain.UnsendOutcome
 import app.delore.android.domain.UnsendService
+import app.delore.android.persist.CleanupHistoryEntry
+import app.delore.android.persist.CleanupHistoryStore
 import app.delore.android.persist.JobStore
 import app.delore.android.persist.JobStoreError
 import app.delore.android.persist.PersistedJob
@@ -41,6 +43,7 @@ data class CleanupEngineDependencies(
     val policy: RatePolicy = RatePolicy.conservative,
     val clock: EngineClock = SystemClock,
     val random: RandomSource = SystemRandom,
+    val history: CleanupHistoryStore? = null,
 )
 
 class CleanupEngine private constructor(
@@ -299,7 +302,19 @@ class CleanupEngine private constructor(
         throttler.recordSuccess()
         items[index] = items[index].copy(nextAttemptAt = null)
         if (!transition(index, CleanupItemState.COMPLETED)) return
-        runCatching { deps.store.addToLedger(listOf(items[index].ref.key)) }
+        val item = items[index]
+        runCatching { deps.store.addToLedger(listOf(item.ref.key)) }
+        runCatching {
+            deps.history?.append(
+                CleanupHistoryEntry(
+                    key = item.ref.key,
+                    conversationID = item.ref.conversationID.rawValue,
+                    kind = item.kind,
+                    sentAtMillis = item.sentAtMillis,
+                    cleanedAtMillis = deps.clock.nowMillis(),
+                ),
+            )
+        }
     }
 
     private fun handleFailure(index: Int, error: Throwable, destructive: Boolean) {

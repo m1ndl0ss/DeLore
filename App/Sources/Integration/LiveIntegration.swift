@@ -7,7 +7,7 @@ import Foundation
 /// 1. The user signs in through Instagram's own login page (shown in a WKWebView).
 /// 2. Session cookies stay on the device, in the Keychain.
 /// 3. Discovery and Unsend talk to Instagram's website using that session.
-/// 4. Nothing is sent to a DeLore server.
+/// 4. Nothing is sent to a Retract server.
 ///
 /// We use Instagram's published website client id (`APP_ID` on instagram.com), not a
 /// spoofed iOS/Android app identity. Challenges, CAPTCHAs and checkpoints are shown

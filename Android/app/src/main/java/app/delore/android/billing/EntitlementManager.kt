@@ -195,9 +195,8 @@ class EntitlementManager(
         }
         client.queryProductDetailsAsync(
             QueryProductDetailsParams.newBuilder().setProductList(products).build(),
-        ) { _, result ->
-            val list = result.productDetailsList.orEmpty()
-            if (cont.isActive) cont.resume(list)
+        ) { _: BillingResult, productDetailsList: List<ProductDetails> ->
+            if (cont.isActive) cont.resume(productDetailsList)
         }
     }
 

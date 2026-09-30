@@ -5,6 +5,8 @@ import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import app.delore.android.billing.EntitlementManager
+import app.delore.android.domain.ConversationID
+import app.delore.android.domain.InboxReadProgress
 import app.delore.android.domain.LibraryOverview
 import app.delore.android.engine.CleanupEngineDependencies
 import app.delore.android.engine.RatePolicy
@@ -12,8 +14,12 @@ import app.delore.android.instagram.InstagramHTTPClient
 import app.delore.android.instagram.InstagramInboxSync
 import app.delore.android.instagram.InstagramWebSession
 import app.delore.android.instagram.InstagramWebUnsendService
+import app.delore.android.instagram.InstagramWebViewGateway
 import app.delore.android.instagram.defaultOkHttp
+import app.delore.android.persist.CleanupHistoryStore
+import app.delore.android.persist.FileCleanupHistoryStore
 import app.delore.android.persist.FileJobStore
+import app.delore.android.persist.InMemoryCleanupHistoryStore
 import app.delore.android.persist.InMemoryJobStore
 import app.delore.android.persist.JobStore
 import app.delore.android.persist.LocalLibraryStore
@@ -36,9 +42,13 @@ class AppEnvironment(private val context: Context) {
     val jobStore: JobStore = runCatching {
         FileJobStore(File(context.filesDir, "jobs"))
     }.getOrElse { InMemoryJobStore() }
-    val prefs: SharedPreferences = context.getSharedPreferences("delore", Context.MODE_PRIVATE)
+    val history: CleanupHistoryStore = runCatching {
+        FileCleanupHistoryStore(File(context.filesDir, "history"))
+    }.getOrElse { InMemoryCleanupHistoryStore() }
+    val prefs: SharedPreferences = context.getSharedPreferences("retract", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    private val http = InstagramHTTPClient(defaultOkHttp()) { loadSession() }
+    val webBrowser = InstagramWebViewGateway()
+    private val http = InstagramHTTPClient(defaultOkHttp(), { loadSession() }, webBrowser)
     val unsender = InstagramWebUnsendService(http, ownerID = { loadSession()?.userID })
 
     val hasLibrary: Boolean get() = library.hasLibrary
@@ -47,6 +57,17 @@ class AppEnvironment(private val context: Context) {
     var hasCompletedOnboarding: Boolean
         get() = prefs.getBoolean("onboarding.completed", false)
         set(value) { prefs.edit().putBoolean("onboarding.completed", value).apply() }
+
+    var inboxHoldOffUntilMillis: Long
+        get() = prefs.getLong("inbox.holdOffUntil", 0L)
+        set(value) { prefs.edit().putLong("inbox.holdOffUntil", value).apply() }
+
+    fun dropStaleFullInbox() {
+        if (prefs.getBoolean("inbox.listFirst", false)) return
+        library.wipe()
+        jobStore.wipe()
+        prefs.edit().putBoolean("inbox.listFirst", true).apply()
+    }
 
     fun isOnline(): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -64,9 +85,18 @@ class AppEnvironment(private val context: Context) {
         return runCatching { json.decodeFromString<InstagramWebSession>(raw) }.getOrNull()
     }
 
-    suspend fun syncInbox(onProgress: ((Double) -> Unit)?): LibraryOverview {
+    suspend fun listInbox(onProgress: ((InboxReadProgress) -> Unit)?): LibraryOverview {
         val session = loadSession()?.takeIf { it.hasLiveSession } ?: throw app.delore.android.domain.IntegrationError.SessionExpired
-        return InstagramInboxSync(http, library).run(session, onProgress)
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            InstagramInboxSync(http, library).list(session, onProgress)
+        }
+    }
+
+    suspend fun loadInbox(ids: Collection<ConversationID>, onProgress: ((InboxReadProgress) -> Unit)?): LibraryOverview {
+        val session = loadSession()?.takeIf { it.hasLiveSession } ?: throw app.delore.android.domain.IntegrationError.SessionExpired
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            InstagramInboxSync(http, library).load(session, ids, onProgress)
+        }
     }
 
     suspend fun loadOverview(): LibraryOverview {
@@ -78,6 +108,7 @@ class AppEnvironment(private val context: Context) {
         store = jobStore,
         unsender = unsender,
         policy = ratePolicy,
+        history = history,
     )
 
     fun eraseAllData() {
@@ -85,7 +116,9 @@ class AppEnvironment(private val context: Context) {
         secrets.wipePreserving(eraserKeys)
         jobStore.wipe()
         library.wipe()
+        history.wipe()
         BillingLedger.clearAll(prefs)
-        prefs.edit().remove("onboarding.completed").apply()
+        prefs.edit().remove("onboarding.completed").remove("inbox.holdOffUntil").remove("inbox.listFirst").apply()
+        webBrowser.destroy()
     }
 }

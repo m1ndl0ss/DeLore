@@ -28,13 +28,23 @@ public struct InstagramInboxSync: Sendable {
 
     public func run(
         session: InstagramWebSession,
-        onProgress: (@Sendable (Double) -> Void)? = nil
+        onProgress: (@Sendable (InboxReadProgress) -> Void)? = nil
+    ) async throws -> LibraryOverview {
+        let listed = try await list(session: session, onProgress: onProgress)
+        return try await load(session: session, ids: listed.conversations.map(\.id), onProgress: onProgress)
+    }
+
+    public func list(
+        session: InstagramWebSession,
+        onProgress: (@Sendable (InboxReadProgress) -> Void)? = nil
     ) async throws -> LibraryOverview {
         let ownerID = session.userID
         var displayName = session.displayName
         var stubs: [InstagramWebFormat.InboxPage.ThreadStub] = []
+        var seen = Set<String>()
         var cursor: String?
         var inboxHasOlder = true
+        onProgress?(InboxReadProgress())
 
         while inboxHasOlder {
             try Task.checkCancellation()
@@ -42,26 +52,65 @@ public struct InstagramInboxSync: Sendable {
             if displayName == nil, let username = page.viewer?.username, !username.isEmpty {
                 displayName = username
             }
-            stubs.append(contentsOf: page.inbox?.threads ?? [])
+            for stub in page.inbox?.threads ?? [] where seen.insert(stub.threadID.rawValue).inserted {
+                stubs.append(stub)
+            }
             inboxHasOlder = page.inbox?.hasOlder ?? false
             cursor = page.inbox?.oldestCursor
             if cursor == nil { inboxHasOlder = false }
+            onProgress?(InboxReadProgress(chatsFound: stubs.count))
             if listingDelay > 0 { try await clock.sleep(for: listingDelay) }
         }
 
         let account = AccountIdentity(ownerID: ParticipantID("ig:" + ownerID), displayName: displayName ?? "you")
-        let writer = try library.beginImport(account: account)
-        let total = max(stubs.count, 1)
+        let summaries = stubs.map { stub in
+            ConversationSummary(
+                id: ConversationID(stub.threadID.rawValue),
+                title: InstagramWebFormat.title(for: stub, ownerID: ownerID),
+                sentByOwner: 0,
+                receivedFromOthers: 0,
+                firstSentAt: nil,
+                lastSentAt: nil,
+                messagesLoaded: false
+            )
+        }
+        return try library.mergeListing(account: account, stubs: summaries)
+    }
 
-        for (index, stub) in stubs.enumerated() {
+    public func load(
+        session: InstagramWebSession,
+        ids: [ConversationID],
+        onProgress: (@Sendable (InboxReadProgress) -> Void)? = nil
+    ) async throws -> LibraryOverview {
+        let ownerID = session.userID
+        let wanted = try await library.conversations().filter { ids.contains($0.id) }
+        let total = wanted.count
+        var sends = 0
+        var overview = LibraryOverview(conversations: try await library.conversations())
+        for (index, listed) in wanted.enumerated() {
             try Task.checkCancellation()
-            let conversation = try await loadConversation(stub: stub, ownerID: ownerID)
-            try writer.add(summary: conversation.summary, messages: conversation.messages)
-            onProgress?(Double(index + 1) / Double(total))
+            let sendsSoFar = sends
+            let conversation = try await loadConversation(id: listed.id.rawValue, title: listed.title, ownerID: ownerID) { partial in
+                onProgress?(InboxReadProgress(
+                    chatsFound: total,
+                    chatsRead: index,
+                    chatsTotal: total,
+                    sendsFound: sendsSoFar + partial,
+                    currentTitle: listed.title
+                ))
+            }
+            overview = try library.upsertLoaded(summary: conversation.summary, messages: conversation.messages)
+            sends += conversation.messages.count
+            onProgress?(InboxReadProgress(
+                chatsFound: total,
+                chatsRead: index + 1,
+                chatsTotal: total,
+                sendsFound: sends,
+                currentTitle: listed.title
+            ))
             if listingDelay > 0 { try await clock.sleep(for: listingDelay) }
         }
-
-        return try writer.commit()
+        return overview
     }
 
     private func fetchInbox(cursor: String?) async throws -> InstagramWebFormat.InboxPage {
@@ -69,12 +118,13 @@ public struct InstagramInboxSync: Sendable {
             "persistentBadging": "true",
             "folder": "inbox",
             "limit": String(pageSize),
-            "thread_message_limit": "1"
+            "thread_message_limit": "0",
+            "visual_message_return_type": "unseen"
         ]
         if let cursor { query["cursor"] = cursor }
         let response = try await client.send(InstagramAPIRequest(method: .get, path: "/api/v1/direct_v2/inbox/", query: query))
         do {
-            return try JSONDecoder().decode(InstagramWebFormat.InboxPage.self, from: response.body)
+            return try InstagramWebFormat.parseInbox(response.body)
         } catch {
             throw IntegrationError.unexpectedResponse(code: response.statusCode)
         }
@@ -86,10 +136,12 @@ public struct InstagramInboxSync: Sendable {
     }
 
     private func loadConversation(
-        stub: InstagramWebFormat.InboxPage.ThreadStub,
-        ownerID: String
+        id: String,
+        title: String,
+        ownerID: String,
+        onPartial: (@Sendable (Int) -> Void)? = nil
     ) async throws -> LoadedConversation {
-        let conversationID = ConversationID(stub.threadID.rawValue)
+        let conversationID = ConversationID(id)
         var ownerMessages: [DiscoveredMessage] = []
         var received = 0
         var cursor: String?
@@ -98,7 +150,7 @@ public struct InstagramInboxSync: Sendable {
 
         while hasOlder {
             try Task.checkCancellation()
-            let page = try await fetchThread(id: stub.threadID.rawValue, cursor: cursor)
+            let page = try await fetchThread(id: id, cursor: cursor)
             let items = page.thread?.items ?? []
             for item in items {
                 guard !item.isSystem, !item.itemID.isEmpty else { continue }
@@ -125,6 +177,7 @@ public struct InstagramInboxSync: Sendable {
             hasOlder = page.thread?.hasOlder ?? false
             cursor = page.thread?.oldestCursor
             if cursor == nil { hasOlder = false }
+            onPartial?(ownerMessages.count)
             if hasOlder, listingDelay > 0 { try await clock.sleep(for: listingDelay) }
         }
 
@@ -134,12 +187,13 @@ public struct InstagramInboxSync: Sendable {
 
         let summary = ConversationSummary(
             id: conversationID,
-            title: InstagramWebFormat.title(for: stub, ownerID: ownerID),
+            title: title,
             sentByOwner: ownerMessages.count,
             receivedFromOthers: received,
             firstSentAt: ownerMessages.first?.sentAt,
             lastSentAt: ownerMessages.last?.sentAt,
-            sentByKind: byKind
+            sentByKind: byKind,
+            messagesLoaded: true
         )
         return LoadedConversation(summary: summary, messages: ownerMessages)
     }
@@ -155,7 +209,7 @@ public struct InstagramInboxSync: Sendable {
             InstagramAPIRequest(method: .get, path: "/api/v1/direct_v2/threads/\(encoded)/", query: query)
         )
         do {
-            return try JSONDecoder().decode(InstagramWebFormat.ThreadPage.self, from: response.body)
+            return try InstagramWebFormat.parseThread(response.body)
         } catch {
             throw IntegrationError.unexpectedResponse(code: response.statusCode)
         }

@@ -35,7 +35,7 @@ public protocol InstagramAPIClient: Sendable {
 public enum InstagramWebConstants {
     public static let baseURL = URL(string: "https://www.instagram.com")!
     public static let webAppID = "936619743392459"
-    public static let safariUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1"
+    public static let safariUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.139 Safari/537.36"
     public static let loginURL = URL(string: "https://www.instagram.com/accounts/login/")!
     public static let inboxReferer = URL(string: "https://www.instagram.com/direct/inbox/")!
 }
@@ -46,6 +46,7 @@ public struct InstagramHTTPClient: InstagramAPIClient {
     private let transport: HTTPTransport
     private let sessionProvider: @Sendable () throws -> InstagramWebSession?
     private let logger: AppLogger
+    private let wwwClaim: InstagramWWWClaim
 
     public init(
         transport: HTTPTransport,
@@ -55,9 +56,19 @@ public struct InstagramHTTPClient: InstagramAPIClient {
         self.transport = transport
         self.sessionProvider = sessionProvider
         self.logger = logger.scoped("ig-web")
+        self.wwwClaim = InstagramWWWClaim()
     }
 
     public func send(_ request: InstagramAPIRequest) async throws -> HTTPResponse {
+        do {
+            return try await perform(request)
+        } catch IntegrationError.unexpectedResponse(code: let code) where code == 403 || code == 400 {
+            try await Task.sleep(nanoseconds: 450_000_000)
+            return try await perform(request)
+        }
+    }
+
+    private func perform(_ request: InstagramAPIRequest) async throws -> HTTPResponse {
         guard let session = try sessionProvider(), session.hasLiveSession else {
             throw IntegrationError.sessionExpired
         }
@@ -72,16 +83,9 @@ public struct InstagramHTTPClient: InstagramAPIClient {
             throw error.integrationError(destructive: request.destructive)
         }
 
-        var headers: [String: Sensitive<String>] = [
-            "Cookie": session.cookieHeader(),
-            "X-CSRFToken": Sensitive(csrf),
-            "X-IG-App-ID": Sensitive(InstagramWebConstants.webAppID),
-            "X-Requested-With": Sensitive("XMLHttpRequest"),
-            "Referer": Sensitive(InstagramWebConstants.inboxReferer.absoluteString),
-            "Origin": Sensitive(InstagramWebConstants.baseURL.absoluteString),
-            "Accept": Sensitive("application/json"),
-            "User-Agent": Sensitive(InstagramWebConstants.safariUserAgent)
-        ]
+        await warmupIfNeeded(session: session, csrf: csrf)
+
+        var headers = apiHeaders(session: session, csrf: csrf)
         if request.method == .post {
             headers["Content-Type"] = Sensitive("application/x-www-form-urlencoded; charset=UTF-8")
         }
@@ -102,9 +106,65 @@ public struct InstagramHTTPClient: InstagramAPIClient {
             throw error.integrationError(destructive: request.destructive)
         }
 
-        logger.debug("\(request.method.rawValue) instagram.com -> \(response.statusCode)")
+        logger.debug("\(request.method.rawValue) \(request.path) -> \(response.statusCode) keys=\(InstagramWebFormat.topKeys(response.body))")
+        wwwClaim.update(from: response)
         try InstagramResponseClassifier.throwIfNeeded(response, destructive: request.destructive)
         return response
+    }
+
+    private func apiHeaders(session: InstagramWebSession, csrf: String) -> [String: Sensitive<String>] {
+        var headers: [String: Sensitive<String>] = [
+            "Cookie": session.cookieHeader(),
+            "X-CSRFToken": Sensitive(csrf),
+            "X-IG-App-ID": Sensitive(InstagramWebConstants.webAppID),
+            "X-IG-WWW-Claim": Sensitive(wwwClaim.current()),
+            "X-Requested-With": Sensitive("XMLHttpRequest"),
+            "Referer": Sensitive(InstagramWebConstants.inboxReferer.absoluteString),
+            "Origin": Sensitive(InstagramWebConstants.baseURL.absoluteString),
+            "Accept": Sensitive("application/json"),
+            "Accept-Language": Sensitive("en-US,en;q=0.9"),
+            "User-Agent": Sensitive(InstagramWebConstants.safariUserAgent),
+            "ig-u-ds-user-id": Sensitive(session.userID),
+            "ig-intended-user-id": Sensitive(session.userID),
+            "Sec-Fetch-Dest": Sensitive("empty"),
+            "Sec-Fetch-Mode": Sensitive("cors"),
+            "Sec-Fetch-Site": Sensitive("same-origin")
+        ]
+        if let asbd = wwwClaim.asbdID() {
+            headers["X-ASBD-ID"] = Sensitive(asbd)
+        }
+        return headers
+    }
+
+    private func warmupIfNeeded(session: InstagramWebSession, csrf: String) async {
+        guard wwwClaim.beginWarmup(for: session.userID) else { return }
+        if let claim = session.wwwClaimCookie, !claim.isEmpty, claim != "0" {
+            wwwClaim.seed(claim)
+        }
+        do {
+            let url = try Self.instagramURL(path: "/direct/inbox/", query: [:])
+            let request = HTTPRequest(
+                method: .get,
+                url: url,
+                headers: [
+                    "Cookie": session.cookieHeader(),
+                    "X-CSRFToken": Sensitive(csrf),
+                    "X-IG-App-ID": Sensitive(InstagramWebConstants.webAppID),
+                    "User-Agent": Sensitive(InstagramWebConstants.safariUserAgent),
+                    "Accept": Sensitive("text/html,application/xhtml+xml"),
+                    "Accept-Language": Sensitive("en-US,en;q=0.9")
+                ],
+                timeout: 12,
+                isIdempotent: true
+            )
+            let response = try await transport.send(request)
+            wwwClaim.update(from: response)
+            if let html = String(data: response.body, encoding: .utf8) {
+                wwwClaim.applyPage(html)
+            }
+        } catch {
+            logger.debug("inbox warmup skipped")
+        }
     }
 
     /// Only relative paths on `www.instagram.com` over HTTPS. Absolute URLs are rejected so a
@@ -127,5 +187,52 @@ public struct InstagramHTTPClient: InstagramAPIClient {
             throw NetworkError.insecureConnection
         }
         return url
+    }
+}
+
+final class InstagramWWWClaim: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = "0"
+    private var asbd: String?
+    private var warmedForUser: String?
+
+    func current() -> String { lock.withLock { value } }
+    func asbdID() -> String? { lock.withLock { asbd } }
+
+    func seed(_ claim: String) {
+        lock.withLock {
+            if value == "0", !claim.isEmpty { value = claim }
+        }
+    }
+
+    func beginWarmup(for userID: String) -> Bool {
+        lock.withLock {
+            if warmedForUser == userID { return false }
+            warmedForUser = userID
+            asbd = nil
+            value = "0"
+            return true
+        }
+    }
+
+    func applyPage(_ html: String) {
+        if let match = html.range(of: "\"ASBD_ID\"\\s*:\\s*\"(\\d+)\"", options: .regularExpression) {
+            let snippet = String(html[match])
+            if let id = snippet.split(separator: "\"").last(where: { $0.allSatisfy(\.isNumber) }), !id.isEmpty {
+                lock.withLock { asbd = String(id) }
+            }
+        }
+        if let match = html.range(of: "\"www_claim\"\\s*:\\s*\"([^\"]+)\"", options: .regularExpression) {
+            let snippet = String(html[match])
+            let parts = snippet.split(separator: "\"")
+            if let claim = parts.last, !claim.isEmpty, claim != "0" {
+                lock.withLock { value = String(claim) }
+            }
+        }
+    }
+
+    func update(from response: HTTPResponse) {
+        guard let claim = response.header("x-ig-set-www-claim"), !claim.isEmpty else { return }
+        lock.withLock { value = claim }
     }
 }

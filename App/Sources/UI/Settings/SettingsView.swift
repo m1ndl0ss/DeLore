@@ -57,10 +57,6 @@ struct SettingsView: View {
 
                 Section("Your data") {
                     NavigationLink("How we handle your data") { PrivacyView() }
-                    Button("Refresh chats") {
-                        dismiss()
-                        model.refreshChats()
-                    }
                     if !model.env.hasLiveSession {
                         Button("Reconnect Instagram") {
                             dismiss()
@@ -85,10 +81,12 @@ struct SettingsView: View {
                 Section {
                     EmptyView()
                 } footer: {
-                    Text("DeLore \(appVersion) · No analytics. Not affiliated with Instagram or Meta.")
+                    Text("Retract \(appVersion) · No analytics. Not affiliated with Instagram or Meta.")
                         .frame(maxWidth: .infinity)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
             .navigationTitle("You")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

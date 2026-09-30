@@ -12,8 +12,8 @@ DEVELOPMENT_TEAM =
 PRODUCT_BUNDLE_IDENTIFIER = app.delore.ios
 
 // MANUAL STEP before release: replace with your hosted pages.
-DL_PRIVACY_URL = https:/$()/example.com/delore/privacy
-DL_SUPPORT_URL = https:/$()/example.com/delore/support
+DL_PRIVACY_URL = https:/$()/example.com/retract/privacy
+DL_SUPPORT_URL = https:/$()/example.com/retract/support
 // Apple's standard EULA; replace if you publish custom terms.
 DL_TERMS_URL = https:/$()/www.apple.com/legal/internet-services/itunes/dev/stdeula/
 

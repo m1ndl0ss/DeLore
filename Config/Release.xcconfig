@@ -1,4 +1,4 @@
 #include "Base.xcconfig"
 
 DL_ENVIRONMENT = release
-DL_DISPLAY_NAME = DeLore
+DL_DISPLAY_NAME = Retract

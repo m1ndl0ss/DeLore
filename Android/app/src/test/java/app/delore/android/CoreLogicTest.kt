@@ -10,7 +10,9 @@ import app.delore.android.domain.ConversationSummary
 import app.delore.android.domain.DiscoveredMessage
 import app.delore.android.domain.EntitlementState
 import app.delore.android.domain.HTTPResponse
+import app.delore.android.domain.InboxReadProgress
 import app.delore.android.domain.IntegrationError
+import app.delore.android.domain.LibraryOverview
 import app.delore.android.domain.MessageKind
 import app.delore.android.domain.MessageRef
 import app.delore.android.domain.ParticipantID
@@ -142,5 +144,50 @@ class InstagramPolicyTest {
         val body = """{"message":"login_required"}""".toByteArray()
         val error = InstagramResponseClassifier.classify(HTTPResponse(200, emptyMap(), body), destructive = false)
         assertEquals(IntegrationError.SessionExpired, error)
+    }
+
+    @Test
+    fun classifierDoesNotTreatInboxMessagesAsRateLimit() {
+        val body = """{"status":"ok","inbox":{"threads":[{"thread_id":"1","items":[{"item_id":"m","text":"this is spam and too many please wait a few minutes"}]}]}}""".toByteArray()
+        val error = InstagramResponseClassifier.classify(HTTPResponse(200, emptyMap(), body), destructive = false)
+        assertEquals(null, error)
+    }
+
+    @Test
+    fun classifierStillMapsTopLevelFeedbackRequired() {
+        val body = """{"feedback_required":true,"spam":true,"status":"fail"}""".toByteArray()
+        val error = InstagramResponseClassifier.classify(HTTPResponse(200, emptyMap(), body), destructive = false)
+        assertTrue(error is IntegrationError.RateLimited)
+    }
+
+    @Test
+    fun inboxReadProgressMovesFromListingToReading() {
+        val listing = InboxReadProgress(chatsFound = 24)
+        assertTrue(listing.isListing)
+        assertTrue(listing.fraction in 0.05..0.16)
+        val reading = InboxReadProgress(chatsFound = 40, chatsRead = 10, chatsTotal = 40, sendsFound = 18, currentTitle = "Alex")
+        assertFalse(reading.isListing)
+        assertEquals("Alex", reading.displayChat)
+        assertTrue(reading.fraction > listing.fraction)
+        assertTrue(reading.fraction < 1.0)
+        val done = InboxReadProgress(chatsFound = 40, chatsRead = 40, chatsTotal = 40, sendsFound = 90)
+        assertTrue(done.isComplete)
+        assertEquals(1.0, done.fraction, 0.0001)
+    }
+
+    @Test
+    fun unreadListingsAreNotCleanable() {
+        val stub = ConversationSummary(
+            id = ConversationID("t1"),
+            title = "@maya",
+            sentByOwner = 0,
+            receivedFromOthers = 0,
+            messagesLoaded = false,
+        )
+        assertFalse(stub.isCleanable)
+        val overview = LibraryOverview(listOf(stub))
+        assertEquals(0, overview.sentByOwner)
+        assertEquals(1, overview.unreadConversations.size)
+        assertTrue(overview.cleanableConversations.isEmpty())
     }
 }

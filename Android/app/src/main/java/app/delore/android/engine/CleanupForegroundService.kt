@@ -20,8 +20,8 @@ class CleanupForegroundService : Service() {
             NotificationChannel(CHANNEL, "Cleanup", NotificationManager.IMPORTANCE_LOW),
         )
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL)
-            .setContentTitle("DeLore")
-            .setContentText("Keep DeLore open while we clean.")
+            .setContentTitle("Retract")
+            .setContentText("Keep Retract open while we clean.")
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setOngoing(true)
             .build()

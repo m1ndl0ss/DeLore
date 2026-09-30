@@ -1,5 +1,6 @@
 import DeLoreCore
 import SwiftUI
+import UIKit
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
@@ -12,14 +13,8 @@ struct RootView: View {
             case .launching:
                 SplashView()
                     .transition(.opacity)
-            case .welcome:
-                WelcomeView()
-                    .transition(.opacity)
-            case .connect:
-                ConnectView()
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
             case .home:
-                HomeView()
+                MainTabs()
                     .transition(.opacity)
             }
         }
@@ -46,10 +41,11 @@ struct RootView: View {
             InboxSyncView(sync: sync)
                 .environment(model)
         }
-        .fullScreenCover(item: importBinding) { importModel in
+        .fullScreenCover(item:         importBinding) { importModel in
             ImportProgressView(importModel: importModel)
                 .environment(model)
         }
+        .tint(Palette.volt)
         .onChange(of: scenePhase) { _, phase in
             guard let session = model.session else { return }
             Task { await session.scenePhaseChanged(phase) }
@@ -73,6 +69,44 @@ struct RootView: View {
 
     private var importBinding: Binding<ImportModel?> {
         Binding(get: { model.importModel }, set: { if $0 == nil { model.dismissImport() } })
+    }
+}
+
+private struct MainTabs: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        TabView(selection: $model.tab) {
+            UnsendingView()
+                .tabItem { Label("Unsending", systemImage: "eraser") }
+                .tag(AppModel.Tab.unsending)
+            ActivityView()
+                .tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }
+                .tag(AppModel.Tab.activity)
+            SettingsTabView()
+                .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(AppModel.Tab.settings)
+        }
+        .toolbarBackground(Palette.background, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarColorScheme(.dark, for: .tabBar)
+        .onAppear {
+            let appearance = UITabBarAppearance()
+            appearance.configureWithOpaqueBackground()
+            appearance.backgroundColor = UIColor(Palette.background)
+            appearance.shadowColor = UIColor.white.withAlphaComponent(0.08)
+            let item = UITabBarItemAppearance()
+            item.normal.iconColor = UIColor.white.withAlphaComponent(0.4)
+            item.normal.titleTextAttributes = [.foregroundColor: UIColor.white.withAlphaComponent(0.4)]
+            item.selected.iconColor = UIColor(Palette.accent)
+            item.selected.titleTextAttributes = [.foregroundColor: UIColor(Palette.accent)]
+            appearance.stackedLayoutAppearance = item
+            appearance.inlineLayoutAppearance = item
+            appearance.compactInlineLayoutAppearance = item
+            UITabBar.appearance().standardAppearance = appearance
+            UITabBar.appearance().scrollEdgeAppearance = appearance
+        }
     }
 }
 
@@ -111,11 +145,11 @@ struct SplashView: View {
 
     var body: some View {
         Wordmark()
-            .scaleEffect(appeared ? 1.6 : 1.2)
+            .scaleEffect(appeared ? 1 : 0.94)
             .opacity(appeared ? 1 : 0)
             .onAppear {
-                withAnimation(.spring(response: 0.6, dampingFraction: 0.75)) { appeared = true }
+                withAnimation(.easeOut(duration: 0.35)) { appeared = true }
             }
-            .accessibilityLabel("DeLore is loading")
+            .accessibilityLabel("Retract is loading")
     }
 }

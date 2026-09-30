@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "DeLore"
+rootProject.name = "Retract"
 include(":app")

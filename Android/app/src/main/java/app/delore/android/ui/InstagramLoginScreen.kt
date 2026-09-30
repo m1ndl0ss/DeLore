@@ -7,13 +7,15 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.compose.foundation.background
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -41,11 +43,15 @@ fun InstagramLoginScreen(
     onCancel: () -> Unit,
 ) {
     var working by remember { mutableStateOf(true) }
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Palette.background()),
-    ) {
+    BackHandler(onBack = onCancel)
+    Box(Modifier.fillMaxSize()) {
+        MeshBackground()
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+        ) {
         Row(
             Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.s),
             verticalAlignment = Alignment.CenterVertically,
@@ -71,6 +77,7 @@ fun InstagramLoginScreen(
                 modifier = Modifier.fillMaxSize(),
                 factory = { context ->
                     val finished = AtomicBoolean(false)
+                    val requestedInbox = AtomicBoolean(false)
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().removeAllCookies(null)
                     WebView(context).apply {
@@ -81,6 +88,10 @@ fun InstagramLoginScreen(
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.userAgentString = InstagramWebConstants.CHROME_USER_AGENT
+                        settings.useWideViewPort = true
+                        settings.loadWithOverviewMode = true
+                        settings.builtInZoomControls = true
+                        settings.displayZoomControls = false
                         webChromeClient = WebChromeClient()
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -90,7 +101,12 @@ fun InstagramLoginScreen(
 
                             override fun onPageFinished(view: WebView, url: String) {
                                 working = false
-                                captureCookies(finished, onComplete)
+                                if (!InstagramLoginPolicy.isPostLogin(url)) return
+                                if (!InstagramLoginPolicy.isDirectSurface(url) && requestedInbox.compareAndSet(false, true)) {
+                                    view.loadUrl(InstagramWebConstants.INBOX_REFERER)
+                                    return
+                                }
+                                view.postDelayed({ captureCookies(finished, onComplete) }, 800)
                             }
                         }
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -108,25 +124,37 @@ fun InstagramLoginScreen(
             fontSize = 13.sp,
             modifier = Modifier.padding(Spacing.screen),
         )
+        }
     }
 }
 
 private fun captureCookies(finished: AtomicBoolean, onComplete: (InstagramWebSession) -> Unit) {
     if (finished.get()) return
-    val header = CookieManager.getInstance().getCookie("https://www.instagram.com") ?: return
-    val cookies = header.split(";").mapNotNull { part ->
-        val trimmed = part.trim()
-        val eq = trimmed.indexOf('=')
-        if (eq <= 0) return@mapNotNull null
-        InstagramWebSession.Cookie(
-            name = trimmed.substring(0, eq),
-            value = trimmed.substring(eq + 1),
-            domain = ".instagram.com",
-            path = "/",
-            isSecure = true,
-        )
-    }
+    CookieManager.getInstance().flush()
+    val cookies = readInstagramCookies()
     val session = InstagramWebSession.from(cookies) ?: return
     if (!finished.compareAndSet(false, true)) return
     onComplete(session)
+}
+
+private fun readInstagramCookies(): List<InstagramWebSession.Cookie> {
+    val manager = CookieManager.getInstance()
+    val seen = LinkedHashMap<String, InstagramWebSession.Cookie>()
+    for (host in listOf("https://www.instagram.com", "https://instagram.com")) {
+        val header = manager.getCookie(host) ?: continue
+        for (part in header.split(";")) {
+            val trimmed = part.trim()
+            val eq = trimmed.indexOf('=')
+            if (eq <= 0) continue
+            val name = trimmed.substring(0, eq)
+            seen[name.lowercase()] = InstagramWebSession.Cookie(
+                name = name,
+                value = trimmed.substring(eq + 1),
+                domain = ".instagram.com",
+                path = "/",
+                isSecure = true,
+            )
+        }
+    }
+    return seen.values.toList()
 }

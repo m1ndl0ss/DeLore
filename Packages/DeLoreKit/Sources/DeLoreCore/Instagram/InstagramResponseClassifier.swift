@@ -6,11 +6,11 @@ public enum InstagramResponseClassifier {
     public static func classify(_ response: HTTPResponse, destructive: Bool) -> IntegrationError? {
         if let fromStatus = statusError(response.statusCode, retryAfter: retryAfter(response), destructive: destructive) {
             if response.statusCode == 403 || response.statusCode == 400 {
-                if let fromBody = bodyError(response.body, destructive: destructive) { return fromBody }
+                if let fromBody = bodyError(response.body, statusCode: response.statusCode, destructive: destructive) { return fromBody }
             }
             return fromStatus
         }
-        return bodyError(response.body, destructive: destructive)
+        return bodyError(response.body, statusCode: response.statusCode, destructive: destructive)
     }
 
     public static func throwIfNeeded(_ response: HTTPResponse, destructive: Bool) throws {
@@ -34,57 +34,75 @@ public enum InstagramResponseClassifier {
         }
     }
 
-    private static func bodyError(_ body: Data, destructive: Bool) -> IntegrationError? {
+    private static func bodyError(_ body: Data, statusCode: Int, destructive: Bool) -> IntegrationError? {
         guard !body.isEmpty else { return nil }
         guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
-            // HTML login/checkpoint pages.
             if looksLikeHTML(body) {
                 let html = String(data: body.prefix(4_000), encoding: .utf8)?.lowercased() ?? ""
                 if html.contains("checkpoint") || html.contains("/challenge") { return .verificationRequired }
-                if html.contains("login") { return .sessionExpired }
+                if html.contains("/accounts/login") || html.contains("login_required") { return .sessionExpired }
+                return .unexpectedResponse(code: statusCode)
             }
             return nil
         }
-        let blob = flattened(object).lowercased()
-        if blob.contains("checkpoint_required") || blob.contains("challenge_required")
-            || blob.contains("\"challenge\"") || blob.contains("/challenge/") {
+        let status = (object["status"] as? String)?.lowercased() ?? ""
+        let envelope = envelopeText(object)
+        if envelope.contains("checkpoint_required") || envelope.contains("challenge_required") {
             return .verificationRequired
         }
-        if blob.contains("login_required") || blob.contains("not_logged_in") {
+        if envelope.contains("login_required") || envelope.contains("not_logged_in") {
             return .sessionExpired
         }
-        if blob.contains("feedback_required") || blob.contains("spam") || blob.contains("please wait a few minutes") {
+        let spamFlag = boolish(object["spam"])
+        let feedbackFlag = boolish(object["feedback_required"])
+            || (object["message"] as? String)?.lowercased() == "feedback_required"
+            || (object["error_type"] as? String)?.lowercased() == "feedback_required"
+        if feedbackFlag || (spamFlag && status != "ok") {
             return .rateLimited(retryAfter: nil)
         }
-        if blob.contains("rate limit") || blob.contains("too many") {
+        if envelope.contains("please wait a few minutes") || envelope.contains("rate limit") {
             return .rateLimited(retryAfter: nil)
         }
-        let status = (object["status"] as? String)?.lowercased()
+        if status == "ok" || status == "success" { return nil }
+        if object["inbox"] != nil || object["thread"] != nil || object["items"] != nil { return nil }
         if status == "fail" || status == "error" {
-            if blob.contains("not found") || blob.contains("does not exist") || blob.contains("no longer") {
+            if envelope.contains("not found") || envelope.contains("does not exist") || envelope.contains("no longer") {
                 return nil
             }
-            return destructive ? .unexpectedResponse(code: nil) : .unexpectedResponse(code: nil)
+            return .unexpectedResponse(code: nil)
         }
         return nil
+    }
+
+    private static func envelopeText(_ object: [String: Any]) -> String {
+        [
+            object["status"],
+            object["message"],
+            object["error_type"],
+            object["error_title"],
+            object["error_message"],
+            object["feedback_required"],
+            object["spam"],
+            object["checkpoint_required"],
+            object["challenge_required"],
+        ]
+        .compactMap { value in value.map { "\($0)" } }
+        .joined(separator: " ")
+        .lowercased()
+    }
+
+    private static func boolish(_ value: Any?) -> Bool {
+        switch value {
+        case let flag as Bool: return flag
+        case let number as NSNumber: return number.boolValue
+        case let text as String: return text.lowercased() == "true" || text == "1"
+        default: return false
+        }
     }
 
     private static func looksLikeHTML(_ data: Data) -> Bool {
         guard let prefix = String(data: data.prefix(32), encoding: .utf8)?.lowercased() else { return false }
         return prefix.contains("<!doctype") || prefix.contains("<html")
-    }
-
-    private static func flattened(_ value: Any) -> String {
-        switch value {
-        case let dict as [String: Any]:
-            return dict.keys.joined(separator: " ") + " " + dict.values.map(flattened).joined(separator: " ")
-        case let array as [Any]:
-            return array.prefix(20).map(flattened).joined(separator: " ")
-        case let string as String:
-            return string.count > 120 ? String(string.prefix(120)) : string
-        default:
-            return ""
-        }
     }
 }
 

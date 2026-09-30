@@ -48,7 +48,7 @@ targets:
       base:
         INFOPLIST_FILE: App/Info.plist
         GENERATE_INFOPLIST_FILE: NO
-        PRODUCT_NAME: DeLore
+        PRODUCT_NAME: Retract
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         SUPPORTS_MACCATALYST: NO

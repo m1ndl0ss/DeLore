@@ -38,6 +38,29 @@ final class InstagramWebIntegrationTests: XCTestCase {
         }
     }
 
+    func testInboxListDoesNotLoadMessageHistory() async throws {
+        let fake = FakeInstagramAPIClient.sampleInbox()
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = LocalLibraryStore(root: directory)
+        let session = Self.session(userID: fake.ownerID)
+        let listed = try await InstagramInboxSync(client: fake, library: library, listingDelay: 0, clock: ManualClock())
+            .list(session: session)
+
+        XCTAssertEqual(listed.conversations.count, 2)
+        XCTAssertEqual(listed.sentByOwner, 0)
+        XCTAssertEqual(listed.unreadConversations.count, 2)
+        XCTAssertTrue(listed.conversations.allSatisfy { !$0.messagesLoaded })
+        XCTAssertEqual(listed.conversations.first { $0.id.rawValue == "t1" }?.title, "@bestie")
+
+        let loaded = try await InstagramInboxSync(client: fake, library: library, listingDelay: 0, clock: ManualClock())
+            .load(session: session, ids: [ConversationID("t1")])
+        let bestie = try XCTUnwrap(loaded.conversations.first { $0.id.rawValue == "t1" })
+        XCTAssertTrue(bestie.messagesLoaded)
+        XCTAssertEqual(bestie.sentByOwner, 3)
+        XCTAssertEqual(loaded.conversations.first { $0.id.rawValue == "t2" }?.messagesLoaded, false)
+    }
+
     func testUnsendOnlyDeletesOwnerItems() async throws {
         let fake = FakeInstagramAPIClient.sampleInbox()
         let service = InstagramWebUnsendService(client: fake, ownerID: { fake.ownerID })
@@ -197,6 +220,22 @@ final class InstagramWebIntegrationTests: XCTestCase {
         XCTAssertNil(
             InstagramResponseClassifier.classify(Self.body(["status": "ok"], status: 200), destructive: true)
         )
+        XCTAssertNil(
+            InstagramResponseClassifier.classify(
+                Self.body(
+                    [
+                        "status": "ok",
+                        "inbox": [
+                            "threads": [
+                                ["thread_id": "1", "items": [["item_id": "m", "text": "this is spam and too many please wait a few minutes"]]],
+                            ],
+                        ],
+                    ],
+                    status: 200
+                ),
+                destructive: false
+            )
+        )
     }
 
     func testSessionNeverPrintsCookies() throws {
@@ -243,10 +282,11 @@ final class InstagramWebIntegrationTests: XCTestCase {
 
         try vault.saveSession(Self.session(userID: "42", sessionID: "cookie-value-xyz"))
         _ = try await client.send(InstagramAPIRequest(method: .get, path: "/api/v1/direct_v2/inbox/"))
-        XCTAssertEqual(transport.calls, 1)
+        XCTAssertEqual(transport.calls, 2)
         let sent = try XCTUnwrap(transport.last)
         XCTAssertEqual(sent.url.host, "www.instagram.com")
         XCTAssertEqual(sent.url.scheme, "https")
+        XCTAssertTrue(sent.url.path.contains("/api/v1/direct_v2/inbox/"))
         var dumpText = ""
         dump(sent, to: &dumpText)
         XCTAssertFalse(dumpText.contains("cookie-value-xyz"))
@@ -312,6 +352,28 @@ final class InstagramWebIntegrationTests: XCTestCase {
         XCTAssertFalse(InstagramLoginPolicy.allowsNavigation(to: URL(string: "http://www.instagram.com/accounts/login/")!))
         XCTAssertFalse(InstagramLoginPolicy.allowsNavigation(to: URL(string: "https://evil.example/")!))
         XCTAssertFalse(InstagramLoginPolicy.allowsNavigation(to: URL(string: "https://instagram.com.evil.example/")!))
+        XCTAssertTrue(InstagramLoginPolicy.isDirectSurface(url: URL(string: "https://www.instagram.com/direct/inbox/")!))
+        XCTAssertFalse(InstagramLoginPolicy.isDirectSurface(url: URL(string: "https://www.instagram.com/")!))
+        XCTAssertFalse(InstagramLoginPolicy.isPostLogin(url: URL(string: "https://www.instagram.com/accounts/login/")!))
+    }
+
+    func testInboxParserAcceptsThreadV2IDsAndSkipsBrokenThreads() throws {
+        let json = """
+        {
+          "status": "ok",
+          "inbox": {
+            "threads": [
+              {"thread_v2_id": "t-v2", "thread_title": "Bestie", "users": []},
+              {"thread_title": "no id"},
+              {"thread_id": "t-classic", "thread_title": "Classic", "users": []}
+            ],
+            "has_older": false,
+            "oldest_cursor": ""
+          }
+        }
+        """.data(using: .utf8)!
+        let page = try InstagramWebFormat.parseInbox(json)
+        XCTAssertEqual(page.inbox?.threads.map(\.threadID.rawValue), ["t-v2", "t-classic"])
     }
 
     private static func session(userID: String, sessionID: String = "session-token") -> InstagramWebSession {

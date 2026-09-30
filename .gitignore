@@ -32,3 +32,9 @@ Android/app/build/
 Android/local.properties
 Android/.cxx/
 
+# Local captures
+preview/
+*.png.orig
+Android/delore-tabs.png
+Android/retract-*.png
+

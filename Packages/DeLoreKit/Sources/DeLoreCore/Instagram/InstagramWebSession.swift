@@ -40,6 +40,10 @@ public struct InstagramWebSession: Sendable, Codable, CustomStringConvertible, C
         cookies.first { $0.name.caseInsensitiveCompare("csrftoken") == .orderedSame }?.value
     }
 
+    public var wwwClaimCookie: String? {
+        cookies.first { $0.name.caseInsensitiveCompare("ig_www_claim") == .orderedSame }?.value
+    }
+
     public var hasLiveSession: Bool {
         !userID.isEmpty && cookies.contains { $0.name.caseInsensitiveCompare("sessionid") == .orderedSame && !$0.value.isEmpty }
     }

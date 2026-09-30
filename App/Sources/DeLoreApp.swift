@@ -8,7 +8,8 @@ struct DeLoreApp: App {
         WindowGroup {
             RootView()
                 .environment(model)
-                .tint(Palette.ink)
+                .tint(Palette.volt)
+                .preferredColorScheme(.dark)
         }
     }
 }

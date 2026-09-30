@@ -6,9 +6,14 @@ import SwiftUI
 final class AppModel {
     enum Route: Equatable {
         case launching
-        case welcome
-        case connect
         case home
+    }
+
+    enum Tab: String, CaseIterable, Identifiable {
+        case unsending
+        case activity
+        case settings
+        var id: String { rawValue }
     }
 
     enum LoginPurpose: String, Identifiable, Equatable {
@@ -42,6 +47,8 @@ final class AppModel {
     }
 
     private(set) var route: Route = .launching
+    var tab: Tab = .unsending
+    private var didPromptDeletionLogin = false
     var sheet: Sheet?
     var session: CleanupSessionModel?
     /// The running screen can be tucked away while a job is paused; Home shows a way back.
@@ -49,8 +56,11 @@ final class AppModel {
     var importModel: ImportModel?
     var inboxSyncModel: InboxSyncModel?
     var loginPurpose: LoginPurpose?
+    private var pendingRetractIDs: Set<ConversationID> = []
+    private var lastInboxJob: InboxSyncModel.Job = .list
     private(set) var overview: LibraryOverview?
     private(set) var isLoadingOverview = false
+    private(set) var history: [CleanupHistoryEntry] = []
 
     let env: AppEnvironment
     var entitlements: EntitlementManager { env.entitlements }
@@ -64,25 +74,15 @@ final class AppModel {
     func bootstrap() async {
         async let minimumSplash: Void = Self.splashDelay()
         await entitlements.refresh()
+        env.dropStaleFullInbox()
 
-        if !env.hasCompletedOnboarding {
-            _ = await minimumSplash
-            withAnimation { route = .welcome }
-            return
-        }
         if env.hasLibrary {
             await reloadOverview()
             await restoreSession()
-            _ = await minimumSplash
-            withAnimation { route = .home }
-        } else if env.hasLiveSession {
-            _ = await minimumSplash
-            withAnimation { route = .connect }
-            beginInboxSync()
-        } else {
-            _ = await minimumSplash
-            withAnimation { route = .connect }
         }
+        _ = await minimumSplash
+        env.inboxHoldOffUntil = nil
+        withAnimation { route = .home }
     }
 
     private nonisolated static func splashDelay() async {
@@ -108,11 +108,6 @@ final class AppModel {
     }
 
     // MARK: Onboarding & import
-
-    func getStarted() {
-        env.analytics.track(.onboardingStarted)
-        withAnimation { route = .connect }
-    }
 
     func beginLogin(_ purpose: LoginPurpose = .connect) {
         loginPurpose = purpose
@@ -140,14 +135,17 @@ final class AppModel {
         }
         guard shouldSync else { return }
         Task {
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            beginInboxSync()
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            beginInboxSync(force: true)
         }
     }
 
-    func beginInboxSync() {
+    func beginInboxSync(force: Bool = false, job: InboxSyncModel.Job = .list) {
+        if !force, env.isInboxOnHold { return }
+        env.inboxHoldOffUntil = nil
+        lastInboxJob = job
         inboxSyncModel?.cancel()
-        let model = InboxSyncModel(env: env)
+        let model = InboxSyncModel(env: env, job: job)
         model.onFinished = { [weak self] _ in
             Task { await self?.finishInboxSync() }
         }
@@ -155,14 +153,54 @@ final class AppModel {
         model.start()
     }
 
+    func retractWith(_ ids: Set<ConversationID>) {
+        guard !ids.isEmpty else { return }
+        pendingRetractIDs = ids
+        let unread = (overview?.conversations ?? []).filter { ids.contains($0.id) && !$0.messagesLoaded }
+        if unread.isEmpty {
+            pendingRetractIDs = []
+            openSetup(.conversations(ids))
+            return
+        }
+        beginInboxSync(force: true, job: .load(unread.map(\.id)))
+    }
+
     func dismissSync() {
+        pendingRetractIDs = []
         inboxSyncModel?.cancel()
         inboxSyncModel = nil
     }
 
+    func acceptInboxHoldOff(later: Bool) {
+        let suggested = inboxSyncModel?.retryAfter ?? 0
+        let base = later ? InboxSyncModel.laterSeconds : InboxSyncModel.waitSeconds
+        env.inboxHoldOffUntil = Date().addingTimeInterval(max(base, suggested))
+        dismissSync()
+    }
+
+    func retryInboxNow() {
+        env.inboxHoldOffUntil = nil
+        if env.hasLiveSession {
+            beginInboxSync(force: true, job: lastInboxJob)
+        } else {
+            beginLogin(.refresh)
+        }
+    }
+
+    func retryInboxWhenAllowed() {
+        retryInboxNow()
+    }
+
+    func signInAgainFromSync() {
+        dismissSync()
+        beginLogin(.refresh)
+    }
+
     func refreshChats() {
         if env.hasLiveSession {
-            beginInboxSync()
+            lastInboxJob = .list
+            pendingRetractIDs = []
+            beginInboxSync(force: true, job: .list)
         } else {
             beginLogin(.refresh)
         }
@@ -200,21 +238,44 @@ final class AppModel {
         await reloadOverview()
         inboxSyncModel = nil
         withAnimation { route = .home }
+        let ids = pendingRetractIDs
+        pendingRetractIDs = []
+        if !ids.isEmpty {
+            let cleanable = Set((overview?.cleanableConversations ?? []).map(\.id)).intersection(ids)
+            if !cleanable.isEmpty { openSetup(.conversations(cleanable)) }
+        }
     }
 
     func showConnect() {
-        withAnimation { route = .connect }
+        tab = .unsending
+        if env.hasLiveSession {
+            lastInboxJob = .list
+            pendingRetractIDs = []
+            beginInboxSync(force: true, job: .list)
+        } else {
+            beginLogin(.connect)
+        }
     }
 
     func returnHome() {
-        guard env.hasLibrary else { return }
         withAnimation { route = .home }
+    }
+
+    func deletionAppeared() {
+        if env.hasLiveSession {
+            if !env.hasLibrary { beginInboxSync() }
+            return
+        }
+        guard !didPromptDeletionLogin else { return }
+        didPromptDeletionLogin = true
+        beginLogin(.connect)
     }
 
     func reloadOverview() async {
         isLoadingOverview = true
         defer { isLoadingOverview = false }
         overview = try? await env.loadOverview()
+        history = (try? env.history.load())?.reversed() ?? []
     }
 
     // MARK: Cleanup
@@ -287,6 +348,9 @@ final class AppModel {
             env.logger.error("erase failed: \(error.safeDescription)")
         }
         overview = nil
-        withAnimation { route = .welcome }
+        history = []
+        didPromptDeletionLogin = false
+        tab = .settings
+        withAnimation { route = .home }
     }
 }

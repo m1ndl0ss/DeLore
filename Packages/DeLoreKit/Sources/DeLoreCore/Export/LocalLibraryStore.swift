@@ -82,7 +82,8 @@ public final class LocalLibraryStore: MessageSource, @unchecked Sendable {
                 firstSentAt: first,
                 lastSentAt: last,
                 sentByKind: byKind,
-                ownershipAmbiguous: summary.ownershipAmbiguous
+                ownershipAmbiguous: summary.ownershipAmbiguous,
+                messagesLoaded: summary.messagesLoaded
             ))
         }
         return LibraryOverview(conversations: adjusted)
@@ -158,6 +159,18 @@ public final class LocalLibraryStore: MessageSource, @unchecked Sendable {
             manifest.files[summary.id.rawValue] = fileName
         }
 
+        public func addCopy(summary: ConversationSummary, source: URL) throws {
+            let fileName = "c\(manifest.conversations.count).jsonl"
+            let dest = store.indexDirectory(in: staging).appendingPathComponent(fileName)
+            if FileManager.default.fileExists(atPath: source.path) {
+                try FileManager.default.copyItem(at: source, to: dest)
+            } else {
+                try ProtectedFiles.write(Data(), to: dest)
+            }
+            manifest.conversations.append(summary)
+            manifest.files[summary.id.rawValue] = fileName
+        }
+
         /// Atomically replaces the previous library with this import.
         public func commit() throws -> LibraryOverview {
             try ProtectedFiles.write(encoder.encode(manifest), to: staging.appendingPathComponent("library.json"))
@@ -173,6 +186,75 @@ public final class LocalLibraryStore: MessageSource, @unchecked Sendable {
         try ProtectedFiles.prepareDirectory(staging)
         try ProtectedFiles.prepareDirectory(indexDirectory(in: staging))
         return ImportWriter(store: self, staging: staging, account: account)
+    }
+
+    public func mergeListing(account: AccountIdentity, stubs: [ConversationSummary]) throws -> LibraryOverview {
+        let existing = try? loadManifest()
+        let writer = try beginImport(account: account)
+        for stub in stubs {
+            let prior = existing?.conversations.first { $0.id == stub.id }
+            if let prior, prior.messagesLoaded, let fileName = existing?.files[stub.id.rawValue] {
+                let source = indexDirectory(in: root).appendingPathComponent(fileName)
+                try writer.addCopy(summary: ConversationSummary(
+                    id: prior.id,
+                    title: stub.title,
+                    sentByOwner: prior.sentByOwner,
+                    receivedFromOthers: prior.receivedFromOthers,
+                    firstSentAt: prior.firstSentAt,
+                    lastSentAt: prior.lastSentAt,
+                    sentByKind: prior.sentByKind,
+                    ownershipAmbiguous: prior.ownershipAmbiguous,
+                    messagesLoaded: prior.messagesLoaded
+                ), source: source)
+            } else {
+                try writer.add(summary: stub, messages: [])
+            }
+        }
+        return try writer.commit()
+    }
+
+    public func upsertLoaded(summary: ConversationSummary, messages: [DiscoveredMessage]) throws -> LibraryOverview {
+        try lock.withLock {
+            let current: Manifest
+            if let cached {
+                current = cached
+            } else {
+                guard let data = try? Data(contentsOf: manifestURL) else { throw JobStoreError.noActiveJob }
+                current = try JSONDecoder().decode(Manifest.self, from: data)
+            }
+            let loaded = ConversationSummary(
+                id: summary.id,
+                title: summary.title,
+                sentByOwner: summary.sentByOwner,
+                receivedFromOthers: summary.receivedFromOthers,
+                firstSentAt: summary.firstSentAt,
+                lastSentAt: summary.lastSentAt,
+                sentByKind: summary.sentByKind,
+                ownershipAmbiguous: summary.ownershipAmbiguous,
+                messagesLoaded: true
+            )
+            let fileName = current.files[loaded.id.rawValue] ?? "c\(current.conversations.count).jsonl"
+            var data = Data()
+            let encoder = JSONEncoder()
+            for message in messages {
+                data.append(try encoder.encode(IndexLine(m: message.ref.messageID, t: message.sentAt.timeIntervalSince1970, k: message.kind)))
+                data.append(0x0A)
+            }
+            try ProtectedFiles.prepareDirectory(indexDirectory(in: root))
+            try ProtectedFiles.write(data, to: indexDirectory(in: root).appendingPathComponent(fileName))
+            var conversations = current.conversations
+            if let index = conversations.firstIndex(where: { $0.id == loaded.id }) {
+                conversations[index] = loaded
+            } else {
+                conversations.append(loaded)
+            }
+            var updated = current
+            updated.conversations = conversations
+            updated.files[loaded.id.rawValue] = fileName
+            try ProtectedFiles.write(JSONEncoder().encode(updated), to: manifestURL)
+            cached = updated
+            return LibraryOverview(conversations: updated.conversations)
+        }
     }
 
     private func replace(with staging: URL, manifest: Manifest) throws {

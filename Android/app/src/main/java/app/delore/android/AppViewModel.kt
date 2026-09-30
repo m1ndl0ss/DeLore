@@ -11,6 +11,7 @@ import app.delore.android.domain.CleanupRequest
 import app.delore.android.domain.CleanupScope
 import app.delore.android.domain.ConversationID
 import app.delore.android.domain.IntegrationError
+import app.delore.android.domain.InboxReadProgress
 import app.delore.android.domain.JobStatus
 import app.delore.android.domain.LibraryOverview
 import app.delore.android.domain.MessageKind
@@ -18,6 +19,7 @@ import app.delore.android.engine.CleanupEngine
 import app.delore.android.engine.CleanupEngineError
 import app.delore.android.engine.QueueBuilder
 import app.delore.android.instagram.InstagramWebSession
+import app.delore.android.persist.CleanupHistoryEntry
 import app.delore.android.secrets.BillingLedger
 import app.delore.android.secrets.CleanupBilling as SecretBilling
 import kotlinx.coroutines.Job
@@ -29,7 +31,9 @@ import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.UUID
 
-enum class Route { LAUNCHING, WELCOME, CONNECT, HOME }
+enum class Route { LAUNCHING, HOME }
+
+enum class MainTab { UNSENDING, ACTIVITY, SETTINGS }
 
 enum class LoginPurpose { CONNECT, RECONNECT, REFRESH }
 
@@ -54,14 +58,18 @@ data class StatusCopy(
 
 data class UiState(
     val route: Route = Route.LAUNCHING,
+    val tab: MainTab = MainTab.UNSENDING,
     val sheet: Sheet? = null,
     val overview: LibraryOverview? = null,
+    val history: List<CleanupHistoryEntry> = emptyList(),
     val loadingOverview: Boolean = false,
     val loginPurpose: LoginPurpose? = null,
     val syncing: Boolean = false,
-    val syncProgress: Double = 0.0,
+    val inboxRead: InboxReadProgress = InboxReadProgress(),
     val syncErrorTitle: String? = null,
     val syncErrorMessage: String? = null,
+    val syncPauseKind: SyncPauseKind? = null,
+    val syncRetryAfterSeconds: Double? = null,
     val sessionPresented: Boolean = false,
     val progress: CleanupProgress? = null,
     val tryAgainAt: Long? = null,
@@ -78,8 +86,12 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
 
     private var engine: CleanupEngine? = null
     private var observeJob: Job? = null
+    private var inboxJob: Job? = null
     private var finishHandled = false
     private var currentJobId: String? = null
+    private var didPromptDeletionLogin = false
+    private var pendingRetractIds: Set<ConversationID> = emptySet()
+    private var inboxLoadIds: Collection<ConversationID>? = null
 
     val hasUnfinishedSession: Boolean
         get() = _state.value.progress?.status?.isFinished == false
@@ -87,28 +99,17 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
     fun bootstrap() = viewModelScope.launch {
         val splash = launch { delay(700) }
         env.entitlements.refresh()
-        if (!env.hasCompletedOnboarding) {
-            splash.join()
-            _state.update { it.copy(route = Route.WELCOME) }
-            return@launch
-        }
+        env.dropStaleFullInbox()
         if (env.hasLibrary) {
             reloadOverview()
             restoreSession()
-            splash.join()
-            _state.update { it.copy(route = Route.HOME) }
-        } else if (env.hasLiveSession) {
-            splash.join()
-            _state.update { it.copy(route = Route.CONNECT) }
-            beginInboxSync()
         } else {
-            splash.join()
-            _state.update { it.copy(route = Route.CONNECT) }
+            val history = runCatching { env.history.load() }.getOrDefault(emptyList()).asReversed()
+            _state.update { it.copy(history = history) }
         }
-    }
-
-    fun getStarted() {
-        _state.update { it.copy(route = Route.CONNECT) }
+        splash.join()
+        env.inboxHoldOffUntilMillis = 0L
+        _state.update { it.copy(route = Route.HOME) }
     }
 
     fun beginLogin(purpose: LoginPurpose = LoginPurpose.CONNECT) {
@@ -127,42 +128,148 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
             LoginPurpose.RECONNECT -> !env.hasLibrary
         }
         if (shouldSync) viewModelScope.launch {
-            delay(350)
-            beginInboxSync()
+            delay(900)
+            beginInboxSync(force = true)
         }
     }
 
-    fun beginInboxSync() {
-        _state.update { it.copy(syncing = true, syncProgress = 0.0, syncErrorTitle = null, syncErrorMessage = null) }
-        viewModelScope.launch {
+    fun beginInboxSync(force: Boolean = false, loadIds: Collection<ConversationID>? = null) {
+        if (!force && env.inboxHoldOffUntilMillis > System.currentTimeMillis()) {
+            return
+        }
+        env.inboxHoldOffUntilMillis = 0L
+        inboxLoadIds = loadIds
+        _state.update {
+            it.copy(
+                syncing = true,
+                inboxRead = InboxReadProgress(),
+                syncErrorTitle = null,
+                syncErrorMessage = null,
+                syncPauseKind = null,
+                syncRetryAfterSeconds = null,
+            )
+        }
+        inboxJob?.cancel()
+        inboxJob = viewModelScope.launch {
             try {
-                env.syncInbox { progress -> _state.update { it.copy(syncProgress = progress) } }
+                if (loadIds == null) {
+                    env.listInbox { progress -> _state.update { it.copy(inboxRead = progress) } }
+                } else {
+                    env.loadInbox(loadIds) { progress -> _state.update { it.copy(inboxRead = progress) } }
+                }
                 env.hasCompletedOnboarding = true
                 reloadOverview()
                 _state.update { it.copy(syncing = false, route = Route.HOME) }
+                val pending = pendingRetractIds
+                pendingRetractIds = emptySet()
+                if (pending.isNotEmpty()) {
+                    val cleanable = _state.value.overview?.cleanableConversations
+                        ?.map { it.id }
+                        ?.toSet()
+                        ?.intersect(pending)
+                        .orEmpty()
+                    if (cleanable.isNotEmpty()) openSetup(CleanupScope.Conversations(cleanable))
+                }
             } catch (_: kotlinx.coroutines.CancellationException) {
                 _state.update { it.copy(syncing = false) }
             } catch (error: Exception) {
-                val (title, message) = syncCopy(error)
-                _state.update { it.copy(syncing = false, syncErrorTitle = title, syncErrorMessage = message) }
+                android.util.Log.e("Retract", "Inbox sync failed: ${error.javaClass.simpleName}: ${error.message}")
+                val pause = SyncPause.from(error)
+                _state.update {
+                    it.copy(
+                        syncing = false,
+                        syncErrorTitle = pause.title,
+                        syncErrorMessage = pause.message,
+                        syncPauseKind = pause.kind,
+                        syncRetryAfterSeconds = pause.retryAfterSeconds,
+                    )
+                }
             }
         }
     }
 
+    fun retractWith(ids: Set<ConversationID>) {
+        if (ids.isEmpty()) return
+        pendingRetractIds = ids
+        val unread = _state.value.overview?.conversations.orEmpty().filter { it.id in ids && !it.messagesLoaded }
+        if (unread.isEmpty()) {
+            pendingRetractIds = emptySet()
+            openSetup(CleanupScope.Conversations(ids))
+            return
+        }
+        beginInboxSync(force = true, loadIds = unread.map { it.id })
+    }
+
     fun dismissSync() {
-        _state.update { it.copy(syncing = false, syncErrorTitle = null, syncErrorMessage = null) }
+        inboxJob?.cancel()
+        pendingRetractIds = emptySet()
+        _state.update {
+            it.copy(
+                syncing = false,
+                syncErrorTitle = null,
+                syncErrorMessage = null,
+                syncPauseKind = null,
+                syncRetryAfterSeconds = null,
+            )
+        }
+    }
+
+    fun acceptInboxHoldOff(later: Boolean) {
+        val suggested = _state.value.syncRetryAfterSeconds ?: 0.0
+        val base = if (later) SyncPause.LATER_SECONDS else SyncPause.WAIT_SECONDS
+        env.inboxHoldOffUntilMillis = System.currentTimeMillis() + (maxOf(base, suggested) * 1000).toLong()
+        dismissSync()
+    }
+
+    fun retryInboxNow() {
+        env.inboxHoldOffUntilMillis = 0L
+        beginInboxSync(force = true, loadIds = inboxLoadIds)
+    }
+
+    fun retryInboxWhenAllowed() {
+        retryInboxNow()
+    }
+
+    fun signInAgainFromSync() {
+        dismissSync()
+        beginLogin(LoginPurpose.REFRESH)
     }
 
     fun refreshChats() {
-        if (env.hasLiveSession) beginInboxSync() else beginLogin(LoginPurpose.REFRESH)
+        if (env.hasLiveSession) {
+            pendingRetractIds = emptySet()
+            beginInboxSync(force = true, loadIds = null)
+        } else {
+            beginLogin(LoginPurpose.REFRESH)
+        }
     }
 
     fun showConnect() {
-        _state.update { it.copy(route = Route.CONNECT) }
+        _state.update { it.copy(tab = MainTab.UNSENDING) }
+        if (env.hasLiveSession) {
+            pendingRetractIds = emptySet()
+            beginInboxSync(force = true, loadIds = null)
+        } else {
+            beginLogin(LoginPurpose.CONNECT)
+        }
     }
 
     fun returnHome() {
-        if (env.hasLibrary) _state.update { it.copy(route = Route.HOME) }
+        _state.update { it.copy(route = Route.HOME) }
+    }
+
+    fun selectTab(tab: MainTab) {
+        _state.update { it.copy(tab = tab) }
+    }
+
+    fun deletionAppeared() {
+        if (env.hasLiveSession) {
+            if (!env.hasLibrary && !_state.value.syncing) beginInboxSync()
+            return
+        }
+        if (didPromptDeletionLogin) return
+        didPromptDeletionLogin = true
+        beginLogin(LoginPurpose.CONNECT)
     }
 
     fun showSheet(sheet: Sheet?) {
@@ -176,7 +283,8 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
     suspend fun reloadOverview() {
         _state.update { it.copy(loadingOverview = true) }
         val overview = runCatching { env.loadOverview() }.getOrNull()
-        _state.update { it.copy(overview = overview, loadingOverview = false) }
+        val history = runCatching { env.history.load() }.getOrDefault(emptyList()).asReversed()
+        _state.update { it.copy(overview = overview, history = history, loadingOverview = false) }
     }
 
     fun openSetup(scope: CleanupScope) {
@@ -230,7 +338,8 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         engine?.cancel()
         engine = null
         env.eraseAllData()
-        _state.update { UiState(route = Route.WELCOME) }
+        didPromptDeletionLogin = false
+        _state.update { UiState(route = Route.HOME, tab = MainTab.SETTINGS) }
     }
 
     fun pauseCleanup() = viewModelScope.launch { engine?.pause() }
@@ -305,17 +414,62 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         }
     }
 
-    private fun syncCopy(error: Exception): Pair<String, String> = when (error) {
-        IntegrationError.SessionExpired -> "Instagram signed you out" to "Sign in again, then we'll pick up where we left off."
-        IntegrationError.VerificationRequired -> "Instagram is asking you to verify your account." to "Open Instagram, follow its steps, then come back. We won't skip that check."
-        is IntegrationError.RateLimited -> "We've paused to keep your account safe." to "Instagram asked us to slow down. Try again later."
-        IntegrationError.Offline -> "You're offline" to "Connect to the internet and try again."
-        else -> "We couldn't read your DMs" to "Try connecting again in a bit."
-    }
-
     class Factory(private val env: AppEnvironment) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = AppViewModel(env) as T
+    }
+}
+
+enum class SyncPauseKind { HOLD_OFF, RECONNECT, VERIFY, OFFLINE }
+
+data class SyncPause(
+    val title: String,
+    val message: String,
+    val kind: SyncPauseKind,
+    val retryAfterSeconds: Double? = null,
+) {
+    companion object {
+        const val WAIT_SECONDS = 10 * 60.0
+        const val LATER_SECONDS = 60 * 60.0
+
+        fun from(error: Exception): SyncPause = when (error) {
+            IntegrationError.SessionExpired -> SyncPause(
+                "Instagram signed you out",
+                "Sign in again when you're ready. Nothing left this phone.",
+                SyncPauseKind.RECONNECT,
+            )
+            IntegrationError.VerificationRequired -> SyncPause(
+                "Instagram is asking you to verify.",
+                "Do that in Instagram, then come back. We won't skip that check, and we won't keep reading while it's pending.",
+                SyncPauseKind.VERIFY,
+            )
+            is IntegrationError.RateLimited -> SyncPause(
+                "We'll hold off for a bit.",
+                "Instagram asked us to slow down. That's a cue to stop reading, not a prompt to retry. Your login stays on this phone.",
+                SyncPauseKind.HOLD_OFF,
+                error.retryAfterSeconds,
+            )
+            IntegrationError.Offline -> SyncPause(
+                "You're offline",
+                "Reconnect to the internet, then we can keep reading from this phone.",
+                SyncPauseKind.OFFLINE,
+            )
+            is IntegrationError.UnexpectedResponse -> SyncPause(
+                "We'll hold off for a bit.",
+                "Instagram didn't hand over your inbox cleanly. Waiting is safer than poking it again. Your login stays on this phone.",
+                SyncPauseKind.HOLD_OFF,
+            )
+            is IntegrationError.TransportFailure, IntegrationError.ServerUnavailable -> SyncPause(
+                "We'll hold off for a bit.",
+                "Instagram went quiet, so we stopped instead of keeping at it. Give it a breather — your login stays on this phone.",
+                SyncPauseKind.HOLD_OFF,
+            )
+            else -> SyncPause(
+                "We'll hold off for a bit.",
+                "We couldn't finish reading without making noise. Sitting this out is the move. Your login stays on this phone.",
+                SyncPauseKind.HOLD_OFF,
+            )
+        }
     }
 }
 

@@ -56,11 +56,11 @@ struct CleanupRunView: View {
 
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(progress.processed.formatted())
-                        .font(.system(size: 56, weight: .black, design: .rounded))
+                        .font(Type.medium(48))
                         .contentTransition(.numericText(value: Double(progress.processed)))
                         .animation(.snappy, value: progress.processed)
                     Text("/ \(progress.total.formatted())")
-                        .font(.system(.title2, design: .rounded, weight: .bold))
+                        .font(Type.medium(20))
                         .foregroundStyle(Palette.secondaryInk)
                 }
                 .foregroundStyle(Palette.ink)
@@ -102,7 +102,7 @@ struct CleanupRunView: View {
             Spacer(minLength: Spacing.m)
 
             VStack(spacing: Spacing.s) {
-                Label("Keep DeLore open while we clean.", systemImage: "iphone")
+                Label("Keep Retract open while we clean.", systemImage: "iphone")
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Palette.secondaryInk)
                     .frame(maxWidth: .infinity)
@@ -205,11 +205,11 @@ struct CleanupDoneView: View {
             Spacer()
 
             Image(systemName: wasCancelled ? "stop.fill" : "checkmark")
-                .font(.system(size: 52, weight: .black))
-                .foregroundStyle(Palette.onVolt)
-                .frame(width: 128, height: 128)
-                .background(Circle().fill(Palette.volt))
-                .scaleEffect(appeared ? 1 : 0.4)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(Palette.onAccent)
+                .frame(width: 64, height: 64)
+                .background(Circle().fill(Palette.accent))
+                .scaleEffect(appeared ? 1 : 0.92)
                 .opacity(appeared ? 1 : 0)
                 .accessibilityHidden(true)
 

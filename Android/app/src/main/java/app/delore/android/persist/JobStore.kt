@@ -51,8 +51,8 @@ class InMemoryJobStore : JobStore {
         items.clear()
     }
 
-    override fun appendItems(newItems: List<CleanupItem>) = lock.withLock {
-        items.addAll(newItems)
+    override fun appendItems(newItems: List<CleanupItem>) {
+        lock.withLock { items.addAll(newItems) }
     }
 
     override fun updateJob(job: CleanupJob) = lock.withLock { this.job = job }
@@ -75,7 +75,9 @@ class InMemoryJobStore : JobStore {
 
     override fun loadLedger(): Set<String> = lock.withLock { ledger.toSet() }
 
-    override fun addToLedger(keys: List<String>) = lock.withLock { ledger.addAll(keys) }
+    override fun addToLedger(keys: List<String>) {
+        lock.withLock { ledger.addAll(keys) }
+    }
 
     override fun wipe() = lock.withLock {
         job = null

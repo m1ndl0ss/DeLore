@@ -1,31 +1,49 @@
 package app.delore.android.ui
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.Person
@@ -36,6 +54,9 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.outlined.AutoDelete
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
@@ -43,9 +64,17 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -60,21 +89,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import app.delore.android.AppViewModel
 import app.delore.android.BuildConfig
 import app.delore.android.CleanupSetupState
 import app.delore.android.LoginPurpose
+import app.delore.android.MainTab
 import app.delore.android.PreparedCleanup
 import app.delore.android.Route
 import app.delore.android.Sheet
 import app.delore.android.StatusCopy
 import app.delore.android.StatusCopyFactory
+import app.delore.android.SyncPauseKind
+import app.delore.android.billing.PurchaseOutcome
 import app.delore.android.billing.StoreProduct
 import app.delore.android.domain.CleanupAllowanceDecision
 import app.delore.android.domain.CleanupScope
@@ -86,6 +122,8 @@ import app.delore.android.domain.MessageKind
 import app.delore.android.domain.inflect
 import app.delore.android.domain.title
 import app.delore.android.engine.CleanupForegroundService
+import app.delore.android.instagram.InstagramWebViewGateway
+import app.delore.android.persist.CleanupHistoryEntry
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Locale
@@ -100,89 +138,332 @@ fun DeLoreRoot(model: AppViewModel) {
         if (running) CleanupForegroundService.start(context) else CleanupForegroundService.stop(context)
         onDispose { CleanupForegroundService.stop(context) }
     }
-    Box(Modifier.fillMaxSize().background(Palette.background())) {
-        when (state.route) {
-            Route.LAUNCHING -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Wordmark() }
-            Route.WELCOME -> WelcomeScreen { model.getStarted() }
-            Route.CONNECT -> ConnectScreen(model)
-            Route.HOME -> HomeScreen(model)
+    MaterialTheme(
+        colorScheme = darkColorScheme(
+            primary = Palette.accent,
+            onPrimary = Palette.onAccent,
+            background = Palette.backgroundDark,
+            surface = Palette.surfaceDark,
+            onBackground = Palette.inkDark,
+            onSurface = Palette.inkDark,
+            secondary = Palette.lilac,
+        ),
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            MeshBackground()
+            InstagramBrowserHost(model.environment.webBrowser)
+            when (state.route) {
+                Route.LAUNCHING -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Wordmark() }
+                Route.HOME -> MainTabs(model)
+            }
+            if (state.loginPurpose != null) {
+                InstagramLoginScreen(
+                    onComplete = { session -> model.handleLogin(session, state.loginPurpose!!) },
+                    onCancel = { model.cancelLogin() },
+                )
+            }
+            if (state.syncing || state.syncErrorTitle != null) {
+                InboxSyncScreen(model)
+            }
+            if (state.sessionPresented && state.progress != null) {
+                CleanupRunScreen(model)
+            }
+            state.sheet?.let { SheetHost(model, it) }
         }
-        if (state.loginPurpose != null) {
-            InstagramLoginScreen(
-                onComplete = { session -> model.handleLogin(session, state.loginPurpose!!) },
-                onCancel = { model.cancelLogin() },
-            )
-        }
-        if (state.syncing || state.syncErrorTitle != null) {
-            InboxSyncScreen(model)
-        }
-        if (state.sessionPresented && state.progress != null) {
-            CleanupRunScreen(model)
-        }
-        state.sheet?.let { SheetHost(model, it) }
     }
 }
 
 @Composable
-private fun WelcomeScreen(onStart: () -> Unit) {
-    Screen {
-        Spacer(Modifier.height(Spacing.m))
-        Wordmark()
-        Spacer(Modifier.weight(1f))
-        Text("Delete", color = Palette.ink(), fontSize = 48.sp, fontWeight = FontWeight.Black)
-        Text("the lore.", color = Palette.ink(), fontSize = 48.sp, fontWeight = FontWeight.Black)
-        Spacer(Modifier.height(Spacing.m))
-        Text("Clean up your old DMs without deleting them one by one.", color = Palette.secondaryInk(), fontSize = 18.sp)
-        Spacer(Modifier.weight(1f))
-        PrimaryButton("Get started", onClick = onStart)
-        Spacer(Modifier.height(Spacing.m))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Lock, contentDescription = null, tint = Palette.secondaryInk())
-            Spacer(Modifier.size(8.dp))
-            Text("On this phone. No analytics. No identifiers.", color = Palette.secondaryInk(), fontSize = 13.sp)
-        }
-        Spacer(Modifier.height(Spacing.m))
-    }
+private fun InstagramBrowserHost(gateway: InstagramWebViewGateway) {
+    AndroidView(
+        modifier = Modifier
+            .size(360.dp, 640.dp)
+            .offset(x = (-4800).dp),
+        factory = { context -> gateway.attach(context) },
+    )
 }
 
 @Composable
-private fun ConnectScreen(model: AppViewModel) {
+private fun MainTabs(model: AppViewModel) {
     val state by model.state.collectAsState()
-    Screen {
-        Spacer(Modifier.height(Spacing.m))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Wordmark()
-            Spacer(Modifier.weight(1f))
-            if (state.overview != null) CloseButton { model.returnHome() }
+    Scaffold(
+        containerColor = Color.Transparent,
+        contentColor = Palette.ink(),
+        bottomBar = {
+            Column {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.hairlineDark))
+                NavigationBar(
+                containerColor = Palette.backgroundDark,
+                tonalElevation = 0.dp,
+            ) {
+                listOf(
+                    Triple(MainTab.UNSENDING, "Unsending", Icons.Outlined.AutoDelete),
+                    Triple(MainTab.ACTIVITY, "Activity", Icons.Outlined.History),
+                    Triple(MainTab.SETTINGS, "Settings", Icons.Outlined.Settings),
+                ).forEach { (tab, label, icon) ->
+                    NavigationBarItem(
+                        selected = state.tab == tab,
+                        onClick = { model.selectTab(tab) },
+                        icon = { Icon(icon, contentDescription = label, modifier = Modifier.size(22.dp)) },
+                        label = {
+                            Text(label, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Palette.accent,
+                            selectedTextColor = Palette.accent,
+                            indicatorColor = Color.Transparent,
+                            unselectedIconColor = Palette.tertiaryDark,
+                            unselectedTextColor = Palette.tertiaryDark,
+                        ),
+                    )
+                }
+                }
+            }
+        },
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            when (state.tab) {
+                MainTab.UNSENDING -> HomeScreen(model)
+                MainTab.ACTIVITY -> ActivityScreen(model)
+                MainTab.SETTINGS -> AccountScreen(model)
+            }
         }
-        Spacer(Modifier.height(Spacing.l))
-        Text("Connect Instagram", color = Palette.ink(), fontSize = 34.sp, fontWeight = FontWeight.Black)
-        Spacer(Modifier.height(Spacing.s))
-        Text("Sign in with Instagram. You'll use Instagram's own page — we never see your password.", color = Palette.secondaryInk())
-        Spacer(Modifier.height(Spacing.l))
-        Card {
-            PromiseRow(Icons.Filled.Lock, "We never see your password", "You type it into Instagram, not into DeLore.")
-            PromiseRow(Icons.Filled.Person, "Only messages you sent", "Other people's messages are never touched.")
-            PromiseRow(Icons.Filled.PhoneAndroid, "Your login stays on this phone", "Nothing is sent to a DeLore server.")
-            PromiseRow(Icons.Filled.Visibility, "Message text is never saved", "We keep dates and message types, not what you said.")
-            PromiseRow(Icons.Filled.BarChart, "No analytics or identifiers", "We don't collect device IDs or usage stats.")
-        }
-        Spacer(Modifier.height(Spacing.m))
-        Text("If Instagram asks you to verify, complete it there. We won't skip that check.", color = Palette.secondaryInk())
-        Spacer(Modifier.weight(1f))
-        PrimaryButton("Connect Instagram") { model.beginLogin(LoginPurpose.CONNECT) }
-        Spacer(Modifier.height(Spacing.m))
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AccountScreen(model: AppViewModel) {
+    val uri = LocalUriHandler.current
+    var confirmErase by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { model.reloadOverview() }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = Spacing.screen)
+            .padding(bottom = Spacing.xl),
+        verticalArrangement = Arrangement.spacedBy(Spacing.l),
+    ) {
+        Spacer(Modifier.height(Spacing.s))
+        Text(
+            "Settings",
+            color = Palette.ink(),
+            fontFamily = Type.sans,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 26.sp,
+            lineHeight = 32.sp,
+        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(Radius.m))
+                .background(Palette.surface())
+                .clickable(enabled = !model.hasLiveSession) { model.beginLogin(LoginPurpose.CONNECT) }
+                .padding(Metrics.cardInset),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Instagram", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                Text(
+                    if (model.hasLiveSession) "Connected · stays on this phone" else "Not connected",
+                    color = if (model.hasLiveSession) Palette.accent else Palette.secondaryInk(),
+                    fontFamily = Type.sans,
+                    fontSize = 14.sp,
+                )
+            }
+            if (!model.hasLiveSession) {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Palette.accent)
+                        .clickable { model.beginLogin(LoginPurpose.CONNECT) }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Text("Connect", color = Palette.onAccent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                }
+            }
+        }
+        Column(Modifier.clip(RoundedCornerShape(Radius.m)).background(Palette.surface())) {
+            YouRow("Plan", if (model.entitlements.isPro) "Pro" else "Free · Upgrade") { model.showSheet(Sheet.Paywall("settings")) }
+        }
+        Column(Modifier.clip(RoundedCornerShape(Radius.m)).background(Palette.surface())) {
+            YouRow("Privacy") { model.showSheet(Sheet.Privacy) }
+            YouDivider()
+            YouRow("Support") { uri.openUri(BuildConfig.SUPPORT_URL) }
+            YouDivider()
+            YouRow("Terms") { uri.openUri(BuildConfig.TERMS_URL) }
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(Radius.m))
+                .background(Palette.surface())
+                .clickable { confirmErase = true }
+                .padding(horizontal = Metrics.cardInset)
+                .height(Metrics.button),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Text("Delete my data", color = Palette.danger(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        }
+    }
+    if (confirmErase) {
+        AlertDialog(
+            onDismissRequest = { confirmErase = false },
+            title = { Text("Delete everything on this phone?") },
+            text = { Text("Login, chats, history and progress leave this phone. Already unsent messages stay unsent. Purchases stay with your Google account.") },
+            confirmButton = {
+                QuietButton("Delete my data", tint = Palette.danger()) {
+                    confirmErase = false
+                    model.eraseEverything()
+                }
+            },
+            dismissButton = { QuietButton("Keep it") { confirmErase = false } },
+        )
+    }
+}
+
+@Composable
+private fun YouRow(title: String, value: String? = null, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = Metrics.cardInset, vertical = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            color = Palette.ink(),
+            fontFamily = Type.sans,
+            fontSize = 17.sp,
+            lineHeight = 22.sp,
+            modifier = Modifier.weight(1f),
+        )
+        if (value != null) {
+            Text(
+                value,
+                color = Palette.secondaryInk(),
+                fontFamily = Type.sans,
+                fontSize = 15.sp,
+                lineHeight = 20.sp,
+            )
+            Spacer(Modifier.size(8.dp))
+        }
+        Text("›", color = Palette.tertiaryDark, fontSize = 18.sp, lineHeight = 20.sp)
+    }
+}
+
+@Composable
+private fun YouDivider() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Metrics.cardInset)
+            .height(0.5.dp)
+            .background(Palette.hairline()),
+    )
+}
+
+@Composable
+private fun ActivityScreen(model: AppViewModel) {
+    val state by model.state.collectAsState()
+    LaunchedEffect(Unit) { model.reloadOverview() }
+    val groups = groupedHistory(state.history, state.overview)
+    Column(
+        Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = Spacing.screen)
+            .padding(bottom = Spacing.xl),
+        verticalArrangement = Arrangement.spacedBy(Spacing.l),
+    ) {
+        Spacer(Modifier.height(Spacing.s))
+        Text("Activity", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 26.sp, lineHeight = 32.sp)
+        if (groups.isEmpty()) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.m))
+                    .background(Palette.surface())
+                    .padding(Metrics.cardInset),
+                verticalArrangement = Arrangement.spacedBy(Spacing.s),
+            ) {
+                Text("Nothing unsent yet.", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                Text("When you clean, chats show up here. Message text never leaves this phone.", color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 15.sp)
+            }
+        } else {
+            Column(Modifier.clip(RoundedCornerShape(Radius.m)).background(Palette.surface())) {
+                groups.forEachIndexed { index, group ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = Metrics.cardInset, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(group.title, color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                            Text(group.detail, color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 13.sp)
+                        }
+                        Text("${group.count}", color = Palette.accent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold)
+                    }
+                    if (index < groups.lastIndex) YouDivider()
+                }
+            }
+        }
+    }
+}
+
+private data class HistoryGroup(val id: String, val title: String, val count: Int, val detail: String)
+
+private fun groupedHistory(
+    history: List<CleanupHistoryEntry>,
+    overview: LibraryOverview?,
+): List<HistoryGroup> {
+    val titles = overview?.conversations?.associate { it.id.rawValue to it.title }.orEmpty()
+    return history.groupBy { it.conversationID }.map { (id, entries) ->
+        val kinds = entries.groupBy { it.kind }.map { (kind, items) ->
+            "${kindHistoryLabel(kind)} ×${items.size}"
+        }.sorted()
+        HistoryGroup(
+            id = id,
+            title = titles[id] ?: "A chat",
+            count = entries.size,
+            detail = kinds.joinToString(" · "),
+        )
+    }.sortedByDescending { it.count }
+}
+
+private fun kindHistoryLabel(kind: MessageKind): String = when (kind) {
+    MessageKind.TEXT -> "Texts"
+    MessageKind.MEDIA -> "Photos"
+    MessageKind.LINK -> "Links"
+    MessageKind.VOICE -> "Voice"
+    MessageKind.OTHER -> "Other"
 }
 
 @Composable
 private fun InboxSyncScreen(model: AppViewModel) {
     val state by model.state.collectAsState()
-    Box(Modifier.fillMaxSize().background(Palette.background())) {
-        Column(Modifier.fillMaxSize().padding(Spacing.screen), horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(Modifier.fillMaxWidth()) {
+    val consumeClicks = remember { MutableInteractionSource() }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .clickable(indication = null, interactionSource = consumeClicks) {},
+    ) {
+        MeshBackground()
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(Spacing.screen),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Wordmark()
                 Spacer(Modifier.weight(1f))
-                if (state.syncErrorTitle == null) CloseButton { model.dismissSync() }
+                CloseButton { model.dismissSync() }
             }
             Spacer(Modifier.weight(1f))
             if (state.syncErrorTitle != null) {
@@ -191,21 +472,82 @@ private fun InboxSyncScreen(model: AppViewModel) {
                 Text(state.syncErrorTitle!!, color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp, textAlign = TextAlign.Center)
                 Text(state.syncErrorMessage.orEmpty(), color = Palette.secondaryInk(), textAlign = TextAlign.Center)
                 Spacer(Modifier.height(Spacing.l))
-                PrimaryButton("Try again") {
-                    model.dismissSync()
-                    model.refreshChats()
+                when (state.syncPauseKind) {
+                    SyncPauseKind.HOLD_OFF, null -> {
+                        ConnectButton("Try reading") { model.retryInboxNow() }
+                        QuietButton("I'll wait") { model.acceptInboxHoldOff(later = false) }
+                    }
+                    SyncPauseKind.RECONNECT -> {
+                        ConnectButton("Sign in again") { model.signInAgainFromSync() }
+                        QuietButton("Not now") { model.dismissSync() }
+                    }
+                    SyncPauseKind.VERIFY -> {
+                        ConnectButton("I'll handle it") { model.dismissSync() }
+                        QuietButton("Not now") { model.dismissSync() }
+                    }
+                    SyncPauseKind.OFFLINE -> {
+                        ConnectButton("Try again") { model.retryInboxWhenAllowed() }
+                        QuietButton("Not now") { model.dismissSync() }
+                    }
                 }
-                QuietButton("Close") { model.dismissSync() }
             } else {
-                CircularProgressIndicator(
-                    progress = { state.syncProgress.toFloat().coerceIn(0.04f, 1f) },
-                    color = Palette.volt,
-                    trackColor = Palette.hairline(),
-                    modifier = Modifier.size(140.dp),
-                    strokeWidth = 14.dp,
+                val read = state.inboxRead
+                val numbers = NumberFormat.getIntegerInstance(Locale.US)
+                Text(
+                    if (read.isComplete) "All set" else if (read.isListing) "Finding who you talked to…" else "Reading selected chats…",
+                    color = Palette.ink(),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 24.sp,
+                    textAlign = TextAlign.Center,
                 )
+                Spacer(Modifier.height(Spacing.m))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        numbers.format(if (read.isListing) read.chatsFound else read.chatsRead),
+                        color = Palette.ink(),
+                        fontFamily = Type.sans,
+                        fontSize = 48.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        lineHeight = 52.sp,
+                    )
+                    if (!read.isListing) {
+                        Text(
+                            " / ${numbers.format(read.chatsTotal ?: 0)}",
+                            color = Palette.secondaryInk(),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 22.sp,
+                        )
+                    }
+                }
+                Text(
+                    if (read.isListing) "people so far" else "chats",
+                    color = Palette.secondaryInk(),
+                    fontFamily = Type.sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                )
+                Spacer(Modifier.height(Spacing.m))
+                LoreProgressBar(read.fraction)
+                if (read.sendsFound > 0) {
+                    Spacer(Modifier.height(Spacing.s))
+                    Text(
+                        "${numbers.format(read.sendsFound)} of your sends",
+                        color = Palette.accent,
+                        fontFamily = Type.sans,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                    )
+                }
+                read.displayChat?.let { chat ->
+                    Text(
+                        "in $chat",
+                        color = Palette.secondaryInk(),
+                        fontFamily = Type.sans,
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                }
                 Spacer(Modifier.height(Spacing.l))
-                Text(if (state.syncProgress >= 1) "All set" else "Reading your DMs…", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 24.sp)
                 Text("This happens on your phone. Nothing is uploaded.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
             }
             Spacer(Modifier.weight(1f))
@@ -217,101 +559,157 @@ private fun InboxSyncScreen(model: AppViewModel) {
 private fun HomeScreen(model: AppViewModel) {
     val state by model.state.collectAsState()
     val overview = state.overview
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Palette.background())
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = Spacing.screen),
-    ) {
-        Spacer(Modifier.height(Spacing.m))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Wordmark()
-            Spacer(Modifier.weight(1f))
-            if (model.entitlements.isPro) Pill("Pro")
-            Icon(
-                Icons.Filled.AccountCircle,
-                contentDescription = "You and settings",
-                tint = Palette.ink(),
-                modifier = Modifier
-                    .size(44.dp)
-                    .clickable { model.showSheet(Sheet.Settings) },
-            )
-        }
-        val progress = state.progress
-        if (progress != null && !progress.status.isFinished) {
-            Spacer(Modifier.height(Spacing.m))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(Palette.volt)
-                    .clickable { model.presentSession(true) }
-                    .padding(Spacing.m),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(if (progress.status == JobStatus.Running) Icons.Filled.Star else Icons.Filled.PauseCircle, null, tint = Palette.onVolt)
-                Spacer(Modifier.size(Spacing.m))
-                Column(Modifier.weight(1f)) {
-                    Text(if (progress.status == JobStatus.Running) "Cleaning in progress" else "Cleanup paused", color = Palette.onVolt, fontWeight = FontWeight.Bold)
+    var query by remember { mutableStateOf("") }
+    var selection by remember { mutableStateOf(setOf<ConversationID>()) }
+    LaunchedEffect(Unit) { model.deletionAppeared() }
+    val people = remember(overview, query) {
+        val all = overview?.conversations.orEmpty().sortedBy { it.title.lowercase() }
+        if (query.isBlank()) all else all.filter { it.title.contains(query.trim(), ignoreCase = true) }
+    }
+    val selectedPeople = overview?.conversations.orEmpty().filter { it.id in selection }
+    val unreadSelected = selectedPeople.count { !it.messagesLoaded }
+    val cleanableSelected = selectedPeople.count { it.isCleanable }
+    val canAct = selection.isNotEmpty() && (unreadSelected > 0 || cleanableSelected > 0)
+    val actionLabel = when {
+        selection.isEmpty() -> "Pick people to retract with"
+        unreadSelected > 0 -> "Read ${inflect(unreadSelected, "chat")}"
+        cleanableSelected > 0 -> "Retract with ${inflect(selection.size, "person", "people")}"
+        else -> "Nothing to retract there"
+    }
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(horizontal = Spacing.screen)
+                .padding(bottom = when {
+                    overview != null && overview.conversations.isNotEmpty() && !model.entitlements.isPro -> 176.dp
+                    overview != null && overview.conversations.isNotEmpty() -> 88.dp
+                    !model.entitlements.isPro -> 108.dp
+                    else -> Spacing.xl
+                }),
+            verticalArrangement = Arrangement.spacedBy(Spacing.m),
+        ) {
+            Spacer(Modifier.height(Spacing.s))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Wordmark()
+                Spacer(Modifier.weight(1f))
+                if (overview != null && model.hasLiveSession) {
+                    QuietLink("Refresh") { model.refreshChats() }
+                }
+                if (model.entitlements.isPro) Pill("Pro")
+            }
+            val progress = state.progress
+            if (progress != null && !progress.status.isFinished) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.m))
+                        .background(Palette.surface())
+                        .clickable { model.presentSession(true) }
+                        .padding(Metrics.cardInset),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.s),
+                ) {
+                    Row {
+                        Text(if (progress.status == JobStatus.Running) "Cleaning now" else "Cleanup paused", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.weight(1f))
+                        Text("Open", color = Palette.accent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    }
+                    LoreProgressBar(progress.fraction)
                     Text(
-                        if (progress.status == JobStatus.Running) "${inflect(progress.remaining, "message")} to go"
-                        else "Tap Resume. We won't unsend twice.",
-                        color = Palette.onVolt,
+                        if (progress.status == JobStatus.Running) "${inflect(progress.remaining, "message")} to go. Keep Retract open."
+                        else "Resume. We won't unsend twice.",
+                        color = Palette.secondaryInk(),
+                        fontFamily = Type.sans,
+                        fontSize = 14.sp,
                     )
                 }
-                Icon(Icons.Filled.ChevronRight, null, tint = Palette.onVolt)
+            }
+            if (overview != null && overview.conversations.isNotEmpty()) {
+                LoreHeadline("Pick who to retract with.")
+                Text(
+                    "${inflect(overview.conversations.size, "person", "people")} in your DMs. We only load a chat after you pick it.",
+                    color = Palette.secondaryInk(),
+                    fontFamily = Type.sans,
+                    fontSize = 15.sp,
+                )
+                if (!model.hasLiveSession) {
+                    Card {
+                        Text("Instagram signed you out", color = Palette.ink(), fontWeight = FontWeight.SemiBold)
+                        Text("Progress is still on this phone. Reconnect to keep cleaning — we won't unsend twice.", color = Palette.secondaryInk())
+                        SecondaryButton("Reconnect Instagram") { model.beginLogin(LoginPurpose.RECONNECT) }
+                    }
+                }
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("Search @username", color = Palette.secondaryInk()) },
+                    shape = RoundedCornerShape(Radius.m),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Palette.ink(),
+                        unfocusedTextColor = Palette.ink(),
+                        focusedBorderColor = Palette.accent,
+                        unfocusedBorderColor = Palette.hairline(),
+                        cursorColor = Palette.accent,
+                        focusedContainerColor = Palette.surface(),
+                        unfocusedContainerColor = Palette.surface(),
+                    ),
+                )
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.s),
+                    contentPadding = PaddingValues(bottom = 88.dp),
+                ) {
+                    items(people, key = { it.id.rawValue }) { chat ->
+                        ChatRow(chat, chat.id in selection) {
+                            selection = if (chat.id in selection) selection - chat.id else selection + chat.id
+                        }
+                    }
+                }
+            } else if (overview != null) {
+                LoreHeadline("No DMs on this account.")
+            } else if (state.loadingOverview) {
+                LoreHeadline("Finding who you talked to.")
+                CircularProgressIndicator(color = Palette.accent)
+            } else if (model.hasLiveSession) {
+                LoreHeadline("Couldn't find your people.")
+                Text("Reconnect Instagram and we'll pull the names again.", color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 17.sp)
+            } else {
+                Spacer(Modifier.height(Spacing.m))
+                LoreHeadline()
+                Text(
+                    "Find who you talked to. Retract what you sent. It stays on this phone.",
+                    color = Palette.secondaryInk(),
+                    fontFamily = Type.sans,
+                    fontSize = 17.sp,
+                )
             }
         }
-        Spacer(Modifier.height(Spacing.l))
-        if (overview != null) {
-            Text("Your DMs", color = Palette.secondaryInk(), fontWeight = FontWeight.SemiBold)
-            Text(NumberFormat.getIntegerInstance(Locale.US).format(overview.sentByOwner), color = Palette.ink(), fontSize = 64.sp, fontWeight = FontWeight.Black)
-            Text(
-                if (overview.sentByOwner == 1) "message you sent, across ${inflect(overview.cleanableConversations.size, "chat")}."
-                else "messages you sent, across ${inflect(overview.cleanableConversations.size, "chat")}.",
-                color = Palette.secondaryInk(),
-            )
-            quip(overview.sentByOwner)?.let {
-                Spacer(Modifier.height(Spacing.xs))
-                Text(it, color = Palette.accentInk(), fontWeight = FontWeight.Bold)
-            }
-            if (!model.hasLiveSession) {
-                Spacer(Modifier.height(Spacing.m))
-                Card {
-                    Text("Instagram signed you out", color = Palette.ink(), fontWeight = FontWeight.Bold)
-                    Text("Reconnect to keep cleaning. Your progress is still on this phone.", color = Palette.secondaryInk())
-                    SecondaryButton("Reconnect Instagram") { model.beginLogin(LoginPurpose.RECONNECT) }
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = Spacing.screen)
+                .padding(bottom = Spacing.s),
+            verticalArrangement = Arrangement.spacedBy(Spacing.s),
+        ) {
+            if (overview != null && overview.conversations.isNotEmpty()) {
+                PrimaryButton(actionLabel, enabled = canAct && (model.hasLiveSession || model.hasUnfinishedSession)) {
+                    model.retractWith(selection)
+                }
+            } else if (overview == null && !state.loadingOverview) {
+                Appear(160) {
+                    ConnectButton(if (model.hasLiveSession) "Find people" else "Connect Instagram") { model.showConnect() }
                 }
             }
-            Spacer(Modifier.height(Spacing.l))
-            PrimaryButton("Clean up", enabled = overview.sentByOwner > 0) { model.openSetup(CleanupScope.Everything) }
-            Spacer(Modifier.height(Spacing.s))
-            SecondaryButton("Choose chats", enabled = overview.sentByOwner > 0) {
-                if (model.hasUnfinishedSession) model.openSetup(CleanupScope.Everything)
-                else model.showSheet(Sheet.ChooseChats)
-            }
-            Spacer(Modifier.height(Spacing.s))
-            SecondaryButton("See what's included") { model.showSheet(Sheet.Included) }
-            QuietButton("Refresh chats") { model.refreshChats() }
-        } else if (state.loadingOverview) {
-            CircularProgressIndicator(Modifier.padding(80.dp).align(Alignment.CenterHorizontally), color = Palette.ink())
-        } else {
-            Card {
-                Text("We couldn't read your DMs", color = Palette.ink(), fontWeight = FontWeight.Bold)
-                Text("Connect Instagram again to continue.", color = Palette.secondaryInk())
-                SecondaryButton("Connect Instagram") { model.showConnect() }
+            if (!model.entitlements.isPro) {
+                UpgradeDock(
+                    remaining = model.entitlements.remainingFree,
+                ) { model.showSheet(Sheet.Paywall("settings")) }
             }
         }
-        Spacer(Modifier.height(Spacing.xl))
     }
-}
-
-private fun quip(count: Int): String? = when (count) {
-    0 -> "You're all cleaned up."
-    in 1 until 500 -> "Light lore. Easy clean."
-    in 500 until 5_000 -> "That's a lot of lore."
-    else -> if (count >= 5000) "That's a LOT of lore." else null
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -356,10 +754,6 @@ private fun SettingsSheet(model: AppViewModel) {
         Spacer(Modifier.height(Spacing.l))
         Text("Your data", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
         QuietButton("How we handle your data") { model.showSheet(Sheet.Privacy) }
-        QuietButton("Refresh chats") {
-            model.showSheet(null)
-            model.refreshChats()
-        }
         if (!model.hasLiveSession) {
             QuietButton("Reconnect Instagram") {
                 model.showSheet(null)
@@ -374,7 +768,7 @@ private fun SettingsSheet(model: AppViewModel) {
         QuietButton("Disconnect & delete my data", tint = Palette.danger()) { confirmErase = true }
         Text("Removes your chats, Instagram login, cleanup progress and everything else stored on this phone. Purchases stay with your Google account.", color = Palette.secondaryInk(), fontSize = 12.sp)
         Spacer(Modifier.height(Spacing.m))
-        Text("DeLore ${BuildConfig.VERSION_NAME} · No analytics. Not affiliated with Instagram or Meta.", color = Palette.secondaryInk(), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        Text("Retract ${BuildConfig.VERSION_NAME} · No analytics. Not affiliated with Instagram or Meta.", color = Palette.secondaryInk(), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(Spacing.xl))
     }
     if (confirmErase) {
@@ -407,13 +801,13 @@ private fun PrivacySheet() {
         }
         Card {
             Text("What leaves this phone", color = Palette.ink(), fontWeight = FontWeight.Bold)
-            Text("Cleanup talks to Instagram from this phone, the same way you would unsend a message yourself. Nothing from your DMs is sent to a DeLore server. We don't collect analytics, advertising IDs, or other identifiers. There's no tracking or ads. Purchases are handled by Google Play.", color = Palette.secondaryInk())
+            Text("Cleanup talks to Instagram from this phone, the same way you would unsend a message yourself. Nothing from your DMs is sent to a Retract server. We don't collect analytics, advertising IDs, or other identifiers. There's no tracking or ads. Purchases are handled by Google Play.", color = Palette.secondaryInk())
         }
         Card {
             Text("Your password", color = Palette.ink(), fontWeight = FontWeight.Bold)
             Text("You type it into Instagram's own sign-in page. We never see it, we never store it, and it never leaves this phone through us.", color = Palette.secondaryInk())
         }
-        Text("DeLore isn't affiliated with, endorsed by, or connected to Instagram or Meta.", color = Palette.secondaryInk(), fontSize = 13.sp)
+        Text("Retract isn't affiliated with, endorsed by, or connected to Instagram or Meta.", color = Palette.secondaryInk(), fontSize = 13.sp)
         Spacer(Modifier.height(Spacing.xl))
     }
 }
@@ -482,12 +876,19 @@ private fun ChatRow(chat: ConversationSummary, selected: Boolean, onClick: () ->
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(44.dp).clip(CircleShape).background(Palette.lilac), contentAlignment = Alignment.Center) {
-            Text(chat.title.take(1).uppercase(), color = Palette.onVolt, fontWeight = FontWeight.Black)
+            Text(chat.title.trimStart('@').take(1).uppercase(), color = Palette.onVolt, fontWeight = FontWeight.Black)
         }
         Spacer(Modifier.size(Spacing.m))
         Column(Modifier.weight(1f)) {
             Text(chat.title, color = Palette.ink(), fontWeight = FontWeight.SemiBold, maxLines = 1)
-            Text("${inflect(chat.sentByOwner, "message")} from you", color = Palette.secondaryInk())
+            Text(
+                when {
+                    !chat.messagesLoaded -> "Not read yet"
+                    chat.sentByOwner == 0 -> "Nothing from you"
+                    else -> "${inflect(chat.sentByOwner, "message")} from you"
+                },
+                color = Palette.secondaryInk(),
+            )
         }
         Icon(if (selected) Icons.Filled.CheckCircle else Icons.Filled.Check, null, tint = if (selected) Palette.accentInk() else Palette.hairline())
     }
@@ -623,7 +1024,7 @@ private fun Segment(label: String, selected: Boolean, onClick: () -> Unit) {
         fontWeight = FontWeight.SemiBold,
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (selected) Palette.volt else Palette.surface())
+            .background(if (selected) Palette.accent else Palette.surface())
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
     )
@@ -684,63 +1085,251 @@ private fun ConfirmBlock(model: AppViewModel, setup: CleanupSetupState, prepared
 }
 
 @Composable
+private fun UpgradeDock(remaining: Int, modifier: Modifier = Modifier, onUpgrade: () -> Unit) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = 20.dp,
+                shape = RoundedCornerShape(Radius.l),
+                ambientColor = Palette.accent.copy(alpha = 0.18f),
+                spotColor = Palette.accent.copy(alpha = 0.18f),
+            )
+            .clip(RoundedCornerShape(Radius.l))
+            .background(Palette.surfaceElevated.copy(alpha = 0.92f))
+            .border(1.2.dp, Palette.accent.copy(alpha = 0.45f), RoundedCornerShape(Radius.l))
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "$remaining free unsends",
+                color = Palette.ink(),
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp,
+            )
+            Text("Then Pro takes over", color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 13.sp)
+        }
+        Box(
+            Modifier
+                .shadow(
+                    elevation = 12.dp,
+                    shape = RoundedCornerShape(50),
+                    ambientColor = Palette.cta.copy(alpha = 0.5f),
+                    spotColor = Palette.cta.copy(alpha = 0.45f),
+                )
+                .clip(RoundedCornerShape(50))
+                .background(Palette.cta)
+                .clickable(onClick = onUpgrade)
+                .padding(horizontal = 18.dp, vertical = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("Upgrade", color = Palette.onCta, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+        }
+    }
+}
+
+@Composable
 private fun PaywallSheet(model: AppViewModel) {
-    val activity = LocalContext.current as Activity
+    PaywallContent(model, embedded = false)
+}
+
+@Composable
+private fun PaywallContent(model: AppViewModel, embedded: Boolean) {
+    val activity = LocalContext.current.findActivity()
+    val uri = LocalUriHandler.current
     val scope = rememberCoroutineScope()
-    var selected by remember { mutableStateOf(model.entitlements.products.firstOrNull { it.kind == StoreProduct.Kind.MONTHLY }?.id) }
+    val plans = model.entitlements.products
+        .filter { it.kind == StoreProduct.Kind.YEARLY || it.kind == StoreProduct.Kind.MONTHLY }
+        .sortedBy { if (it.kind == StoreProduct.Kind.YEARLY) 0 else 1 }
+    var selected by remember { mutableStateOf(plans.firstOrNull { it.kind == StoreProduct.Kind.YEARLY }?.id) }
     var notice by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) { model.entitlements.loadProducts() }
-    val monthly = model.entitlements.products.firstOrNull { it.kind == StoreProduct.Kind.MONTHLY }?.displayPrice ?: "$19.99"
-    Column(Modifier.verticalScroll(rememberScrollState()).padding(Spacing.screen), verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
-        Text("Clean it all.", color = Palette.ink(), fontWeight = FontWeight.Black, fontSize = 34.sp)
-        Text("First ${model.entitlements.freeLimit} messages are free. After that, Pro is $monthly a month — or clean once without a subscription.", color = Palette.secondaryInk())
-        PromiseRow(Icons.Filled.Star, "Unlimited cleanup", "Every chat, every message you sent.")
-        PromiseRow(Icons.Filled.DateRange, "Date & type filters", "Only old stuff. Only photos. Your call.")
-        PromiseRow(Icons.Filled.Lock, "No analytics. No identifiers.", "We don't collect advertising IDs, device IDs, or usage stats.")
-        model.entitlements.products.forEach { product ->
-            val on = product.id == selected
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(if (on) Palette.volt else Palette.surface())
-                    .clickable { selected = product.id }
-                    .padding(Spacing.m),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    if (product.kind == StoreProduct.Kind.YEARLY) Pill("Best value", filled = !on)
+    val reduce = reduceMotion()
+    val glowPulse by rememberInfiniteTransition(label = "planGlow").animateFloat(
+        initialValue = 0.7f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2_400), RepeatMode.Reverse),
+        label = "planGlowAmt",
+    )
+    val glow = if (reduce) 0.78f else glowPulse
+    LaunchedEffect(Unit) {
+        model.entitlements.loadProducts()
+        if (selected == null) {
+            selected = model.entitlements.products
+                .firstOrNull { it.kind == StoreProduct.Kind.YEARLY }?.id
+                ?: model.entitlements.products.firstOrNull { it.kind == StoreProduct.Kind.MONTHLY }?.id
+        }
+    }
+    fun buy(product: StoreProduct) {
+        val host = activity
+        if (host == null) {
+            notice = "Play Store isn’t reachable."
+            return
+        }
+        selected = product.id
+        scope.launch {
+            when (model.entitlements.purchase(host, product)) {
+                PurchaseOutcome.PURCHASED -> model.showSheet(null)
+                PurchaseOutcome.PENDING -> notice = "Waiting for approval."
+                PurchaseOutcome.CANCELLED -> Unit
+                null -> notice = "That didn't go through. You haven't been charged."
+            }
+        }
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .then(if (embedded) Modifier.statusBarsPadding() else Modifier)
+            .verticalScroll(rememberScrollState())
+            .padding(Spacing.screen)
+            .padding(bottom = Spacing.xl),
+        verticalArrangement = Arrangement.spacedBy(Spacing.m),
+    ) {
+        Text("Go Pro", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 26.sp, lineHeight = 32.sp)
+        Text(
+            if (model.entitlements.isPro) "You're on Pro" else "Unlimited unsends. Pick a plan.",
+            color = if (model.entitlements.isPro) Palette.accent else Palette.secondaryInk(),
+            fontFamily = Type.sans,
+            fontSize = 15.sp,
+        )
+        when {
+            model.entitlements.isLoadingProducts && plans.isEmpty() -> {
+                CircularProgressIndicator(color = Palette.accent, modifier = Modifier.align(Alignment.CenterHorizontally))
+            }
+            plans.isEmpty() -> {
+                Card {
+                    Text("Plans aren't available right now", color = Palette.ink(), fontWeight = FontWeight.SemiBold)
+                    SecondaryButton("Try again") { scope.launch { model.entitlements.loadProducts() } }
+                }
+            }
+            else -> {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
+                    plans.forEach { product ->
+                        PlanCard(
+                            product = product,
+                            selected = product.id == selected,
+                            glow = glow,
+                            purchasing = model.entitlements.isPurchasing,
+                            pro = model.entitlements.isPro,
+                            onSelect = { selected = product.id },
+                            onBuy = { buy(product) },
+                        )
+                    }
+                }
+            }
+        }
+        notice?.let { Text(it, color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 14.sp) }
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.l), verticalAlignment = Alignment.CenterVertically) {
+            QuietLink("Restore") {
+                scope.launch {
+                    val ok = model.entitlements.restore()
+                    notice = if (!ok) "Play Store isn’t reachable."
+                    else if (!model.entitlements.isPro) "No Pro plan found."
+                    else null
+                    if (ok && model.entitlements.isPro) model.showSheet(null)
+                }
+            }
+            QuietLink("Terms") { uri.openUri(BuildConfig.TERMS_URL) }
+            QuietLink("Privacy") { uri.openUri(BuildConfig.PRIVACY_URL) }
+        }
+    }
+}
+
+@Composable
+private fun PlanCard(
+    product: StoreProduct,
+    selected: Boolean,
+    glow: Float,
+    purchasing: Boolean,
+    pro: Boolean,
+    onSelect: () -> Unit,
+    onBuy: () -> Unit,
+) {
+    val yearly = product.kind == StoreProduct.Kind.YEARLY
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = if (yearly) 18.dp else 10.dp,
+                shape = RoundedCornerShape(Radius.l),
+                ambientColor = (if (yearly) Palette.cta else Palette.accent).copy(alpha = if (yearly) 0.32f * glow else 0.22f),
+                spotColor = (if (yearly) Palette.cta else Palette.accent).copy(alpha = if (yearly) 0.28f * glow else 0.18f),
+            )
+            .clip(RoundedCornerShape(Radius.l))
+            .background(if (yearly) Palette.surfaceElevated else Palette.surfaceDark)
+            .border(
+                width = if (yearly) 1.8.dp else 1.4.dp,
+                color = if (yearly) {
+                    Palette.cta.copy(alpha = if (selected) glow else 0.72f)
+                } else {
+                    Palette.accent.copy(alpha = if (selected) 0.85f else 0.5f)
+                },
+                shape = RoundedCornerShape(Radius.l),
+            )
+            .clickable(onClick = onSelect)
+            .padding(if (yearly) 20.dp else 16.dp),
+        verticalArrangement = Arrangement.spacedBy(Spacing.s),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (yearly) "Yearly" else "Monthly",
+                color = Palette.ink(),
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = if (yearly) 22.sp else 17.sp,
+                modifier = Modifier.weight(1f),
+            )
+            if (yearly) {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Brush.horizontalGradient(listOf(Palette.valueGold, Palette.valuePink)))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                ) {
                     Text(
-                        when (product.kind) {
-                            StoreProduct.Kind.YEARLY -> "Pro · Yearly"
-                            StoreProduct.Kind.MONTHLY -> "Pro · Monthly"
-                            StoreProduct.Kind.ONE_TIME -> "One-time cleanup"
-                        },
-                        color = if (on) Palette.onVolt else Palette.ink(),
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        when (product.kind) {
-                            StoreProduct.Kind.YEARLY -> product.monthlyEquivalent?.let { "Just $it/month, billed yearly" } ?: "Billed yearly"
-                            StoreProduct.Kind.MONTHLY -> "After your free messages. Cancel anytime."
-                            StoreProduct.Kind.ONE_TIME -> "Clean everything once. No subscription."
-                        },
-                        color = if (on) Palette.onVolt else Palette.secondaryInk(),
+                        "Best value",
+                        color = Palette.onCtaSoft,
+                        fontFamily = Type.sans,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 11.sp,
                     )
                 }
-                Text(product.displayPrice, color = if (on) Palette.onVolt else Palette.ink(), fontWeight = FontWeight.Black)
             }
         }
-        notice?.let { Text(it, color = Palette.secondaryInk()) }
-        PrimaryButton(if (model.entitlements.isPurchasing) "Working…" else "Continue", enabled = selected != null && !model.entitlements.isPurchasing) {
-            val product = model.entitlements.products.firstOrNull { it.id == selected } ?: return@PrimaryButton
-            scope.launch {
-                val outcome = model.entitlements.purchase(activity, product)
-                if (outcome == null) notice = "That didn't go through. You haven't been charged."
-            }
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                product.displayPrice,
+                color = Palette.ink(),
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = if (yearly) 34.sp else 24.sp,
+            )
+            Spacer(Modifier.size(6.dp))
+            Text(
+                if (yearly) "/ year" else "/ month",
+                color = Palette.secondaryInk(),
+                fontFamily = Type.sans,
+                fontSize = 15.sp,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
         }
-        Text("Pro renews automatically until you cancel in Play Store. A one-time cleanup covers one full cleanup and doesn't renew.", color = Palette.secondaryInk(), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(Spacing.xl))
+        product.monthlyEquivalent?.takeIf { yearly }?.let { monthly ->
+            Text("$monthly / mo", color = Palette.accent, fontFamily = Type.sans, fontSize = 14.sp)
+        }
+        if (yearly) {
+            PrimaryButton(
+                if (purchasing && selected) "Working…" else "Subscribe yearly",
+                enabled = !purchasing && !pro,
+                onClick = onBuy,
+            )
+        } else {
+            SecondaryButton(
+                if (purchasing && selected) "Working…" else "Subscribe monthly",
+                enabled = !purchasing && !pro,
+                onClick = onBuy,
+            )
+        }
     }
 }
 
@@ -776,7 +1365,8 @@ private fun CleanupRunScreen(model: AppViewModel) {
     Column(
         Modifier
             .fillMaxSize()
-            .background(Palette.background())
+            .statusBarsPadding()
+            .navigationBarsPadding()
             .padding(horizontal = Spacing.screen),
     ) {
         Spacer(Modifier.height(Spacing.m))
@@ -786,10 +1376,10 @@ private fun CleanupRunScreen(model: AppViewModel) {
             if (progress.status != JobStatus.Running) CloseButton { model.presentSession(false) }
         }
         Spacer(Modifier.weight(1f))
-        Text(copy.headline, color = Palette.ink(), fontWeight = FontWeight.Black, fontSize = 32.sp)
+        Text(copy.headline, color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, lineHeight = 34.sp)
         Spacer(Modifier.height(Spacing.m))
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(NumberFormat.getIntegerInstance().format(progress.processed), color = Palette.ink(), fontSize = 56.sp, fontWeight = FontWeight.Black)
+            Text(NumberFormat.getIntegerInstance().format(progress.processed), color = Palette.ink(), fontFamily = Type.sans, fontSize = 48.sp, fontWeight = FontWeight.SemiBold, lineHeight = 52.sp)
             Text(" / ${NumberFormat.getIntegerInstance().format(progress.total)}", color = Palette.secondaryInk(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
         }
         LoreProgressBar(progress.fraction)
@@ -808,7 +1398,7 @@ private fun CleanupRunScreen(model: AppViewModel) {
             }
         }
         Spacer(Modifier.weight(1f))
-        Text("Keep DeLore open while we clean.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        Text("Keep Retract open while we clean.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         Text("If Instagram asks us to wait, we wait — on purpose, to keep your account safe.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(Spacing.s))
         when (copy.action) {
@@ -848,16 +1438,22 @@ private fun CleanupDoneScreen(model: AppViewModel, progress: app.delore.android.
     Column(
         Modifier
             .fillMaxSize()
-            .background(Palette.background())
+            .statusBarsPadding()
+            .navigationBarsPadding()
             .padding(horizontal = Spacing.screen),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.weight(1f))
-        Box(Modifier.size(128.dp).clip(CircleShape).background(Palette.volt), contentAlignment = Alignment.Center) {
-            Icon(if (cancelled) Icons.Filled.Warning else Icons.Filled.Check, null, tint = Palette.onVolt, modifier = Modifier.size(52.dp))
+        Box(
+            Modifier
+                .size(64.dp)
+                .background(Palette.accent, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(if (cancelled) Icons.Filled.Warning else Icons.Filled.Check, null, tint = Palette.onAccent, modifier = Modifier.size(28.dp))
         }
         Spacer(Modifier.height(Spacing.l))
-        Text(if (cancelled) "Cleanup stopped" else "Fresh start ✨", color = Palette.ink(), fontWeight = FontWeight.Black, fontSize = 34.sp, textAlign = TextAlign.Center)
+        Text(if (cancelled) "Cleanup stopped" else "Fresh start ✨", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, lineHeight = 34.sp, textAlign = TextAlign.Center)
         Text("${inflect(progress.completed, "message")} cleaned.", color = Palette.secondaryInk(), fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
         if (notCleaned > 0) {
             Text("${inflect(notCleaned, "message")} couldn't be unsent. They're still there.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
@@ -867,4 +1463,13 @@ private fun CleanupDoneScreen(model: AppViewModel, progress: app.delore.android.
         QuietButton("Clean another chat") { model.closeSession(thenChooseChats = true) }
         Spacer(Modifier.height(Spacing.m))
     }
+}
+
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return current as? Activity
 }

@@ -27,7 +27,7 @@ enum InstagramWebFormat {
         let status: String?
 
         struct Inbox: Decodable {
-            let threads: [ThreadStub]?
+            let threads: [ThreadStub]
             let hasOlder: Bool?
             let oldestCursor: String?
 
@@ -35,6 +35,14 @@ enum InstagramWebFormat {
                 case threads
                 case hasOlder = "has_older"
                 case oldestCursor = "oldest_cursor"
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                threads = (try container.decodeIfPresent(LossyArray<ThreadStub>.self, forKey: .threads))?.elements ?? []
+                hasOlder = try container.decodeIfPresent(Bool.self, forKey: .hasOlder)
+                let cursor = try container.decodeIfPresent(String.self, forKey: .oldestCursor)
+                oldestCursor = cursor?.isEmpty == false ? cursor : nil
             }
         }
 
@@ -51,9 +59,29 @@ enum InstagramWebFormat {
 
             enum CodingKeys: String, CodingKey {
                 case threadID = "thread_id"
+                case threadV2ID = "thread_v2_id"
+                case id
                 case threadTitle = "thread_title"
                 case users
                 case hasOlder = "has_older"
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                guard let id = try container.decodeIfPresent(FlexibleID.self, forKey: .threadID)
+                    ?? container.decodeIfPresent(FlexibleID.self, forKey: .threadV2ID)
+                    ?? container.decodeIfPresent(FlexibleID.self, forKey: .id),
+                    !id.rawValue.isEmpty
+                else {
+                    throw DecodingError.keyNotFound(
+                        CodingKeys.threadID,
+                        .init(codingPath: decoder.codingPath, debugDescription: "thread id")
+                    )
+                }
+                threadID = id
+                threadTitle = try container.decodeIfPresent(String.self, forKey: .threadTitle)
+                users = try container.decodeIfPresent([User].self, forKey: .users)
+                hasOlder = try container.decodeIfPresent(Bool.self, forKey: .hasOlder)
             }
         }
 
@@ -109,8 +137,8 @@ enum InstagramWebFormat {
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            let id = try container.decode(FlexibleID.self, forKey: .itemID)
-            itemID = id.rawValue
+            let id = try container.decodeIfPresent(FlexibleID.self, forKey: .itemID)
+            itemID = id?.rawValue ?? ""
             authorID = try container.decodeIfPresent(FlexibleID.self, forKey: .userID)?.rawValue
             let rawTimestamp = try container.decodeIfPresent(Int64.self, forKey: .timestamp) ?? 0
             sentAt = Self.date(from: rawTimestamp)
@@ -148,14 +176,106 @@ enum InstagramWebFormat {
     }
 
     static func title(for stub: InboxPage.ThreadStub, ownerID: String) -> String {
+        let others = (stub.users ?? []).compactMap { user -> String? in
+            guard user.pk?.rawValue != ownerID else { return nil }
+            if let username = user.username, !username.isEmpty { return "@\(username)" }
+            if let name = user.fullName, !name.isEmpty { return name }
+            return nil
+        }
+        if !others.isEmpty { return others.joined(separator: ", ") }
         if let title = stub.threadTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty, title != "Instagram User" {
             return title
         }
-        let others = (stub.users ?? []).compactMap { user -> String? in
-            guard user.pk?.rawValue != ownerID else { return nil }
-            if let name = user.fullName, !name.isEmpty { return name }
-            return user.username
+        return "Chat"
+    }
+
+    static func topKeys(_ body: Data) -> String {
+        if body.isEmpty { return "empty" }
+        if looksLikeHTML(body) { return "html" }
+        guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return "not-json" }
+        return object.keys.prefix(12).joined(separator: ",")
+    }
+
+    static func parseInbox(_ body: Data) throws -> InboxPage {
+        let root = try JSONSerialization.jsonObject(with: body)
+        guard let object = root as? [String: Any] else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "inbox root"))
         }
-        return others.isEmpty ? "Chat" : others.joined(separator: ", ")
+        let payload: Data
+        if object["inbox"] == nil, let data = object["data"] as? [String: Any], data["inbox"] != nil {
+            payload = try JSONSerialization.data(withJSONObject: data)
+        } else {
+            payload = body
+        }
+        let page = try JSONDecoder().decode(InboxPage.self, from: payload)
+        guard page.inbox != nil else {
+            throw DecodingError.keyNotFound(
+                InboxPage.Inbox.CodingKeys.threads,
+                .init(codingPath: [], debugDescription: "inbox")
+            )
+        }
+        return page
+    }
+
+    static func parseThread(_ body: Data) throws -> ThreadPage {
+        let root = try JSONSerialization.jsonObject(with: body)
+        guard let object = root as? [String: Any] else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "thread root"))
+        }
+        let payload: Data
+        if object["thread"] == nil, let data = object["data"] as? [String: Any], data["thread"] != nil {
+            payload = try JSONSerialization.data(withJSONObject: data)
+        } else {
+            payload = body
+        }
+        let page = try JSONDecoder().decode(ThreadPage.self, from: payload)
+        guard page.thread != nil else {
+            throw DecodingError.keyNotFound(
+                ThreadPage.Thread.CodingKeys.items,
+                .init(codingPath: [], debugDescription: "thread")
+            )
+        }
+        return page
+    }
+
+    private static func looksLikeHTML(_ data: Data) -> Bool {
+        guard let prefix = String(data: data.prefix(32), encoding: .utf8)?.lowercased() else { return false }
+        return prefix.contains("<!doctype") || prefix.contains("<html")
+    }
+}
+
+private struct LossyArray<Element: Decodable>: Decodable {
+    let elements: [Element]
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var parsed: [Element] = []
+        while !container.isAtEnd {
+            if (try? container.decodeNil()) == true { continue }
+            do {
+                parsed.append(try container.decode(Element.self))
+            } catch {
+                _ = try container.decode(JSONSkip.self)
+            }
+        }
+        elements = parsed
+    }
+}
+
+private struct JSONSkip: Decodable {
+    private struct Key: CodingKey {
+        var stringValue: String
+        init?(stringValue: String) { self.stringValue = stringValue }
+        var intValue: Int?
+        init?(intValue: Int) { stringValue = String(intValue); self.intValue = intValue }
+    }
+
+    init(from decoder: Decoder) throws {
+        if (try? decoder.container(keyedBy: Key.self)) != nil { return }
+        if var nested = try? decoder.unkeyedContainer() {
+            while !nested.isAtEnd { _ = try nested.decode(JSONSkip.self) }
+            return
+        }
+        _ = try decoder.singleValueContainer()
     }
 }

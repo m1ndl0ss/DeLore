@@ -1,5 +1,5 @@
 #include "Base.xcconfig"
 
 DL_ENVIRONMENT = staging
-DL_DISPLAY_NAME = DeLore Beta
+DL_DISPLAY_NAME = Retract Beta
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = STAGING $(inherited)

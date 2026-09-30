@@ -1,3 +1,4 @@
+import DeLoreCore
 import SwiftUI
 
 struct InboxSyncView: View {
@@ -7,19 +8,23 @@ struct InboxSyncView: View {
     var body: some View {
         VStack(spacing: Spacing.l) {
             HStack {
+                Wordmark()
                 Spacer()
-                if !isFinished {
+                if showsClose {
                     CloseButton { model.dismissSync() }
                 }
             }
             Spacer()
             switch sync.phase {
-            case let .running(fraction):
-                progress(title: "Reading your DMs…", fraction: fraction)
+            case let .running(progress):
+                tracker(
+                    title: progress.isListing ? "Finding who you talked to…" : "Reading selected chats…",
+                    progress: progress
+                )
             case .finished:
-                progress(title: "All set", fraction: 1)
-            case let .failed(title, message):
-                failure(title: title, message: message)
+                tracker(title: "All set", progress: sync.latest)
+            case let .failed(title, message, kind):
+                failure(title: title, message: message, kind: kind)
             }
             Spacer()
         }
@@ -29,37 +34,60 @@ struct InboxSyncView: View {
         .interactiveDismissDisabled()
     }
 
-    private var isFinished: Bool {
-        if case .finished = sync.phase { return true }
-        return false
-    }
+    private var showsClose: Bool { true }
 
-    private func progress(title: LocalizedStringKey, fraction: Double) -> some View {
+    private func tracker(title: LocalizedStringKey, progress: InboxReadProgress) -> some View {
         VStack(spacing: Spacing.l) {
-            ZStack {
-                Circle().stroke(Palette.hairline, lineWidth: 14)
-                Circle()
-                    .trim(from: 0, to: max(0.04, fraction))
-                    .stroke(Palette.volt, style: StrokeStyle(lineWidth: 14, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .animation(.easeOut, value: fraction)
-            }
-            .frame(width: 140, height: 140)
-            .accessibilityHidden(true)
+            Text(title)
+                .font(.title(.title))
+                .foregroundStyle(Palette.ink)
+                .multilineTextAlignment(.center)
 
-            VStack(spacing: Spacing.s) {
-                Text(title)
-                    .font(.title(.title))
-                    .foregroundStyle(Palette.ink)
-                Text("This happens on your phone. Nothing is uploaded.")
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text((progress.isListing ? progress.chatsFound : progress.chatsRead).formatted())
+                    .font(Type.medium(48))
+                    .contentTransition(.numericText(value: Double(progress.isListing ? progress.chatsFound : progress.chatsRead)))
+                    .animation(.snappy, value: progress.chatsRead + progress.chatsFound)
+                if !progress.isListing {
+                    Text("/ \((progress.chatsTotal ?? 0).formatted())")
+                        .font(Type.medium(20))
+                        .foregroundStyle(Palette.secondaryInk)
+                }
+            }
+            .foregroundStyle(Palette.ink)
+            .monospacedDigit()
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(progress.isListing
+                ? Text("\(progress.chatsFound) people so far")
+                : Text("\(progress.chatsRead) of \(progress.chatsTotal ?? 0) chats"))
+
+            Text(progress.isListing ? "people so far" : "chats")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Palette.secondaryInk)
+
+            LoreProgressBar(fraction: progress.fraction)
+                .frame(maxWidth: 280)
+
+            if progress.sendsFound > 0 {
+                Text("\(progress.sendsFound.formatted()) of your sends")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Palette.accent)
+            }
+            if let chat = progress.displayChat {
+                Text("in \(chat)")
                     .font(.subheadline)
                     .foregroundStyle(Palette.secondaryInk)
                     .multilineTextAlignment(.center)
             }
+
+            Text("This happens on your phone. Nothing is uploaded.")
+                .font(.subheadline)
+                .foregroundStyle(Palette.secondaryInk)
+                .multilineTextAlignment(.center)
         }
     }
 
-    private func failure(title: String, message: String) -> some View {
+    private func failure(title: String, message: String, kind: InboxSyncModel.Kind) -> some View {
         VStack(spacing: Spacing.l) {
             Image(systemName: "exclamationmark.shield")
                 .font(.system(size: 56, weight: .semibold))
@@ -75,13 +103,28 @@ struct InboxSyncView: View {
                     .foregroundStyle(Palette.secondaryInk)
                     .multilineTextAlignment(.center)
             }
-            Button("Try again") {
-                model.dismissSync()
-                model.refreshChats()
+            switch kind {
+            case .holdOff:
+                Button("Try reading") { model.retryInboxNow() }
+                    .buttonStyle(.connect)
+                Button("I'll wait") { model.acceptInboxHoldOff(later: false) }
+                    .buttonStyle(.text)
+            case .reconnect:
+                Button("Sign in again") { model.signInAgainFromSync() }
+                    .buttonStyle(.connect)
+                Button("Not now") { model.dismissSync() }
+                    .buttonStyle(.text)
+            case .verify:
+                Button("I'll handle it") { model.dismissSync() }
+                    .buttonStyle(.connect)
+                Button("Not now") { model.dismissSync() }
+                    .buttonStyle(.text)
+            case .offline:
+                Button("Try again") { model.retryInboxWhenAllowed() }
+                    .buttonStyle(.connect)
+                Button("Not now") { model.dismissSync() }
+                    .buttonStyle(.text)
             }
-                .buttonStyle(.primary)
-            Button("Close") { model.dismissSync() }
-                .buttonStyle(.text)
         }
     }
 }

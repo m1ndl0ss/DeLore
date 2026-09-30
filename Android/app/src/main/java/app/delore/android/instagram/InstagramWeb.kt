@@ -17,7 +17,7 @@ object InstagramWebConstants {
     const val LOGIN_URL = "https://www.instagram.com/accounts/login/"
     const val INBOX_REFERER = "https://www.instagram.com/direct/inbox/"
     const val CHROME_USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.139 Safari/537.36"
 }
 
 object InstagramLoginPolicy {
@@ -38,6 +38,23 @@ object InstagramLoginPolicy {
         if (scheme != "https") return false
         val host = uri.host?.lowercase()?.trim('.') ?: return false
         return allowedHostSuffixes.any { host == it || host.endsWith(".$it") }
+    }
+
+    fun isPostLogin(url: String): Boolean {
+        if (!allowsNavigation(url)) return false
+        val path = runCatching { URI(url).path?.lowercase().orEmpty() }.getOrDefault("")
+        if (path.contains("/accounts/login")) return false
+        if (path.contains("/accounts/emailsignup")) return false
+        if (path.contains("/challenge")) return false
+        if (path.contains("/two_factor")) return false
+        if (path.contains("/accounts/password")) return false
+        return true
+    }
+
+    fun isDirectSurface(url: String): Boolean {
+        if (!allowsNavigation(url)) return false
+        val path = runCatching { URI(url).path?.lowercase().orEmpty() }.getOrDefault("")
+        return path.startsWith("/direct/")
     }
 
     fun isInstagramCookieDomain(domain: String): Boolean {
@@ -65,12 +82,33 @@ data class InstagramWebSession(
     val ownerID: ParticipantID get() = ParticipantID("ig:$userID")
     val csrfToken: String?
         get() = cookies.firstOrNull { it.name.equals("csrftoken", ignoreCase = true) }?.value
+    val wwwClaimCookie: String?
+        get() = cookies.firstOrNull { it.name.equals("ig_www_claim", ignoreCase = true) }?.value
+            ?.takeIf { it.isNotEmpty() && it != "0" }
     val hasLiveSession: Boolean
         get() = userID.isNotEmpty() && cookies.any { it.name.equals("sessionid", ignoreCase = true) && it.value.isNotEmpty() }
     val account: AccountIdentity
         get() = AccountIdentity(ownerID, displayName ?: "you")
 
     fun cookieHeader(): String = cookies.joinToString("; ") { "${it.name}=${it.value}" }
+
+    fun installIntoCookieManager() {
+        val manager = android.webkit.CookieManager.getInstance()
+        manager.setAcceptCookie(true)
+        for (cookie in cookies) {
+            val domain = cookie.domain.ifBlank { ".instagram.com" }
+            val path = cookie.path.ifBlank { "/" }
+            val header = buildString {
+                append(cookie.name).append('=').append(cookie.value)
+                append("; Domain=").append(domain)
+                append("; Path=").append(path)
+                if (cookie.isSecure) append("; Secure")
+            }
+            manager.setCookie("https://www.instagram.com", header)
+            manager.setCookie("https://instagram.com", header)
+        }
+        manager.flush()
+    }
 
     companion object {
         fun from(cookies: List<Cookie>): InstagramWebSession? {
@@ -121,40 +159,53 @@ object InstagramResponseClassifier {
             if (looksLikeHtml(body)) {
                 val html = text.take(4_000).lowercase()
                 if ("checkpoint" in html || "/challenge" in html) return IntegrationError.VerificationRequired
-                if ("login" in html) return IntegrationError.SessionExpired
+                if ("/accounts/login" in html || "login_required" in html) return IntegrationError.SessionExpired
+                return IntegrationError.UnexpectedResponse(null)
             }
             return null
         }
-        val blob = flatten(objectJson).lowercase()
-        if ("checkpoint_required" in blob || "challenge_required" in blob || "\"challenge\"" in blob || "/challenge/" in blob) {
+        val status = objectJson.optString("status").lowercase()
+        val envelope = envelopeText(objectJson)
+        if ("checkpoint_required" in envelope || "challenge_required" in envelope) {
             return IntegrationError.VerificationRequired
         }
-        if ("login_required" in blob || "not_logged_in" in blob) return IntegrationError.SessionExpired
-        if ("feedback_required" in blob || "spam" in blob || "please wait a few minutes" in blob) {
+        if ("login_required" in envelope || "not_logged_in" in envelope) return IntegrationError.SessionExpired
+        val spamFlag = objectJson.optBoolean("spam") || objectJson.optString("spam").equals("true", true)
+        val feedbackFlag = objectJson.optBoolean("feedback_required") ||
+            objectJson.optString("feedback_required").equals("true", true) ||
+            objectJson.optString("message").equals("feedback_required", true) ||
+            objectJson.optString("error_type").equals("feedback_required", true)
+        if (feedbackFlag || (spamFlag && status != "ok")) {
             return IntegrationError.RateLimited(null)
         }
-        if ("rate limit" in blob || "too many" in blob) return IntegrationError.RateLimited(null)
-        val status = objectJson.optString("status").lowercase()
+        if ("please wait a few minutes" in envelope || "rate limit" in envelope) {
+            return IntegrationError.RateLimited(null)
+        }
+        if (status == "ok" || status == "success") return null
+        if (objectJson.has("inbox") || objectJson.has("thread") || objectJson.has("items")) return null
         if (status == "fail" || status == "error") {
-            if ("not found" in blob || "does not exist" in blob || "no longer" in blob) return null
+            if ("not found" in envelope || "does not exist" in envelope || "no longer" in envelope) return null
             return IntegrationError.UnexpectedResponse(null)
         }
         return null
     }
 
-    private fun looksLikeHtml(data: ByteArray): Boolean {
+    /** Instagram's own error envelope — never nested DM text. */
+    private fun envelopeText(objectJson: JSONObject): String = listOf(
+        objectJson.optString("status"),
+        objectJson.optString("message"),
+        objectJson.optString("error_type"),
+        objectJson.optString("error_title"),
+        objectJson.optString("error_message"),
+        objectJson.opt("feedback_required")?.toString().orEmpty(),
+        objectJson.opt("spam")?.toString().orEmpty(),
+        objectJson.opt("checkpoint_required")?.toString().orEmpty(),
+        objectJson.opt("challenge_required")?.toString().orEmpty(),
+    ).joinToString(" ").lowercase()
+
+    fun looksLikeHtml(data: ByteArray): Boolean {
         val prefix = data.decodeToString(0, minOf(32, data.size)).lowercase()
         return prefix.contains("<!doctype") || prefix.contains("<html")
-    }
-
-    private fun flatten(value: Any?): String = when (value) {
-        is JSONObject -> {
-            val keys = value.keys().asSequence().toList()
-            keys.joinToString(" ") + " " + keys.joinToString(" ") { flatten(value.opt(it)) }
-        }
-        is JSONArray -> (0 until minOf(20, value.length())).joinToString(" ") { flatten(value.opt(it)) }
-        is String -> if (value.length > 120) value.take(120) else value
-        else -> ""
     }
 }
 
@@ -204,18 +255,38 @@ data class ThreadPage(
     val oldestCursor: String?,
 )
 
+object InstagramWebBootstrap {
+    private val asbd = Regex("\"ASBD_ID\"\\s*:\\s*\"(\\d+)\"")
+    private val claim = Regex("\"www_claim\"\\s*:\\s*\"([^\"]+)\"")
+
+    fun asbdID(html: String): String? = asbd.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotEmpty() }
+
+    fun wwwClaim(html: String): String? = claim.find(html)?.groupValues?.getOrNull(1)
+        ?.takeIf { it.isNotEmpty() && it != "0" }
+}
+
 object InstagramWebFormat {
+    fun topKeys(body: ByteArray): String {
+        if (body.isEmpty()) return "empty"
+        if (InstagramResponseClassifier.looksLikeHtml(body)) return "html"
+        val root = runCatching { JSONObject(body.decodeToString()) }.getOrNull() ?: return "not-json"
+        return root.keys().asSequence().take(12).joinToString(",")
+    }
+
     fun parseInbox(body: ByteArray): InboxPage {
         val root = JSONObject(body.decodeToString())
         val inbox = root.optJSONObject("inbox")
-        val viewer = root.optJSONObject("viewer")
-        val threadsJson = inbox?.optJSONArray("threads") ?: JSONArray()
+            ?: root.optJSONObject("data")?.optJSONObject("inbox")
+            ?: throw IllegalArgumentException("missing inbox (${topKeys(body)})")
+        val viewer = root.optJSONObject("viewer") ?: root.optJSONObject("data")?.optJSONObject("viewer")
+        val threadsJson = inbox.optJSONArray("threads") ?: JSONArray()
         val threads = buildList {
             for (i in 0 until threadsJson.length()) {
-                val t = threadsJson.getJSONObject(i)
+                val t = threadsJson.optJSONObject(i) ?: continue
+                val threadID = threadId(t) ?: continue
                 add(
                     InboxThreadStub(
-                        threadID = flexibleId(t, "thread_id"),
+                        threadID = threadID,
                         threadTitle = t.optString("thread_title").ifBlank { null },
                         users = parseUsers(t.optJSONArray("users")),
                     ),
@@ -224,8 +295,8 @@ object InstagramWebFormat {
         }
         return InboxPage(
             threads = threads,
-            hasOlder = inbox?.optBoolean("has_older") ?: false,
-            oldestCursor = inbox?.optString("oldest_cursor")?.ifBlank { null },
+            hasOlder = inbox.optBoolean("has_older"),
+            oldestCursor = inbox.optString("oldest_cursor").ifBlank { null },
             viewerUsername = viewer?.optString("username")?.ifBlank { null },
         )
     }
@@ -233,33 +304,45 @@ object InstagramWebFormat {
     fun parseThread(body: ByteArray): ThreadPage {
         val root = JSONObject(body.decodeToString())
         val thread = root.optJSONObject("thread")
-        val itemsJson = thread?.optJSONArray("items") ?: JSONArray()
+            ?: root.optJSONObject("data")?.optJSONObject("thread")
+            ?: throw IllegalArgumentException("missing thread (${topKeys(body)})")
+        val itemsJson = thread.optJSONArray("items") ?: JSONArray()
         val items = buildList {
             for (i in 0 until itemsJson.length()) {
-                add(parseItem(itemsJson.getJSONObject(i)))
+                val obj = itemsJson.optJSONObject(i) ?: continue
+                val item = parseItem(obj)
+                if (item.itemID.isNotEmpty()) add(item)
             }
         }
         return ThreadPage(
             items = items,
-            hasOlder = thread?.optBoolean("has_older") ?: false,
-            oldestCursor = thread?.optString("oldest_cursor")?.ifBlank { null },
+            hasOlder = thread.optBoolean("has_older"),
+            oldestCursor = thread.optString("oldest_cursor").ifBlank { null },
         )
     }
 
     fun title(stub: InboxThreadStub, ownerID: String): String {
+        val others = stub.users.mapNotNull { user ->
+            if (user.pk == ownerID) null
+            else user.username?.takeIf { it.isNotEmpty() }?.let { "@$it" }
+                ?: user.fullName?.takeIf { it.isNotEmpty() }
+        }
+        if (others.isNotEmpty()) return others.joinToString(", ")
         val titled = stub.threadTitle?.trim().orEmpty()
         if (titled.isNotEmpty() && titled != "Instagram User") return titled
-        val others = stub.users.mapNotNull { user ->
-            if (user.pk == ownerID) null else user.fullName?.takeIf { it.isNotEmpty() } ?: user.username
-        }
-        return if (others.isEmpty()) "Chat" else others.joinToString(", ")
+        return "Chat"
     }
+
+    private fun threadId(obj: JSONObject): String? =
+        flexibleIdOrNull(obj, "thread_id")
+            ?: flexibleIdOrNull(obj, "thread_v2_id")
+            ?: flexibleIdOrNull(obj, "id")
 
     private fun parseUsers(array: JSONArray?): List<InboxUser> {
         array ?: return emptyList()
         return buildList {
             for (i in 0 until array.length()) {
-                val u = array.getJSONObject(i)
+                val u = array.optJSONObject(i) ?: continue
                 add(
                     InboxUser(
                         pk = flexibleIdOrNull(u, "pk"),

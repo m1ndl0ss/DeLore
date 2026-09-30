@@ -24,4 +24,20 @@ public enum InstagramLoginPolicy {
         let trimmed = domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
         return trimmed == "instagram.com" || trimmed.hasSuffix(".instagram.com")
     }
+
+    public static func isPostLogin(url: URL) -> Bool {
+        guard allowsNavigation(to: url) else { return false }
+        let path = url.path.lowercased()
+        if path.contains("/accounts/login") { return false }
+        if path.contains("/accounts/emailsignup") { return false }
+        if path.contains("/challenge") { return false }
+        if path.contains("/two_factor") { return false }
+        if path.contains("/accounts/password") { return false }
+        return true
+    }
+
+    public static func isDirectSurface(url: URL) -> Bool {
+        guard allowsNavigation(to: url) else { return false }
+        return url.path.lowercased().hasPrefix("/direct/")
+    }
 }

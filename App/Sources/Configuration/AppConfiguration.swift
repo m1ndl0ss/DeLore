@@ -32,8 +32,8 @@ struct AppConfiguration {
 
         return AppConfiguration(
             environment: environment,
-            privacyPolicyURL: url("DLPrivacyPolicyURL", fallback: "https://example.com/delore/privacy"),
-            supportURL: url("DLSupportURL", fallback: "https://example.com/delore/support"),
+            privacyPolicyURL: url("DLPrivacyPolicyURL", fallback: "https://example.com/retract/privacy"),
+            supportURL: url("DLSupportURL", fallback: "https://example.com/retract/support"),
             termsURL: url("DLTermsURL", fallback: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"),
             products: ProductCatalog(
                 oneTimeCleanup: string("DLProductOneTime") ?? "app.delore.cleanup.single",

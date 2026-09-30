@@ -2,54 +2,46 @@ import SwiftUI
 
 struct ConnectView: View {
     @Environment(AppModel.self) private var model
+    @State private var shown = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.l) {
-                HStack {
-                    Wordmark()
-                    Spacer()
-                    if model.env.hasLibrary {
-                        CloseButton { model.returnHome() }
-                    }
+        VStack(alignment: .leading, spacing: Spacing.l) {
+            HStack {
+                Wordmark()
+                Spacer()
+                if model.env.hasLibrary {
+                    CloseButton { model.returnHome() }
                 }
-                .padding(.top, Spacing.m)
-
-                VStack(alignment: .leading, spacing: Spacing.s) {
-                    Text("Connect Instagram")
-                        .font(.display(.largeTitle))
-                        .foregroundStyle(Palette.ink)
-                        .accessibilityAddTraits(.isHeader)
-                    Text("Sign in with Instagram. You'll use Instagram's own page — we never see your password.")
-                        .font(.body)
-                        .foregroundStyle(Palette.secondaryInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Card {
-                    PromiseRow(symbol: "key.slash", title: "We never see your password", detail: "You type it into Instagram, not into DeLore.")
-                    PromiseRow(symbol: "person.fill.checkmark", title: "Only messages you sent", detail: "Other people's messages are never touched.")
-                    PromiseRow(symbol: "iphone", title: "Your login stays on this phone", detail: "Nothing is sent to a DeLore server.")
-                    PromiseRow(symbol: "eye.slash", title: "Message text is never saved", detail: "We keep dates and message types, not what you said.")
-                    PromiseRow(symbol: "chart.bar.xaxis", title: "No analytics or identifiers", detail: "We don't collect device IDs or usage stats.")
-                }
-
-                Text("If Instagram asks you to verify, complete it there. We won't skip that check.")
-                    .font(.subheadline)
-                    .foregroundStyle(Palette.secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, Spacing.screen)
-            .padding(.bottom, Spacing.xl)
-        }
-        .safeAreaInset(edge: .bottom) {
-            Button("Connect Instagram") { model.beginLogin(.connect) }
+
+            Spacer()
+
+            LoreHeadline()
+            Text("Find who you talked to. Retract what you sent. It stays on this phone.")
+                .font(Type.body(17))
+                .foregroundStyle(Palette.secondaryInk)
+                .appearRise(shown, delay: 0.06)
+            Button("Open Instagram") { model.beginLogin(.connect) }
                 .buttonStyle(.primary)
                 .accessibilityHint("Opens Instagram's sign-in page")
                 .accessibilityIdentifier("connectInstagram")
-                .padding(.horizontal, Spacing.screen)
-                .padding(.vertical, Spacing.s)
-                .background(Palette.background.opacity(0.96))
+                .appearRise(shown, delay: 0.12)
+            Text("Login stays on this phone. We never see your password.")
+                .font(Type.body(14))
+                .foregroundStyle(Palette.secondaryInk)
+                .appearRise(shown, delay: 0.16)
+
+            Spacer()
+
+            Text("If Instagram asks you to verify, finish it there. We never skip that.")
+                .font(Type.body(13))
+                .foregroundStyle(Palette.tertiaryInk)
+        }
+        .padding(.horizontal, Spacing.screen)
+        .padding(.vertical, Spacing.m)
+        .screenBackground()
+        .onAppear {
+            shown = true
         }
     }
 }

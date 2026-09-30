@@ -53,14 +53,16 @@ data class ConversationSummary(
     val lastSentAt: Long? = null,
     val sentByKind: Map<MessageKind, Int> = emptyMap(),
     val ownershipAmbiguous: Boolean = false,
+    val messagesLoaded: Boolean = true,
 ) {
-    val isCleanable: Boolean get() = !ownershipAmbiguous && sentByOwner > 0
+    val isCleanable: Boolean get() = messagesLoaded && !ownershipAmbiguous && sentByOwner > 0
 }
 
 data class LibraryOverview(val conversations: List<ConversationSummary>) {
     val sentByOwner: Int get() = conversations.filter { it.isCleanable }.sumOf { it.sentByOwner }
     val receivedFromOthers: Int get() = conversations.sumOf { it.receivedFromOthers }
     val cleanableConversations: List<ConversationSummary> get() = conversations.filter { it.isCleanable }
+    val unreadConversations: List<ConversationSummary> get() = conversations.filter { !it.messagesLoaded }
     val sentByKind: Map<MessageKind, Int>
         get() {
             val totals = mutableMapOf<MessageKind, Int>()
@@ -83,3 +85,32 @@ fun MessageKind.title(): String = when (this) {
 
 fun inflect(count: Int, singular: String, plural: String = singular + "s"): String =
     if (count == 1) "1 $singular" else "$count $plural"
+
+data class InboxReadProgress(
+    val chatsFound: Int = 0,
+    val chatsRead: Int = 0,
+    val chatsTotal: Int? = null,
+    val sendsFound: Int = 0,
+    val currentTitle: String? = null,
+) {
+    val isListing: Boolean get() = chatsTotal == null
+    val isComplete: Boolean get() = chatsTotal != null && chatsRead >= chatsTotal
+
+    val displayChat: String?
+        get() {
+            val title = currentTitle?.trim().orEmpty()
+            if (title.isEmpty() || title.equals("Instagram User", ignoreCase = true)) return null
+            return if (title.length > 28) title.take(27) + "…" else title
+        }
+
+    val fraction: Double
+        get() {
+            val total = chatsTotal
+            if (total == null) {
+                return (0.05 + chatsFound.coerceAtMost(80) * 0.0014).coerceAtMost(0.16)
+            }
+            if (total <= 0) return 1.0
+            val working = if (chatsRead < total) 0.35 else 0.0
+            return (0.18 + 0.82 * ((chatsRead + working) / total)).coerceIn(0.18, 1.0)
+        }
+}

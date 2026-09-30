@@ -135,6 +135,16 @@ class LocalLibraryStore(private val root: File) : MessageSource {
             )
         }
 
+        fun addCopy(summary: ConversationSummary, source: File) {
+            val fileName = "c${manifest.conversations.size}.jsonl"
+            val dest = File(store.indexDirectory(staging), fileName)
+            if (source.exists()) source.copyTo(dest, overwrite = true) else dest.writeText("")
+            manifest = manifest.copy(
+                conversations = manifest.conversations + summary,
+                files = manifest.files + (summary.id.rawValue to fileName),
+            )
+        }
+
         fun commit(): LibraryOverview {
             File(staging, "library.json").writeText(json.encodeToString(manifest))
             store.replace(staging, manifest)
@@ -148,6 +158,52 @@ class LocalLibraryStore(private val root: File) : MessageSource {
         staging.mkdirs()
         indexDirectory(staging).mkdirs()
         return ImportWriter(this, staging, account)
+    }
+
+    fun mergeListing(account: AccountIdentity, stubs: List<ConversationSummary>): LibraryOverview {
+        val existing = runCatching { loadManifest() }.getOrNull()
+        val writer = beginImport(account)
+        for (stub in stubs) {
+            val prior = existing?.conversations?.firstOrNull { it.id == stub.id }
+            val fileName = existing?.files?.get(stub.id.rawValue)
+            val source = fileName?.let { File(indexDirectory(root), it) }
+            if (prior?.messagesLoaded == true && source?.exists() == true) {
+                writer.addCopy(prior.copy(title = stub.title), source)
+            } else {
+                writer.add(stub, emptyList())
+            }
+        }
+        return writer.commit()
+    }
+
+    fun upsertLoaded(summary: ConversationSummary, messages: List<DiscoveredMessage>): LibraryOverview = lock.withLock {
+        val current = cached ?: run {
+            if (!manifestFile.exists()) throw JobStoreError.noActiveJob
+            json.decodeFromString<Manifest>(manifestFile.readText())
+        }
+        val fileName = current.files[summary.id.rawValue] ?: "c${current.conversations.size}.jsonl"
+        val file = File(indexDirectory(root), fileName)
+        file.parentFile.mkdirs()
+        val builder = StringBuilder()
+        for (message in messages) {
+            builder.append(
+                json.encodeToString(IndexLine(message.ref.messageID, message.sentAtMillis / 1000.0, message.kind)),
+            ).append('\n')
+        }
+        file.writeText(builder.toString())
+        val loaded = summary.copy(messagesLoaded = true)
+        val conversations = if (current.conversations.any { it.id == loaded.id }) {
+            current.conversations.map { if (it.id == loaded.id) loaded else it }
+        } else {
+            current.conversations + loaded
+        }
+        val updated = current.copy(
+            conversations = conversations,
+            files = current.files + (loaded.id.rawValue to fileName),
+        )
+        manifestFile.writeText(json.encodeToString(updated))
+        cached = updated
+        LibraryOverview(updated.conversations)
     }
 
     fun wipe() {

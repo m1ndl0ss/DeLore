@@ -1,19 +1,19 @@
-# DeLore
+# Retract
 
-**Delete the lore.** A Gen-Z app for cleaning up the Instagram DMs *you* sent, in bulk, slowly and safely. iOS and Android clients live in this repo and follow the same product: Instagram-hosted login, on-device session, local unsend.
+**Take it back.** A Gen-Z app for retracting the Instagram DMs *you* sent, in bulk, slowly and safely. iOS and Android clients live in this repo and follow the same product: Instagram-hosted login, on-device session, local unsend.
 
-> Instagram has no official consumer DM-unsend API. DeLore still performs the core action the same
+> Instagram has no official consumer DM-unsend API. Retract still performs the core action the same
 > way a live App Store competitor (UnSendAll) describes for iOS: the user signs in through
 > Instagram's own website, the session stays on the phone, and Unsend runs locally against that
 > session. We do **not** collect passwords, spoof a mobile app identity, solve checkpoints, or
-> send DMs to a DeLore server.
+> send DMs to a Retract server.
 >
 > - **Every build:** Instagram-hosted login (WKWebView) → Keychain session → inbox discovery → the
 >   existing cleanup engine → website Unsend, with conservative pacing. Test on a real account.
 
 ## What the app does
 
-1. **Welcome:** "Delete the lore." / "Get started".
+1. **Welcome:** "Take it back." / Connect Instagram.
 2. **Connect Instagram:** the user signs in on Instagram's own page. We never see the password.
 3. **Home:** "Your DMs · 8,923" (the messages *you* sent), plus **Clean up**, **Choose chats** and
    **See what's included**.
@@ -21,7 +21,7 @@
    photos & videos, links, voice). Messages from others are shown as "Never touched".
 5. **Review:** "You're about to unsend X messages", with the seen/screenshotted and can't-be-undone
    warnings. Nothing destructive happens before **Start cleaning**.
-6. **Running:** progress, an ETA based on observed speed, "Keep DeLore open while we clean.", and
+6. **Running:** progress, an ETA based on observed speed, "Keep Retract open while we clean.", and
    pause, resume and cancel.
 7. **Done:** "Fresh start ✨ / X messages cleaned".
 
@@ -82,7 +82,7 @@ All of it lives in `Config/Base.xcconfig`. No secrets are needed or committed.
 ## How authentication works
 
 The user signs in on Instagram's own login page, shown in a `WKWebView` with a non-persistent
-data store. DeLore never intercepts the password. After Instagram sets its website session
+data store. Retract never intercepts the password. After Instagram sets its website session
 (`sessionid`, `ds_user_id`, `csrftoken` on instagram.com), those values are stored in the Keychain
 via `SessionVault` (`AfterFirstUnlockThisDeviceOnly`). Facebook SSO cookies are not kept.
 
@@ -195,7 +195,7 @@ logging scan.
 
 ## Known platform limitations
 
-- Instagram can still present checkpoints, CAPTCHAs, or sign the user out. DeLore stops and asks
+- Instagram can still present checkpoints, CAPTCHAs, or sign the user out. Retract stops and asks
   the user to finish that on Instagram; it does not bypass those controls.
 - The same category of app exists on the App Store today, but that is **not** a guarantee this
   binary will pass App Review. Login is implemented transparently (Instagram's page in-app).
@@ -212,7 +212,7 @@ logging scan.
    localizations and review screenshots.
 3. Host the privacy policy and support pages, and replace the `example.com` URLs. The policy must
    disclose on-device Instagram session storage (as UnSendAll's policy does).
-4. Fill in the App Privacy "nutrition label": *Data Not Collected* by DeLore. Instagram receives
+4. Fill in the App Privacy "nutrition label": *Data Not Collected* by Retract. Instagram receives
    the same traffic the user would generate by unsending in a browser.
 5. Archive with the Release scheme, upload, and test purchases in Sandbox/TestFlight (Staging).
 6. Optional: localize `Localizable.xcstrings` (it's populated from source at build time).
@@ -222,8 +222,8 @@ logging scan.
 1. Open `Android/` in Android Studio, set a real `applicationId` if you don't want `app.delore.android`.
 2. Create the same three products in Play Console (`app.delore.cleanup.single`, `app.delore.pro.monthly`, `app.delore.pro.yearly`) at $9.99 / $19.99 / $59.99.
 3. Host privacy/support pages (same as iOS) and replace the `example.com` URLs in `Android/app/build.gradle.kts`.
-4. Data safety form: data not collected by DeLore. Instagram receives the same website traffic as unsending in Chrome.
+4. Data safety form: data not collected by Retract. Instagram receives the same website traffic as unsending in Chrome.
 5. Upload an AAB from `assembleRelease`, complete content rating, and test license testers.
 
-Branding: DeLore isn't affiliated with Instagram or Meta. "Instagram" is only used descriptively,
+Branding: Retract isn't affiliated with Instagram or Meta. "Instagram" is only used descriptively,
 and the icon is an original mark.

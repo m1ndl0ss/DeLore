@@ -85,6 +85,7 @@ private struct LoginWebView: UIViewRepresentable {
         var isWorking: Binding<Bool>
         weak var webView: WKWebView?
         private var finished = false
+        private var requestedInbox = false
         private let lock = NSLock()
 
         init(onComplete: @escaping (InstagramWebSession) -> Void, isWorking: Binding<Bool>) {
@@ -97,6 +98,11 @@ private struct LoginWebView: UIViewRepresentable {
         }
 
         func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+            guard let url = webView?.url, InstagramLoginPolicy.isPostLogin(url: url) else { return }
+            if !InstagramLoginPolicy.isDirectSurface(url: url) {
+                requestInboxIfNeeded()
+                return
+            }
             capture(from: cookieStore)
         }
 
@@ -106,7 +112,14 @@ private struct LoginWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isWorking.wrappedValue = false
-            capture(from: webView.configuration.websiteDataStore.httpCookieStore)
+            guard let url = webView.url, InstagramLoginPolicy.isPostLogin(url: url) else { return }
+            if !InstagramLoginPolicy.isDirectSurface(url: url), requestInboxIfNeeded() {
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                guard let self, let store = self.webView?.configuration.websiteDataStore.httpCookieStore else { return }
+                self.capture(from: store)
+            }
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -127,6 +140,14 @@ private struct LoginWebView: UIViewRepresentable {
                 return
             }
             decisionHandler(.allow)
+        }
+
+        @discardableResult
+        private func requestInboxIfNeeded() -> Bool {
+            if requestedInbox { return false }
+            requestedInbox = true
+            webView?.load(URLRequest(url: InstagramWebConstants.inboxReferer, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))
+            return true
         }
 
         func webView(
