@@ -61,8 +61,7 @@ struct RootView: View {
         }
         .tint(Palette.volt)
         .onChange(of: scenePhase) { _, phase in
-            guard let session = model.session else { return }
-            Task { await session.scenePhaseChanged(phase) }
+            Task { await model.handleScenePhase(phase) }
         }
         .onChange(of: model.env.connectivity.isOnline) { _, online in
             guard let session = model.session else { return }

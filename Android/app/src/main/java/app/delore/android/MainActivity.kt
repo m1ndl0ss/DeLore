@@ -1,5 +1,8 @@
 package app.delore.android
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,9 +21,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         window.setBackgroundDrawableResource(R.color.background_dark)
-        val env = (application as DeLoreApplication).environment
-        model = ViewModelProvider(this, AppViewModel.Factory(env))[AppViewModel::class.java]
+        val app = application as DeLoreApplication
+        model = ViewModelProvider(this, AppViewModel.Factory(app.environment, app.work))[AppViewModel::class.java]
         setContent { DeLoreRoot(model) }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 model.onAppForeground()

@@ -53,7 +53,7 @@ class InstagramWebViewGateway {
     @SuppressLint("SetJavaScriptEnabled")
     fun attach(context: Context): WebView {
         webView?.let { return it }
-        val view = WebView(context).apply {
+        val view = WebView(context.applicationContext).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.userAgentString = InstagramWebConstants.CHROME_USER_AGENT
@@ -87,8 +87,23 @@ class InstagramWebViewGateway {
                 }
             }
         }
+        view.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+            android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.EXACTLY),
+        )
+        view.layout(0, 0, 1080, 1920)
         webView = view
+        wake()
         return view
+    }
+
+    fun wake() {
+        val run = {
+            webView?.onResume()
+            webView?.resumeTimers()
+            Unit
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) run() else main.post(run)
     }
 
     fun destroy() {

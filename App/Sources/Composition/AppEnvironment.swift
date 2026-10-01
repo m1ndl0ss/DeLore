@@ -22,6 +22,8 @@ final class AppEnvironment {
     private static let inboxHoldOffKey = "inbox.holdOffUntil"
     private static let listFirstKey = "inbox.listFirst"
     private static let listCursorKey = "inbox.listCursor"
+    private static let inboxWorkKey = "inbox.work"
+    private static let retractQueueKey = "inbox.retractQueue"
 
     init(configuration: AppConfiguration = .load()) {
         self.configuration = configuration
@@ -179,6 +181,35 @@ final class AppEnvironment {
         try? jobStore.wipe()
         UserDefaults.standard.set(true, forKey: Self.listFirstKey)
         UserDefaults.standard.removeObject(forKey: Self.listCursorKey)
+        UserDefaults.standard.removeObject(forKey: Self.inboxWorkKey)
+    }
+
+    func saveInboxWork(_ snapshot: InboxWorkSnapshot?) {
+        if let snapshot, let data = try? JSONEncoder().encode(snapshot) {
+            UserDefaults.standard.set(data, forKey: Self.inboxWorkKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.inboxWorkKey)
+        }
+    }
+
+    func loadInboxWork() -> InboxWorkSnapshot? {
+        guard let data = UserDefaults.standard.data(forKey: Self.inboxWorkKey) else { return nil }
+        return try? JSONDecoder().decode(InboxWorkSnapshot.self, from: data)
+    }
+
+    func saveRetractQueue(_ ids: Set<ConversationID>) {
+        let raw = ids.map(\.rawValue)
+        if raw.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.retractQueueKey)
+        } else if let data = try? JSONEncoder().encode(raw) {
+            UserDefaults.standard.set(data, forKey: Self.retractQueueKey)
+        }
+    }
+
+    func loadRetractQueue() -> Set<ConversationID> {
+        guard let data = UserDefaults.standard.data(forKey: Self.retractQueueKey),
+              let raw = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Set(raw.map(ConversationID.init))
     }
 
     /// Disconnects and removes everything sensitive. Purchases (unused passes, free usage)
@@ -197,6 +228,8 @@ final class AppEnvironment {
         UserDefaults.standard.removeObject(forKey: Self.inboxHoldOffKey)
         UserDefaults.standard.removeObject(forKey: Self.listFirstKey)
         UserDefaults.standard.removeObject(forKey: Self.listCursorKey)
+        UserDefaults.standard.removeObject(forKey: Self.inboxWorkKey)
+        UserDefaults.standard.removeObject(forKey: Self.retractQueueKey)
         for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix(CleanupBilling.keyPrefix) {
             UserDefaults.standard.removeObject(forKey: key)
         }

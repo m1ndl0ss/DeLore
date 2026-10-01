@@ -169,8 +169,8 @@ public actor CleanupEngine {
         pause(reason: .user)
     }
 
-    /// Called when the app leaves the foreground. iOS may suspend us at any moment, so we
-    /// stop scheduling new requests instead of pretending to keep working in the background.
+    /// Called when the process is about to be frozen or a background task expires.
+    /// In-flight work is persisted; callers resume automatically when they can run again.
     public func suspendForBackground() {
         pause(reason: .appInBackground)
     }

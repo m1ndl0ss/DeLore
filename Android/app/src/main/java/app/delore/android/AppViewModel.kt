@@ -14,23 +14,21 @@ import app.delore.android.domain.IntegrationError
 import app.delore.android.domain.InboxReadProgress
 import app.delore.android.domain.JobStatus
 import app.delore.android.domain.LibraryOverview
-import app.delore.android.domain.PauseReason
 import app.delore.android.domain.MessageKind
 import app.delore.android.engine.CleanupEngine
 import app.delore.android.engine.CleanupEngineError
+import app.delore.android.engine.InstagramWorkController
 import app.delore.android.engine.QueueBuilder
 import app.delore.android.instagram.InstagramWebSession
 import app.delore.android.persist.CleanupHistoryEntry
 import app.delore.android.secrets.BillingLedger
 import app.delore.android.secrets.CleanupBilling as SecretBilling
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Calendar
-import java.util.UUID
 
 enum class Route { LAUNCHING, HOME }
 
@@ -82,7 +80,10 @@ data class UiState(
     val sessionBusy: Boolean = false,
 )
 
-class AppViewModel(private val env: AppEnvironment) : ViewModel() {
+class AppViewModel(
+    private val env: AppEnvironment,
+    private val work: InstagramWorkController,
+) : ViewModel() {
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
     val environment: AppEnvironment get() = env
@@ -90,18 +91,47 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
     val ratePolicy get() = env.ratePolicy
     val hasLiveSession get() = env.hasLiveSession
 
-    private var engine: CleanupEngine? = null
-    private var observeJob: Job? = null
-    private var inboxJob: Job? = null
-    private var finishHandled = false
-    private var currentJobId: String? = null
+    private val engine get() = work.engine
     private var didPromptDeletionLogin = false
     private var termsNoticeDismissedThisLaunch = false
-    private var pendingRetractIds: Set<ConversationID> = emptySet()
     private var inboxLoadIds: Collection<ConversationID>? = null
+    private var lastInboxCompletedTick = work.inbox.value.completedTick
 
     val hasUnfinishedSession: Boolean
         get() = _state.value.progress?.status?.isFinished == false
+
+    init {
+        viewModelScope.launch {
+            work.inbox.collect { ui ->
+                _state.update {
+                    it.copy(
+                        syncing = ui.active,
+                        inboxRead = ui.progress,
+                        syncErrorTitle = ui.errorTitle,
+                        syncErrorMessage = ui.errorMessage,
+                        syncPauseKind = ui.pauseKind,
+                        syncRetryAfterSeconds = ui.retryAfterSeconds,
+                    )
+                }
+                if (ui.completedTick > lastInboxCompletedTick) {
+                    lastInboxCompletedTick = ui.completedTick
+                    onInboxFinished()
+                }
+            }
+        }
+        viewModelScope.launch {
+            work.cleanup.collect { progress ->
+                _state.update { current ->
+                    val present = when {
+                        progress == null -> current.sessionPresented
+                        !progress.status.isFinished -> true
+                        else -> current.sessionPresented
+                    }
+                    current.copy(progress = progress, sessionPresented = present)
+                }
+            }
+        }
+    }
 
     fun bootstrap() = viewModelScope.launch {
         val splash = launch { delay(700) }
@@ -109,10 +139,13 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         env.dropStaleFullInbox()
         if (env.hasLibrary) {
             reloadOverview()
-            restoreSession()
         } else {
             val history = runCatching { env.history.load() }.getOrDefault(emptyList()).asReversed()
             _state.update { it.copy(history = history) }
+        }
+        work.resumePersistedWork().join()
+        if (env.loadRetractQueue().isNotEmpty() && !work.inbox.value.active) {
+            onInboxFinished()
         }
         splash.join()
         env.inboxHoldOffUntilMillis = 0L
@@ -178,7 +211,6 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         if (!force && env.inboxHoldOffUntilMillis > System.currentTimeMillis()) {
             return
         }
-        env.inboxHoldOffUntilMillis = 0L
         inboxLoadIds = loadIds
         val conversations = _state.value.overview?.conversations.orEmpty()
         val seedTitles = conversations.map { it.title }
@@ -187,89 +219,18 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         val titles = focused.associateWith { raw ->
             conversations.firstOrNull { it.id.rawValue == raw }?.title ?: "Chat"
         }
-        _state.update {
-            it.copy(
-                sheet = null,
-                syncing = true,
-                inboxRead = if (loadIds != null) {
-                    val names = focused.map { raw -> titles[raw] ?: "Chat" }
-                    InboxReadProgress(
-                        chatsFound = focused.size,
-                        chatsRead = 0,
-                        chatsTotal = focused.size,
-                        sendsFound = 0,
-                        currentTitle = names.firstOrNull(),
-                        foundTitles = names,
-                    )
-                } else {
-                    InboxReadProgress(
-                        chatsFound = seedTitles.size,
-                        foundTitles = seedTitles,
-                    )
-                },
-                syncErrorTitle = null,
-                syncErrorMessage = null,
-                syncPauseKind = null,
-                syncRetryAfterSeconds = null,
-            )
-        }
-        inboxJob?.cancel()
-        inboxJob = viewModelScope.launch {
-            try {
-                if (loadIds == null) {
-                    env.listInbox { progress -> _state.update { it.copy(inboxRead = progress) } }
-                } else {
-                    env.loadInbox(loadIds, titles) { progress -> _state.update { it.copy(inboxRead = progress) } }
-                }
-                env.hasCompletedOnboarding = true
-                reloadOverview()
-                _state.update { it.copy(syncing = false, route = Route.HOME) }
-                val pending = pendingRetractIds
-                pendingRetractIds = emptySet()
-                if (pending.isNotEmpty()) {
-                    val pendingRaw = pending.map { it.rawValue }.toSet()
-                    val cleanable = _state.value.overview?.cleanableConversations
-                        .orEmpty()
-                        .filter { it.id.rawValue in pendingRaw }
-                        .map { it.id }
-                        .toSet()
-                    if (cleanable.isNotEmpty()) openSetup(CleanupScope.Conversations(cleanable))
-                }
-                maybeShowTermsNotice()
-            } catch (_: kotlinx.coroutines.CancellationException) {
-                reloadOverview()
-                _state.update { it.copy(syncing = false) }
-            } catch (error: Exception) {
-                android.util.Log.e("Retract", "Inbox sync failed: ${error.javaClass.simpleName}: ${error.message}")
-                reloadOverview()
-                val saved = _state.value.overview?.conversations?.map { it.title }.orEmpty()
-                val pause = SyncPause.from(error)
-                _state.update {
-                    val keptTitles = it.inboxRead.foundTitles.ifEmpty { saved }
-                    it.copy(
-                        syncing = false,
-                        syncErrorTitle = pause.title,
-                        syncErrorMessage = pause.message,
-                        syncPauseKind = pause.kind,
-                        syncRetryAfterSeconds = pause.retryAfterSeconds,
-                        inboxRead = it.inboxRead.copy(
-                            chatsFound = maxOf(it.inboxRead.chatsFound, keptTitles.size),
-                            foundTitles = keptTitles,
-                        ),
-                    )
-                }
-            }
-        }
+        _state.update { it.copy(sheet = null) }
+        work.startInbox(loadIds, titles, seedTitles, env.loadRetractQueue())
     }
 
     fun retractWith(ids: Set<ConversationID>) {
         if (ids.isEmpty()) return
-        pendingRetractIds = ids
+        env.saveRetractQueue(ids)
         val unread = _state.value.overview?.conversations.orEmpty().filter { chat ->
             chat.id.rawValue in ids.map { it.rawValue }.toSet() && !chat.messagesLoaded
         }
         if (unread.isEmpty()) {
-            pendingRetractIds = emptySet()
+            env.saveRetractQueue(emptySet())
             openSetup(CleanupScope.Conversations(ids))
             return
         }
@@ -277,18 +238,8 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
     }
 
     fun dismissSync() {
-        inboxJob?.cancel()
-        pendingRetractIds = emptySet()
+        work.cancelInbox()
         viewModelScope.launch { reloadOverview() }
-        _state.update {
-            it.copy(
-                syncing = false,
-                syncErrorTitle = null,
-                syncErrorMessage = null,
-                syncPauseKind = null,
-                syncRetryAfterSeconds = null,
-            )
-        }
         maybeShowTermsNotice()
     }
 
@@ -315,7 +266,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
 
     fun refreshChats() {
         if (env.hasLiveSession) {
-            pendingRetractIds = emptySet()
+            env.saveRetractQueue(emptySet())
             env.inboxListCursor = null
             beginInboxSync(force = true, loadIds = null)
         } else {
@@ -326,7 +277,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
     fun showConnect() {
         _state.update { it.copy(tab = MainTab.UNSENDING) }
         if (env.hasLiveSession) {
-            pendingRetractIds = emptySet()
+            env.saveRetractQueue(emptySet())
             beginInboxSync(force = true, loadIds = null)
         } else {
             beginLogin(LoginPurpose.CONNECT)
@@ -391,10 +342,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         }
         BillingLedger.record(env.prefs, billing, prepared.job.id)
         val loaded = CleanupEngine.loadActive(env.engineDependencies()) ?: return
-        engine = loaded
-        currentJobId = prepared.job.id
-        finishHandled = false
-        observe(loaded)
+        work.holdEngine(loaded)
         _state.update { it.copy(sheet = null, sessionPresented = true, progress = loaded.progress()) }
         loaded.authorizeAndStartSafe()
     }
@@ -402,7 +350,7 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
     fun closeSession(thenChooseChats: Boolean = false) = viewModelScope.launch {
         val progress = _state.value.progress ?: return@launch
         if (!progress.status.isFinished) return@launch
-        engine = null
+        work.releaseEngine()
         env.jobStore.discardActiveJob()
         reloadOverview()
         _state.update {
@@ -416,8 +364,9 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
     }
 
     fun eraseEverything() = viewModelScope.launch {
+        work.cancelInbox()
         engine?.cancel()
-        engine = null
+        work.releaseEngine()
         env.eraseAllData()
         didPromptDeletionLogin = false
         _state.update { UiState(route = Route.HOME, tab = MainTab.SETTINGS) }
@@ -440,55 +389,30 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         }
     }
 
-    fun onAppBackground() = viewModelScope.launch {
-        if (_state.value.progress?.status == JobStatus.Running) {
-            engine?.suspendForBackground()
-            engine?.waitUntilStopped()
-        }
+    fun onAppBackground() {
+        if (work.isInboxActive || work.isCleanupBusy) work.attachBrowser()
     }
 
     fun onAppForeground() = viewModelScope.launch {
+        work.attachBrowser()
         engine?.resumeAfterBackground()
         engine?.let { _state.update { s -> s.copy(progress = it.progress()) } }
     }
 
-    private fun restoreSession() {
-        val loaded = runCatching { CleanupEngine.loadActive(env.engineDependencies()) }.getOrNull() ?: return
-        viewModelScope.launch {
-            val progress = loaded.progress()
-            val job = loaded.currentJob()
-            if (progress.status.isFinished || job.authorizedAt == null) {
-                env.jobStore.discardActiveJob()
-                return@launch
-            }
-            engine = loaded
-            currentJobId = progress.jobID
-            observe(loaded)
-            if (loaded.currentJob().status.pauseReason == PauseReason.INTERRUPTED) {
-                runCatching { loaded.start() }
-            }
-            _state.update { it.copy(progress = loaded.progress(), sessionPresented = true) }
+    private suspend fun onInboxFinished() {
+        reloadOverview()
+        _state.update { it.copy(syncing = false, route = Route.HOME) }
+        val pending = work.consumeRetractQueue()
+        if (pending.isNotEmpty()) {
+            val pendingRaw = pending.map { it.rawValue }.toSet()
+            val cleanable = _state.value.overview?.cleanableConversations
+                .orEmpty()
+                .filter { it.id.rawValue in pendingRaw }
+                .map { it.id }
+                .toSet()
+            if (cleanable.isNotEmpty()) openSetup(CleanupScope.Conversations(cleanable))
         }
-    }
-
-    private fun observe(loaded: CleanupEngine) {
-        observeJob?.cancel()
-        observeJob = viewModelScope.launch {
-            loaded.updates.collect { update ->
-                _state.update { it.copy(progress = update) }
-                if (update.status.isFinished) handleFinish(update)
-            }
-        }
-    }
-
-    private fun handleFinish(update: CleanupProgress) {
-        if (finishHandled) return
-        finishHandled = true
-        val id = currentJobId ?: update.jobID
-        if (BillingLedger.billing(env.prefs, id) == SecretBilling.FREE) {
-            env.entitlements.recordFreeUsage(update.completed)
-        }
-        BillingLedger.clear(env.prefs, id)
+        maybeShowTermsNotice()
     }
 
     private suspend fun CleanupEngine.authorizeAndStartSafe() {
@@ -498,9 +422,12 @@ class AppViewModel(private val env: AppEnvironment) : ViewModel() {
         }
     }
 
-    class Factory(private val env: AppEnvironment) : ViewModelProvider.Factory {
+    class Factory(
+        private val env: AppEnvironment,
+        private val work: InstagramWorkController,
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T = AppViewModel(env) as T
+        override fun <T : ViewModel> create(modelClass: Class<T>): T = AppViewModel(env, work) as T
     }
 }
 
@@ -658,9 +585,9 @@ object StatusCopyFactory {
         app.delore.android.domain.PauseReason.USER ->
             StatusCopy("Paused", "Tap Resume. We won't unsend the same message twice.", false, StatusCopy.Action.RESUME)
         app.delore.android.domain.PauseReason.APP_IN_BACKGROUND ->
-            StatusCopy("Paused while you were away", "Cleaning only runs while the app is open. Tap Resume — we won't unsend twice.", false, StatusCopy.Action.RESUME)
+            StatusCopy("Paused while you were away", "We'll keep going in the background. Tap Resume if we're waiting — we won't unsend twice.", false, StatusCopy.Action.RESUME)
         app.delore.android.domain.PauseReason.INTERRUPTED ->
-            StatusCopy("Pick up where you left off", "The app closed mid-clean. Your progress is saved. Tap Resume — we won't unsend the same message twice.", false, StatusCopy.Action.RESUME)
+            StatusCopy("Pick up where you left off", "We'll continue automatically. Tap Resume if we're waiting — we won't unsend the same message twice.", false, StatusCopy.Action.RESUME)
         app.delore.android.domain.PauseReason.RATE_LIMITED ->
             StatusCopy("Instagram asked us to wait", "We've paused because Instagram asked us to wait. Try again later.", true, StatusCopy.Action.TRY_AGAIN)
         app.delore.android.domain.PauseReason.SESSION_EXPIRED ->

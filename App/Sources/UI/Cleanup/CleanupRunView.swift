@@ -102,7 +102,7 @@ struct CleanupRunView: View {
             Spacer(minLength: Spacing.m)
 
             VStack(spacing: Spacing.s) {
-                Label("Keep Retract open while we clean.", systemImage: "iphone")
+                Label("You can leave. Retract keeps going.", systemImage: "iphone")
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Palette.secondaryInk)
                     .frame(maxWidth: .infinity)

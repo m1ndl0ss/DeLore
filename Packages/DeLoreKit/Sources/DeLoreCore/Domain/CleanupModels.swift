@@ -116,9 +116,9 @@ public struct CleanupItem: Hashable, Codable, Sendable {
 public enum PauseReason: String, Codable, Sendable, Hashable {
     /// The user tapped pause.
     case user
-    /// The app went to the background; resumes automatically when it's back.
+    /// The app went to the background and remaining runtime expired.
     case appInBackground
-    /// The app was terminated mid-run; resumes when the user taps resume.
+    /// The app was terminated mid-run; resumes automatically when work can continue.
     case interrupted
     case rateLimited
     case sessionExpired

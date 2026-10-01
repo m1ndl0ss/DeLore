@@ -80,6 +80,7 @@ final class AppModel {
 
     init(env: AppEnvironment) {
         self.env = env
+        BackgroundWorkCenter.shared.bind(self)
     }
 
     // MARK: Launch
@@ -91,8 +92,9 @@ final class AppModel {
 
         if env.hasLibrary {
             await reloadOverview()
-            await restoreSession()
         }
+        await restoreSession()
+        resumePersistedInbox()
         _ = await minimumSplash
         env.inboxHoldOffUntil = nil
         withAnimation { route = .home }
@@ -114,11 +116,62 @@ final class AppModel {
             }
             session = CleanupSessionModel(engine: engine, initial: progress, entitlements: entitlements)
             isSessionPresented = true
+            switch job.status {
+            case .ready, .paused(.interrupted), .paused(.appInBackground):
+                await session?.resume()
+            default:
+                break
+            }
         } catch {
             // Unreadable or half-built job: it was never confirmed or can't be trusted, so drop it.
             env.logger.warning("discarding unreadable job: \(error.safeDescription)")
             try? env.jobStore.discardActiveJob()
         }
+    }
+
+    func handleScenePhase(_ phase: ScenePhase) async {
+        switch phase {
+        case .background:
+            BackgroundWorkCenter.shared.didEnterBackground(working: hasBackgroundWork)
+        case .active:
+            BackgroundWorkCenter.shared.didEnterForeground()
+            await session?.scenePhaseChanged(.active)
+        default:
+            break
+        }
+    }
+
+    func continueBackgroundWork() async {
+        if session == nil {
+            await restoreSession()
+        } else {
+            await session?.scenePhaseChanged(.active)
+        }
+        if inboxSyncModel == nil {
+            resumePersistedInbox()
+        }
+        while hasBackgroundWork {
+            try? await Task.sleep(for: .seconds(1))
+        }
+    }
+
+    private var hasBackgroundWork: Bool {
+        if session?.isRunning == true { return true }
+        if case .running = inboxSyncModel?.phase { return true }
+        return false
+    }
+
+    private func resumePersistedInbox() {
+        guard inboxSyncModel == nil, env.hasLiveSession, !env.isInboxOnHold else { return }
+        if let snapshot = env.loadInboxWork() {
+            pendingRetractIDs.formUnion(snapshot.retract)
+            beginInboxSync(force: true, job: snapshot.job)
+            return
+        }
+        let queued = env.loadRetractQueue()
+        guard !queued.isEmpty else { return }
+        pendingRetractIDs.formUnion(queued)
+        Task { await finishInboxSync() }
     }
 
     // MARK: Onboarding & import
@@ -196,6 +249,7 @@ final class AppModel {
         env.inboxHoldOffUntil = nil
         lastInboxJob = job
         sheet = nil
+        env.saveRetractQueue(pendingRetractIDs)
         let previous = inboxSyncModel?.latest.foundTitles ?? []
         inboxSyncModel?.cancel()
         let fromOverview = overview?.conversations.map(\.title) ?? []
@@ -228,10 +282,12 @@ final class AppModel {
     func retractWith(_ ids: Set<ConversationID>) {
         guard !ids.isEmpty else { return }
         pendingRetractIDs = ids
+        env.saveRetractQueue(ids)
         let wanted = Set(ids.map(\.rawValue))
         let unread = (overview?.conversations ?? []).filter { wanted.contains($0.id.rawValue) && !$0.messagesLoaded }
         if unread.isEmpty {
             pendingRetractIDs = []
+            env.saveRetractQueue([])
             openSetup(.conversations(ids))
             return
         }
@@ -240,6 +296,8 @@ final class AppModel {
 
     func dismissSync() {
         pendingRetractIDs = []
+        env.saveRetractQueue([])
+        env.saveInboxWork(nil)
         inboxSyncModel?.cancel()
         inboxSyncModel = nil
         Task { await reloadOverview() }
@@ -275,6 +333,7 @@ final class AppModel {
         if env.hasLiveSession {
             lastInboxJob = .list
             pendingRetractIDs = []
+            env.saveRetractQueue([])
             env.inboxListCursor = nil
             beginInboxSync(force: true, job: .list)
         } else {
@@ -313,9 +372,11 @@ final class AppModel {
         }
         await reloadOverview()
         inboxSyncModel = nil
+        env.saveInboxWork(nil)
         withAnimation { route = .home }
-        let ids = pendingRetractIDs
+        let ids = pendingRetractIDs.union(env.loadRetractQueue())
         pendingRetractIDs = []
+        env.saveRetractQueue([])
         if !ids.isEmpty {
             let wanted = Set(ids.map(\.rawValue))
             let cleanable = Set(
@@ -333,6 +394,7 @@ final class AppModel {
         if env.hasLiveSession {
             lastInboxJob = .list
             pendingRetractIDs = []
+            env.saveRetractQueue([])
             beginInboxSync(force: true, job: .list)
         } else {
             beginLogin(.connect)

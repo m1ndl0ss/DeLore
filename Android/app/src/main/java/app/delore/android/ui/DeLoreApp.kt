@@ -83,7 +83,6 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -131,12 +130,11 @@ import app.delore.android.domain.CleanupAllowanceDecision
 import app.delore.android.domain.CleanupScope
 import app.delore.android.domain.ConversationID
 import app.delore.android.domain.ConversationSummary
-import app.delore.android.domain.JobStatus
 import app.delore.android.domain.LibraryOverview
 import app.delore.android.domain.MessageKind
+import app.delore.android.domain.JobStatus
 import app.delore.android.domain.inflect
 import app.delore.android.domain.title
-import app.delore.android.engine.CleanupForegroundService
 import app.delore.android.instagram.InstagramWebViewGateway
 import app.delore.android.persist.CleanupHistoryEntry
 import kotlinx.coroutines.launch
@@ -147,12 +145,6 @@ import java.util.Locale
 fun DeLoreRoot(model: AppViewModel) {
     val state by model.state.collectAsState()
     LaunchedEffect(Unit) { model.bootstrap() }
-    val running = state.progress?.status == JobStatus.Running
-    val context = LocalContext.current
-    DisposableEffect(running) {
-        if (running) CleanupForegroundService.start(context) else CleanupForegroundService.stop(context)
-        onDispose { CleanupForegroundService.stop(context) }
-    }
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = Palette.accent,
@@ -210,7 +202,11 @@ private fun InstagramBrowserHost(gateway: InstagramWebViewGateway) {
         modifier = Modifier
             .size(360.dp, 640.dp)
             .offset(x = (-4800).dp),
-        factory = { context -> gateway.attach(context) },
+        factory = { context ->
+            val view = gateway.attach(context)
+            (view.parent as? android.view.ViewGroup)?.removeView(view)
+            view
+        },
     )
 }
 
@@ -568,7 +564,7 @@ private fun InboxSyncScreen(model: AppViewModel) {
                 Spacer(Modifier.weight(1f))
             }
             Spacer(Modifier.height(Spacing.s))
-            Text("This happens on your phone. Nothing is uploaded.", color = Palette.secondaryInk(), textAlign = TextAlign.Center, fontSize = 13.sp)
+            Text("This happens on your phone. You can leave — Retract keeps reading.", color = Palette.secondaryInk(), textAlign = TextAlign.Center, fontSize = 13.sp)
         }
     }
 }
@@ -635,7 +631,7 @@ private fun HomeScreen(model: AppViewModel) {
                     }
                     LoreProgressBar(progress.fraction)
                     Text(
-                        if (progress.status == JobStatus.Running) "${inflect(progress.remaining, "message")} to go. Keep Retract open."
+                        if (progress.status == JobStatus.Running) "${inflect(progress.remaining, "message")} to go. You can leave."
                         else "Resume. We won't unsend twice.",
                         color = Palette.secondaryInk(),
                         fontFamily = Type.sans,
@@ -1200,7 +1196,7 @@ private fun ConfirmBlock(model: AppViewModel, setup: CleanupSetupState, prepared
         PromiseRow(Icons.Filled.Visibility, "Unsent messages may already have been seen, copied, screenshotted, or retained elsewhere.")
         PromiseRow(Icons.Filled.Refresh, "This can't be undone.")
         PromiseRow(Icons.Filled.Person, "Only messages you sent.", "Never anyone else's.")
-        PromiseRow(Icons.Filled.Shield, "Slow on purpose.", "We pace unsends because Instagram rate-limits. Big cleanups can take hours. Keep the app open. That does not protect your account.")
+        PromiseRow(Icons.Filled.Shield, "Slow on purpose.", "We pace unsends because Instagram rate-limits. Big cleanups can take hours. You can leave — Retract keeps reading and unsending on this phone. That does not protect your account.")
         PromiseRow(Icons.Filled.Warning, "We are not responsible for anything.", LegalCopy.NOT_RESPONSIBLE)
     }
     Spacer(Modifier.height(Spacing.m))
@@ -1660,7 +1656,7 @@ private fun CleanupRunScreen(model: AppViewModel) {
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                Text("Keep Retract open while we clean.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                Text("You can leave. Retract keeps going.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 Text("If Instagram asks us to wait, we wait. That does not mean your account is safe.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 Text(LegalCopy.NOT_RESPONSIBLE, color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(Spacing.s))

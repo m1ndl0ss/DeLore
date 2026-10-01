@@ -38,9 +38,9 @@ struct CleanupStatusCopy: Equatable {
         case .user:
             return CleanupStatusCopy(headline: String(localized: "Paused"), message: String(localized: "Tap Resume. We won't unsend the same message twice."), tone: .normal, action: .resume)
         case .appInBackground:
-            return CleanupStatusCopy(headline: String(localized: "Paused while you were away"), message: String(localized: "Cleaning only runs while the app is open. Tap Resume — we won't unsend twice."), tone: .normal, action: .resume)
+            return CleanupStatusCopy(headline: String(localized: "Paused while you were away"), message: String(localized: "We'll keep going in the background. Tap Resume if we're waiting — we won't unsend twice."), tone: .normal, action: .resume)
         case .interrupted:
-            return CleanupStatusCopy(headline: String(localized: "Pick up where you left off"), message: String(localized: "The app closed mid-clean. Your progress is saved. Tap Resume — we won't unsend the same message twice."), tone: .normal, action: .resume)
+            return CleanupStatusCopy(headline: String(localized: "Pick up where you left off"), message: String(localized: "We'll continue automatically. Tap Resume if we're waiting — we won't unsend the same message twice."), tone: .normal, action: .resume)
         case .rateLimited:
             return CleanupStatusCopy(headline: String(localized: "Instagram asked us to wait"), message: String(localized: "We've paused because Instagram asked us to wait. Try again later."), tone: .caution, action: .tryAgain)
         case .sessionExpired:

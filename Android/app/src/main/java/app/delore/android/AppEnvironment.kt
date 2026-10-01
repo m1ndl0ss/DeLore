@@ -22,6 +22,7 @@ import app.delore.android.persist.FileCleanupHistoryStore
 import app.delore.android.persist.FileJobStore
 import app.delore.android.persist.InMemoryCleanupHistoryStore
 import app.delore.android.persist.InMemoryJobStore
+import app.delore.android.persist.InboxWorkStore
 import app.delore.android.persist.JobStore
 import app.delore.android.persist.LocalLibraryStore
 import app.delore.android.secrets.BillingLedger
@@ -49,6 +50,7 @@ class AppEnvironment(private val context: Context) {
     }.getOrElse { InMemoryCleanupHistoryStore() }
     val prefs: SharedPreferences = context.getSharedPreferences("retract", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    val inboxWork = InboxWorkStore(prefs, json)
     val webBrowser = InstagramWebViewGateway()
     private val http = InstagramHTTPClient(defaultOkHttp(), { loadSession() }, webBrowser)
     val unsender = InstagramWebUnsendService(http, ownerID = { loadSession()?.userID })
@@ -142,7 +144,36 @@ class AppEnvironment(private val context: Context) {
         library.wipe()
         history.wipe()
         BillingLedger.clearAll(prefs)
-        prefs.edit().remove("onboarding.completed").remove("terms.acceptedVersion").remove("inbox.holdOffUntil").remove("inbox.listFirst").remove("inbox.listCursor").apply()
+        prefs.edit()
+            .remove("onboarding.completed")
+            .remove("terms.acceptedVersion")
+            .remove("inbox.holdOffUntil")
+            .remove("inbox.listFirst")
+            .remove("inbox.listCursor")
+            .remove(InboxWorkStore.KEY)
+            .remove(RETRACT_QUEUE_KEY)
+            .apply()
         webBrowser.destroy()
+    }
+
+    fun saveRetractQueue(ids: Collection<ConversationID>) {
+        val raw = ids.map { it.rawValue }
+        if (raw.isEmpty()) {
+            prefs.edit().remove(RETRACT_QUEUE_KEY).apply()
+        } else {
+            prefs.edit().putString(RETRACT_QUEUE_KEY, json.encodeToString(raw)).apply()
+        }
+    }
+
+    fun loadRetractQueue(): Set<ConversationID> {
+        val raw = prefs.getString(RETRACT_QUEUE_KEY, null) ?: return emptySet()
+        return runCatching { json.decodeFromString<List<String>>(raw) }
+            .getOrDefault(emptyList())
+            .map(::ConversationID)
+            .toSet()
+    }
+
+    companion object {
+        private const val RETRACT_QUEUE_KEY = "inbox.retractQueue"
     }
 }

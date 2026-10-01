@@ -292,7 +292,7 @@ private struct ActiveCleanupCard: View {
                 }
                 LoreProgressBar(fraction: progress.fraction)
                 Text(progress.status == .running
-                     ? "^[\(progress.remaining) message](inflect: true) to go. Keep Retract open."
+                     ? "^[\(progress.remaining) message](inflect: true) to go. You can leave."
                      : "Resume. We won't unsend twice.")
                     .font(Type.body(14))
                     .foregroundStyle(Palette.secondaryInk)

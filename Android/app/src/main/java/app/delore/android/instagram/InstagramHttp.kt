@@ -544,6 +544,20 @@ class InstagramInboxSync(
             )
         }
         wanted.forEachIndexed { index, listed ->
+            if (listed.messagesLoaded) {
+                sends += listed.sentByOwner
+                onProgress?.invoke(
+                    InboxReadProgress(
+                        chatsFound = total,
+                        chatsRead = index + 1,
+                        chatsTotal = total,
+                        sendsFound = sends,
+                        currentTitle = listed.title,
+                        foundTitles = wanted.map { it.title },
+                    ),
+                )
+                return@forEachIndexed
+            }
             val conversation = loadConversation(listed.id.rawValue, listed.title, ownerID) { partial ->
                 onProgress?.invoke(
                     InboxReadProgress(

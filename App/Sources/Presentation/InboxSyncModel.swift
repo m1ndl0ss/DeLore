@@ -54,6 +54,7 @@ final class InboxSyncModel: Identifiable {
 
     func start() {
         env.analytics.track(.importStarted)
+        persistWork()
         work = Task { [weak self] in
             guard let self else { return }
             do {
@@ -69,6 +70,7 @@ final class InboxSyncModel: Identifiable {
                     }
                 }
                 self.env.analytics.track(.importCompleted(size: .init(count: overview.sentByOwner)))
+                self.env.saveInboxWork(nil)
                 self.phase = .finished
                 self.onFinished?(overview)
             } catch is CancellationError {
@@ -77,6 +79,9 @@ final class InboxSyncModel: Identifiable {
                 self.env.analytics.track(.importFailed(reason: .unreadable))
                 let pause = Self.pause(for: error)
                 self.retryAfter = pause.retryAfter
+                if pause.kind == .holdOff {
+                    self.env.inboxHoldOffUntil = Date().addingTimeInterval(pause.retryAfter ?? Self.waitSeconds)
+                }
                 self.phase = .failed(title: pause.title, message: pause.message, kind: pause.kind)
                 self.onFailed?()
             }
@@ -90,6 +95,25 @@ final class InboxSyncModel: Identifiable {
     private func update(_ value: InboxReadProgress) {
         latest = value
         if case .running = phase { phase = .running(value) }
+        persistWork()
+    }
+
+    private func persistWork() {
+        let retract = env.loadRetractQueue().map(\.rawValue)
+        switch job {
+        case .list:
+            env.saveInboxWork(InboxWorkSnapshot(kind: .list, ids: [], titles: titlesByID, retractIds: retract))
+        case let .load(ids):
+            let remaining = Array(ids.dropFirst(max(0, latest.chatsRead)))
+            env.saveInboxWork(
+                InboxWorkSnapshot(
+                    kind: .load,
+                    ids: remaining.map(\.rawValue),
+                    titles: titlesByID,
+                    retractIds: retract
+                )
+            )
+        }
     }
 
     private struct Pause {

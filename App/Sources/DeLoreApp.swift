@@ -2,7 +2,12 @@ import SwiftUI
 
 @main
 struct DeLoreApp: App {
-    @State private var model = AppModel(env: AppEnvironment())
+    @State private var model: AppModel
+
+    init() {
+        BackgroundWorkCenter.register()
+        _model = State(initialValue: AppModel(env: AppEnvironment()))
+    }
 
     var body: some Scene {
         WindowGroup {

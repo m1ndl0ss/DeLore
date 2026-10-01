@@ -17,7 +17,6 @@ final class CleanupSessionModel: Identifiable {
     private let entitlements: EntitlementManager
     /// Only touched on the main actor, plus `deinit` once no other reference exists.
     @ObservationIgnored private nonisolated(unsafe) var observation: Task<Void, Never>?
-    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var finishHandled = false
 
     init(engine: CleanupEngine, initial: CleanupProgress, entitlements: EntitlementManager) {
@@ -80,16 +79,6 @@ final class CleanupSessionModel: Identifiable {
 
     func scenePhaseChanged(_ phase: ScenePhase) async {
         switch phase {
-        case .background:
-            guard progress.status == .running else { return }
-            // Ask iOS for a moment so an in-flight request finishes and is recorded.
-            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "finish-current-message") { [weak self] in
-                MainActor.assumeIsolated { self?.endBackgroundTask() }
-            }
-            await engine.suspendForBackground()
-            await engine.waitUntilStopped()
-            await refresh()
-            endBackgroundTask()
         case .active:
             try? await engine.resumeAfterBackground()
             await refresh()
@@ -133,11 +122,5 @@ final class CleanupSessionModel: Identifiable {
         }
         CleanupBilling.clear(for: id)
         UIApplication.shared.isIdleTimerDisabled = false
-    }
-
-    private func endBackgroundTask() {
-        guard backgroundTask != .invalid else { return }
-        UIApplication.shared.endBackgroundTask(backgroundTask)
-        backgroundTask = .invalid
     }
 }

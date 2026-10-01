@@ -147,6 +147,18 @@ public struct InstagramInboxSync: Sendable {
         }
         for (index, listed) in wanted.enumerated() {
             try Task.checkCancellation()
+            if listed.messagesLoaded {
+                sends += listed.sentByOwner
+                onProgress?(InboxReadProgress(
+                    chatsFound: total,
+                    chatsRead: index + 1,
+                    chatsTotal: total,
+                    sendsFound: sends,
+                    currentTitle: listed.title,
+                    foundTitles: wanted.map(\.title)
+                ))
+                continue
+            }
             let sendsSoFar = sends
             let conversation = try await loadConversation(id: listed.id.rawValue, title: listed.title, ownerID: ownerID) { partial in
                 onProgress?(InboxReadProgress(

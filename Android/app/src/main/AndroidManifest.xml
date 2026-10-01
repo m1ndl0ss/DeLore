@@ -32,6 +32,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:hardwareAccelerated="true"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
             <intent-filter>
@@ -42,6 +43,7 @@
         <service
             android:name=".engine.CleanupForegroundService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
     </application>
 </manifest>
