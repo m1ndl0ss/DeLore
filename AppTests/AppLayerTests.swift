@@ -104,13 +104,36 @@ final class EntitlementManagerTests: XCTestCase {
         await manager.refresh()
         XCTAssertTrue(manager.isPro, "store refresh must not strip complimentary Pro")
     }
+
+    func testPercentOffBuysThePromoStoreProduct() async {
+        let ledger = PassLedger(store: InMemorySecretStore())
+        let service = MockPurchaseService(ledger: ledger)
+        let manager = EntitlementManager(
+            service: service,
+            ledger: ledger,
+            freeLimit: 100,
+            analytics: .disabled
+        )
+        await manager.loadProducts()
+        XCTAssertEqual(manager.products.count, 2)
+        XCTAssertFalse(manager.products.contains(where: \.isPromo))
+        XCTAssertEqual(manager.redeemPromo("REF10"), .applied(.percentOff(10)))
+        let yearly = try XCTUnwrap(manager.products.first { $0.kind == .proYearly })
+        let checkout = try XCTUnwrap(manager.checkoutProduct(for: yearly))
+        XCTAssertTrue(checkout.isPromo)
+        XCTAssertEqual(checkout.displayPrice, "$53.99")
+        _ = await manager.purchase(yearly)
+        XCTAssertEqual(service.lastPurchasedID, "mock.pro.yearly.promo")
+        XCTAssertTrue(manager.isPro)
+        XCTAssertTrue(manager.hasStoreSubscription)
+    }
 }
 
 final class ConfigurationTests: XCTestCase {
     func testConfigurationLoadsFromBundle() {
         let configuration = AppConfiguration.load()
         XCTAssertFalse(configuration.products.oneTimeCleanup.isEmpty)
-        XCTAssertEqual(Set(configuration.products.all).count, 3)
+        XCTAssertEqual(Set(configuration.products.all).count, 5)
         XCTAssertEqual(configuration.freeCleanupLimit, 100)
         XCTAssertEqual(configuration.privacyPolicyURL.scheme, "https")
         XCTAssertEqual(configuration.privacyPolicyURL.scheme, "https")
@@ -119,9 +142,14 @@ final class ConfigurationTests: XCTestCase {
 
     func testProductionPacingIsConservative() {
         let policy = AppConfiguration.load().ratePolicy
-        XCTAssertGreaterThanOrEqual(policy.minimumDelay, 3)
-        XCTAssertLessThanOrEqual(policy.hourlyLimit, 400)
+        XCTAssertGreaterThanOrEqual(policy.minimumDelay, 2)
+        XCTAssertLessThanOrEqual(policy.hourlyLimit, 1_800)
         XCTAssertLessThanOrEqual(policy.maxAttemptsPerItem, 3)
+    }
+
+    func testReviewPacingIsFasterThanProduction() {
+        XCTAssertLessThan(RatePolicy.review.minimumDelay, RatePolicy.conservative.minimumDelay)
+        XCTAssertGreaterThan(RatePolicy.review.hourlyLimit, RatePolicy.conservative.hourlyLimit)
     }
 
     func testLiveUnsendUsesWebsiteSession() {

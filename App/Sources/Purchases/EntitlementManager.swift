@@ -8,11 +8,13 @@ import Foundation
 final class EntitlementManager {
     private(set) var state = EntitlementState.free
     private(set) var products: [StoreProduct] = []
+    private var catalogProducts: [StoreProduct] = []
     private(set) var isLoadingProducts = false
     private(set) var storeUnavailable = false
     private(set) var isPurchasing = false
     private(set) var percentOff = 0
     private(set) var appliedPromoCode: String?
+    private(set) var hasStoreSubscription = false
 
     let freeLimit: Int
     private let service: PurchaseService
@@ -64,6 +66,7 @@ final class EntitlementManager {
 
     func refresh() async {
         let subscription = await service.subscriptionStatus()
+        hasStoreSubscription = subscription.isActive
         state = EntitlementState(
             isPro: subscription.isActive || promo.isComplimentary,
             proRenewsOrExpiresAt: subscription.renewsOrExpiresAt,
@@ -79,22 +82,30 @@ final class EntitlementManager {
         isLoadingProducts = true
         defer { isLoadingProducts = false }
         do {
-            products = try await service.products().filter { $0.kind != .oneTimeCleanup }
+            catalogProducts = try await service.products().filter { $0.kind != .oneTimeCleanup }
+            products = catalogProducts.filter { !$0.isPromo }
             storeUnavailable = false
         } catch {
             storeUnavailable = true
         }
     }
 
+    /// Store SKU to buy for a paywall card. Promo codes switch to the discounted IAP.
+    func checkoutProduct(for product: StoreProduct) -> StoreProduct? {
+        guard percentOff > 0 else { return product }
+        return catalogProducts.first { $0.kind == product.kind && $0.isPromo }
+    }
+
     /// Returns true when the purchase completed and the entitlement is in place.
     func purchase(_ product: StoreProduct) async -> PurchaseOutcome? {
         guard !isPurchasing else { return nil }
+        guard let target = checkoutProduct(for: product) else { return nil }
         isPurchasing = true
         defer { isPurchasing = false }
         let kind = analyticsKind(product.kind)
         analytics.track(.purchaseStarted(product: kind))
         do {
-            let outcome = try await service.purchase(product.id)
+            let outcome = try await service.purchase(target.id)
             await refresh()
             if outcome == .purchased {
                 analytics.track(.purchaseCompleted(product: kind))

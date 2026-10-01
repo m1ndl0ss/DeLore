@@ -16,7 +16,7 @@ struct PaywallView: View {
 
     private var entitlements: EntitlementManager { model.entitlements }
     private var plans: [StoreProduct] {
-        entitlements.products.filter { $0.kind == .proYearly || $0.kind == .proMonthly }
+        entitlements.products.filter { ($0.kind == .proYearly || $0.kind == .proMonthly) && !$0.isPromo }
     }
 
     var body: some View {
@@ -68,6 +68,11 @@ struct PaywallView: View {
                 }
                 .font(Type.medium(14))
                 .foregroundStyle(Palette.secondaryInk)
+
+                Text(LegalCopy.subscriptionFinePrint)
+                    .font(Type.body(12))
+                    .foregroundStyle(Palette.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, Spacing.screen)
             .padding(.top, Spacing.m)
@@ -153,12 +158,12 @@ struct PaywallView: View {
                 }
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if entitlements.percentOff > 0 {
+                if entitlements.percentOff > 0, let checkout = entitlements.checkoutProduct(for: product) {
                     Text(product.displayPrice)
                         .font(Type.body(yearly ? 20 : 16))
                         .foregroundStyle(Palette.secondaryInk)
                         .strikethrough()
-                    Text(PromoVault.discountedPrice(product.displayPrice, percentOff: entitlements.percentOff))
+                    Text(checkout.displayPrice)
                         .font(Type.medium(yearly ? 34 : 24))
                 } else {
                     Text(product.displayPrice)
@@ -169,8 +174,8 @@ struct PaywallView: View {
                     .foregroundStyle(Palette.secondaryInk)
             }
             .foregroundStyle(Palette.ink)
-            if yearly, let monthly = product.monthlyEquivalent {
-                Text("\(entitlements.percentOff > 0 ? PromoVault.discountedPrice(monthly, percentOff: entitlements.percentOff) : monthly) / mo")
+            if yearly, let monthly = entitlements.checkoutProduct(for: product)?.monthlyEquivalent ?? product.monthlyEquivalent {
+                Text("\(monthly) / mo")
                     .font(Type.body(14))
                     .foregroundStyle(Palette.accent)
             }
@@ -182,7 +187,7 @@ struct PaywallView: View {
                     Text("Subscribe yearly")
                 }
                 .buttonStyle(.primary)
-                .disabled(entitlements.isPurchasing || entitlements.isPro)
+                .disabled(entitlements.isPurchasing || entitlements.isPro || (entitlements.percentOff > 0 && entitlements.checkoutProduct(for: product) == nil))
                 .accessibilityIdentifier("purchaseYearly")
             } else {
                 Button {
@@ -192,7 +197,7 @@ struct PaywallView: View {
                     Text("Subscribe monthly")
                 }
                 .buttonStyle(.secondary)
-                .disabled(entitlements.isPurchasing || entitlements.isPro)
+                .disabled(entitlements.isPurchasing || entitlements.isPro || (entitlements.percentOff > 0 && entitlements.checkoutProduct(for: product) == nil))
                 .accessibilityIdentifier("purchaseMonthly")
             }
         }
@@ -266,6 +271,10 @@ struct PaywallView: View {
 
     private func purchase(_ product: StoreProduct) {
         Task {
+            if entitlements.percentOff > 0 && entitlements.checkoutProduct(for: product) == nil {
+                notice = "That discount isn’t in the store yet."
+                return
+            }
             switch await entitlements.purchase(product) {
             case .purchased?:
                 dismiss()

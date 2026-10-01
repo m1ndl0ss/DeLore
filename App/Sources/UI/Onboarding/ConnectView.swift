@@ -8,6 +8,7 @@ struct ConnectView: View {
         VStack(alignment: .leading, spacing: Spacing.l) {
             HStack {
                 Wordmark()
+                    .reviewDemoUnlock()
                 Spacer()
                 if model.env.hasLibrary {
                     CloseButton { model.returnHome() }
@@ -21,9 +22,9 @@ struct ConnectView: View {
                 .font(Type.body(17))
                 .foregroundStyle(Palette.secondaryInk)
                 .appearRise(shown, delay: 0.06)
-            Button("Open Instagram") { model.beginLogin(.connect) }
+            Button("Open Instagram.com") { model.beginLogin(.connect) }
                 .buttonStyle(.primary)
-                .accessibilityHint("Opens Instagram's sign-in page")
+                .accessibilityHint("Opens Instagram.com’s sign-in page")
                 .accessibilityIdentifier("connectInstagram")
                 .appearRise(shown, delay: 0.12)
             Text("Login stays on this phone. We never see your password.")

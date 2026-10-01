@@ -13,13 +13,14 @@ struct InstagramLoginView: View {
         VStack(spacing: 0) {
             HStack {
                 Wordmark()
+                    .reviewDemoUnlock()
                 Spacer()
                 CloseButton(action: onCancel)
             }
             .padding(.horizontal, Spacing.screen)
             .padding(.vertical, Spacing.s)
 
-            Text("Sign in with Instagram")
+            Text("Continue on Instagram.com")
                 .font(.title(.headline))
                 .foregroundStyle(Palette.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -37,7 +38,7 @@ struct InstagramLoginView: View {
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .padding(.horizontal, Spacing.m)
 
-            Text("This is Instagram's sign-in page. We never see your password. If Instagram asks you to verify, do that here — we won't skip it.")
+            Text("This is Instagram.com’s sign-in page. We never see your password. If Instagram asks you to verify, do that here — we won't skip it.")
                 .font(.footnote)
                 .foregroundStyle(Palette.secondaryInk)
                 .padding(Spacing.screen)
@@ -67,6 +68,7 @@ private struct LoginWebView: UIViewRepresentable {
         view.navigationDelegate = context.coordinator
         view.uiDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = true
+        view.allowsLinkPreview = false
         context.coordinator.webView = view
         view.configuration.websiteDataStore.httpCookieStore.add(context.coordinator)
         view.load(URLRequest(url: InstagramWebConstants.loginURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))

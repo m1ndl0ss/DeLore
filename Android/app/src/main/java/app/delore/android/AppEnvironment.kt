@@ -35,7 +35,8 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 class AppEnvironment(private val context: Context) {
-    val ratePolicy: RatePolicy = RatePolicy.conservative
+    val ratePolicy: RatePolicy
+        get() = if (isDemoMode) RatePolicy.review else RatePolicy.conservative
     val secrets: SecretStore = EncryptedSecretStore(context)
     val sessionVault = SessionVault(secrets)
     val ledger = PassLedger(secrets)
@@ -53,11 +54,17 @@ class AppEnvironment(private val context: Context) {
     val inboxWork = InboxWorkStore(prefs, json)
     val webBrowser = InstagramWebViewGateway()
     private val http = InstagramHTTPClient(defaultOkHttp(), { loadSession() }, webBrowser)
-    val unsender = InstagramWebUnsendService(http, ownerID = { loadSession()?.userID })
+    private val liveUnsender = InstagramWebUnsendService(http, ownerID = { loadSession()?.userID })
+    private val demoUnsender = app.delore.android.domain.ReviewDemoUnsendService()
+    val unsender: app.delore.android.domain.UnsendService
+        get() = if (isDemoMode) demoUnsender else liveUnsender
 
     val hasLibrary: Boolean get() = library.hasLibrary
     val hasLiveSession: Boolean get() = loadSession()?.hasLiveSession == true
-    val isCleanupAvailable: Boolean get() = hasLiveSession
+    val isCleanupAvailable: Boolean get() = hasLiveSession || isDemoMode
+    var isDemoMode: Boolean
+        get() = prefs.getBoolean(DEMO_KEY, false)
+        set(value) { prefs.edit().putBoolean(DEMO_KEY, value).apply() }
     var hasCompletedOnboarding: Boolean
         get() = prefs.getBoolean("onboarding.completed", false)
         set(value) { prefs.edit().putBoolean("onboarding.completed", value).apply() }
@@ -82,6 +89,7 @@ class AppEnvironment(private val context: Context) {
         }
 
     fun dropStaleFullInbox() {
+        if (isDemoMode) return
         if (prefs.getBoolean("inbox.listFirst", false)) return
         library.wipe()
         jobStore.wipe()
@@ -95,7 +103,17 @@ class AppEnvironment(private val context: Context) {
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
+    fun enterReviewDemo() {
+        jobStore.wipe()
+        app.delore.android.domain.ReviewDemo.seed(library)
+        saveRetractQueue(emptySet())
+        inboxWork.clear()
+        inboxListCursor = null
+        isDemoMode = true
+    }
+
     fun saveSession(session: InstagramWebSession) {
+        isDemoMode = false
         sessionVault.save(json.encodeToString(session))
     }
 
@@ -152,6 +170,7 @@ class AppEnvironment(private val context: Context) {
             .remove("inbox.listCursor")
             .remove(InboxWorkStore.KEY)
             .remove(RETRACT_QUEUE_KEY)
+            .remove(DEMO_KEY)
             .apply()
         webBrowser.destroy()
     }
@@ -175,5 +194,6 @@ class AppEnvironment(private val context: Context) {
 
     companion object {
         private const val RETRACT_QUEUE_KEY = "inbox.retractQueue"
+        private const val DEMO_KEY = "review.demo"
     }
 }

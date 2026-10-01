@@ -68,6 +68,7 @@ data class UiState(
     val loadingOverview: Boolean = false,
     val loginPurpose: LoginPurpose? = null,
     val termsPrompt: TermsPrompt? = null,
+    val isDemoMode: Boolean = false,
     val syncing: Boolean = false,
     val inboxRead: InboxReadProgress = InboxReadProgress(),
     val syncErrorTitle: String? = null,
@@ -90,10 +91,13 @@ class AppViewModel(
     val entitlements get() = env.entitlements
     val ratePolicy get() = env.ratePolicy
     val hasLiveSession get() = env.hasLiveSession
+    val isDemoMode get() = env.isDemoMode
+    val isCleanupAvailable get() = env.isCleanupAvailable
 
     private val engine get() = work.engine
     private var didPromptDeletionLogin = false
     private var termsNoticeDismissedThisLaunch = false
+    private var pendingSampleInbox = false
     private var inboxLoadIds: Collection<ConversationID>? = null
     private var lastInboxCompletedTick = work.inbox.value.completedTick
 
@@ -137,6 +141,7 @@ class AppViewModel(
         val splash = launch { delay(700) }
         env.entitlements.refresh()
         env.dropStaleFullInbox()
+        _state.update { it.copy(isDemoMode = env.isDemoMode) }
         if (env.hasLibrary) {
             reloadOverview()
         } else {
@@ -174,7 +179,13 @@ class AppViewModel(
             termsNoticeDismissedThisLaunch = true
         }
         if (prompt == TermsPrompt.SIGNUP) {
-            _state.update { it.copy(termsPrompt = null, loginPurpose = LoginPurpose.CONNECT) }
+            if (pendingSampleInbox) {
+                pendingSampleInbox = false
+                _state.update { it.copy(termsPrompt = null) }
+                openSampleInbox()
+            } else {
+                _state.update { it.copy(termsPrompt = null, loginPurpose = LoginPurpose.CONNECT) }
+            }
         } else {
             _state.update { it.copy(termsPrompt = null) }
         }
@@ -194,7 +205,7 @@ class AppViewModel(
 
     fun handleLogin(session: InstagramWebSession, purpose: LoginPurpose) {
         env.saveSession(session)
-        _state.update { it.copy(loginPurpose = null) }
+        _state.update { it.copy(loginPurpose = null, isDemoMode = env.isDemoMode) }
         val shouldSync = when (purpose) {
             LoginPurpose.CONNECT, LoginPurpose.REFRESH -> true
             LoginPurpose.RECONNECT -> !env.hasLibrary
@@ -292,11 +303,27 @@ class AppViewModel(
         _state.update { it.copy(tab = tab) }
     }
 
+    fun openSampleInbox() {
+        if (env.hasLiveSession) return
+        _state.update { it.copy(loginPurpose = null) }
+        if (!env.hasAcceptedTerms) {
+            pendingSampleInbox = true
+            _state.update { it.copy(termsPrompt = TermsPrompt.SIGNUP, loginPurpose = null) }
+            return
+        }
+        env.enterReviewDemo()
+        viewModelScope.launch {
+            reloadOverview()
+            _state.update { it.copy(isDemoMode = true) }
+        }
+    }
+
     fun deletionAppeared() {
         if (env.hasLiveSession) {
             if (!env.hasLibrary && !_state.value.syncing) beginInboxSync()
             return
         }
+        if (env.isDemoMode) return
         if (didPromptDeletionLogin) return
         didPromptDeletionLogin = true
         beginLogin(LoginPurpose.CONNECT)
@@ -369,7 +396,7 @@ class AppViewModel(
         work.releaseEngine()
         env.eraseAllData()
         didPromptDeletionLogin = false
-        _state.update { UiState(route = Route.HOME, tab = MainTab.SETTINGS) }
+        _state.update { UiState(route = Route.HOME, tab = MainTab.SETTINGS, isDemoMode = false) }
     }
 
     fun pauseCleanup() = viewModelScope.launch { engine?.pause() }

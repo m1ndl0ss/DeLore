@@ -38,7 +38,9 @@ struct AppConfiguration {
             products: ProductCatalog(
                 oneTimeCleanup: string("DLProductOneTime") ?? "app.delore.cleanup.single",
                 proMonthly: string("DLProductProMonthly") ?? "app.delore.pro.monthly",
-                proYearly: string("DLProductProYearly") ?? "app.delore.pro.yearly"
+                proYearly: string("DLProductProYearly") ?? "app.delore.pro.yearly",
+                proMonthlyPromo: string("DLProductProMonthlyPromo") ?? "app.delore.pro.monthly.promo",
+                proYearlyPromo: string("DLProductProYearlyPromo") ?? "app.delore.pro.yearly.promo"
             ),
             freeCleanupLimit: string("DLFreeCleanupLimit").flatMap(Int.init) ?? 100,
             analyticsEnabled: string("DLAnalyticsEnabled")?.uppercased() == "YES",

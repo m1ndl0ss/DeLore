@@ -16,6 +16,7 @@ struct TermsAcceptView: View {
         VStack(alignment: .leading, spacing: Spacing.m) {
             HStack {
                 Wordmark()
+                    .reviewDemoUnlock()
                 Spacer()
                 CloseButton(action: onCancel)
             }

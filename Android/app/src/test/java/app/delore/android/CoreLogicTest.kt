@@ -34,13 +34,21 @@ import org.junit.Test
 class RatePolicyTest {
     @Test
     fun estimatedDurationHonoursHourlyCap() {
-        val seconds = RatePolicy.conservative.estimatedDuration(300)
-        assertEquals(3600.0, seconds!!, 0.01)
+        val policy = RatePolicy.conservative
+        val seconds = policy.estimatedDuration(policy.hourlyLimit)!!
+        val fromGaps = policy.hourlyLimit * (policy.minimumDelay + policy.maximumJitter / 2)
+        assertEquals(maxOf(fromGaps, 3600.0), seconds, 0.01)
     }
 
     @Test
     fun emptyJobIsInstant() {
         assertEquals(0.0, RatePolicy.conservative.estimatedDuration(0)!!, 0.0)
+    }
+
+    @Test
+    fun reviewPolicyIsFasterThanLive() {
+        assertTrue(RatePolicy.review.minimumDelay < RatePolicy.conservative.minimumDelay)
+        assertTrue(RatePolicy.review.hourlyLimit > RatePolicy.conservative.hourlyLimit)
     }
 }
 
@@ -350,8 +358,29 @@ class PromoCodeTest {
     fun campaignCodesAreTenPercentOff() {
         assertEquals(
             app.delore.android.billing.PromoOffer.PERCENT_OFF,
-            app.delore.android.billing.PromoCatalog.offer("REF10", setOf("REF10")),
+            app.delore.android.billing.PromoCatalog.offer("RETRACT10"),
         )
+        assertEquals(
+            app.delore.android.billing.PromoOffer.PERCENT_OFF,
+            app.delore.android.billing.PromoCatalog.offer("ref10"),
+        )
+        assertEquals(
+            setOf("RETRACT10", "REF10"),
+            app.delore.android.billing.PromoCatalog.percentOffCodes,
+        )
+    }
+
+    @Test
+    fun checkoutIdUsesPromoSkuWhenDiscounted() {
+        val catalog = app.delore.android.domain.ProductCatalog(
+            oneTimeCleanup = "app.delore.cleanup.single",
+            proMonthly = "app.delore.pro.monthly",
+            proYearly = "app.delore.pro.yearly",
+        )
+        assertEquals("app.delore.pro.yearly", catalog.checkoutId("app.delore.pro.yearly", discounted = false))
+        assertEquals("app.delore.pro.yearly.promo", catalog.checkoutId("app.delore.pro.yearly", discounted = true))
+        assertEquals("app.delore.pro.monthly.promo", catalog.checkoutId("app.delore.pro.monthly", discounted = true))
+        assertEquals(5, catalog.all.size)
     }
 
     @Test
@@ -394,5 +423,33 @@ class PromoCodeTest {
         vault.redeem("C", day1)
         val result = vault.redeem("KANDAL24", day2)
         assertTrue(result is app.delore.android.billing.PromoRedeemResult.Applied)
+    }
+}
+
+class ReviewDemoTest {
+    @Test
+    fun seedWritesLoadedOwnerChats() {
+        val dir = kotlin.io.path.createTempDirectory("retract-demo").toFile()
+        val library = app.delore.android.persist.LocalLibraryStore(dir)
+        app.delore.android.domain.ReviewDemo.seed(library)
+        assertTrue(library.hasLibrary)
+        val overview = kotlinx.coroutines.runBlocking { library.conversations() }
+        assertEquals(6, overview.size)
+        assertTrue(overview.all { it.messagesLoaded && it.isCleanable })
+        assertTrue(overview.sumOf { it.sentByOwner } > 100)
+    }
+
+    @Test
+    fun demoUnsendMarksGoneLocally() = kotlinx.coroutines.runBlocking {
+        val unsender = app.delore.android.domain.ReviewDemoUnsendService()
+        val target = app.delore.android.domain.CleanupTarget(
+            ref = MessageRef(ConversationID("demo-mom"), "demo-demo-mom-0"),
+            authorID = app.delore.android.domain.ReviewDemo.account.ownerID,
+            sentAtMillis = 0L,
+            kind = MessageKind.TEXT,
+        )
+        assertEquals(app.delore.android.domain.UnsendOutcome.UNSENT, unsender.unsend(target))
+        assertEquals(app.delore.android.domain.UnsendOutcome.ALREADY_GONE, unsender.unsend(target))
+        assertEquals(app.delore.android.domain.MessagePresence.GONE, unsender.presence(target))
     }
 }

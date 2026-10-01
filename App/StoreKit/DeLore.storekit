@@ -70,9 +70,34 @@
           "codeOffers" : [
 
           ],
-          "displayPrice" : "19.99",
+          "displayPrice" : "53.99",
           "familyShareable" : false,
           "groupNumber" : 2,
+          "internalID" : "6743000004",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Unlimited cleanup and filters.",
+              "displayName" : "Pro Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "app.delore.pro.yearly.promo",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Pro Yearly promo",
+          "subscriptionGroupID" : "21600001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "19.99",
+          "familyShareable" : false,
+          "groupNumber" : 3,
           "internalID" : "6743000003",
           "introductoryOffer" : null,
           "localizations" : [
@@ -85,6 +110,31 @@
           "productID" : "app.delore.pro.monthly",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Pro Monthly",
+          "subscriptionGroupID" : "21600001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "17.99",
+          "familyShareable" : false,
+          "groupNumber" : 4,
+          "internalID" : "6743000005",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Unlimited cleanup and filters.",
+              "displayName" : "Pro Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "app.delore.pro.monthly.promo",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Pro Monthly promo",
           "subscriptionGroupID" : "21600001",
           "type" : "RecurringSubscription"
         }

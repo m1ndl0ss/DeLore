@@ -11,7 +11,7 @@ public enum PromoCatalog: Sendable {
     public static let campaignPercentOff = 10
 
     /// Referral codes Matvey issues. Every entry is 10% off at checkout.
-    public static let percentOffCodes: Set<String> = []
+    public static let percentOffCodes: Set<String> = ["RETRACT10", "REF10"]
 
     public static func normalize(_ raw: String) -> String {
         raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()

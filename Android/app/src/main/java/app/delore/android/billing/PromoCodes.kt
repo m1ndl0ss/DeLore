@@ -22,7 +22,7 @@ object PromoCatalog {
     const val CAMPAIGN_PERCENT_OFF = 10
 
     /** Referral codes Matvey issues. Every entry is 10% off at checkout. */
-    val percentOffCodes: Set<String> = emptySet()
+    val percentOffCodes: Set<String> = setOf("RETRACT10", "REF10")
 
     fun normalize(raw: String): String = raw.trim().uppercase(Locale.US)
 

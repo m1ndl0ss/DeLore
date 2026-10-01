@@ -82,7 +82,12 @@ fun TermsSheet(onBack: (() -> Unit)? = null) {
 }
 
 @Composable
-fun TermsAcceptScreen(reminder: Boolean, onPrimary: (dontShowAgain: Boolean) -> Unit, onCancel: () -> Unit) {
+fun TermsAcceptScreen(
+    reminder: Boolean,
+    onPrimary: (dontShowAgain: Boolean) -> Unit,
+    onCancel: () -> Unit,
+    onReviewDemo: () -> Unit = {},
+) {
     val scroll = rememberScrollState()
     var agreed by remember { mutableStateOf(false) }
     var readThis by remember { mutableStateOf(false) }
@@ -108,7 +113,7 @@ fun TermsAcceptScreen(reminder: Boolean, onPrimary: (dontShowAgain: Boolean) -> 
             .padding(top = Spacing.s, bottom = Spacing.s),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Wordmark()
+            Wordmark(onSecretUnlock = onReviewDemo)
             Spacer(Modifier.weight(1f))
             CloseButton(onCancel)
         }
@@ -210,6 +215,10 @@ fun PrivacySheet(onBack: (() -> Unit)? = null) {
         Card {
             Text("What leaves this phone", color = Palette.ink(), fontWeight = FontWeight.Bold)
             Text("Cleanup talks to Instagram from this phone, the same way you would unsend a message yourself. Nothing from your DMs is sent to a Retract server. We don't collect analytics, advertising IDs, or other identifiers. There's no tracking or ads. Purchases are handled by Google Play.", color = Palette.secondaryInk())
+        }
+        Card {
+            Text("Sample data", color = Palette.ink(), fontWeight = FontWeight.Bold)
+            Text("Retract may include sample chats for App Review and testing. Sample data is fake, stays on this phone, and never contacts Instagram or a real account.", color = Palette.secondaryInk())
         }
         Card {
             Text("Your password", color = Palette.ink(), fontWeight = FontWeight.Bold)

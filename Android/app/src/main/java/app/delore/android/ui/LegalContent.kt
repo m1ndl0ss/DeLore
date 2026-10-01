@@ -11,6 +11,11 @@ object LegalCopy {
     const val TERMS_VERSION = 1
     const val NOT_RESPONSIBLE =
         "You use Retract at your own risk. We are not responsible for anything that happens — including Instagram bans, locks, lost messages, or failed unsends."
+    const val NOT_AFFILIATED =
+        "Retract isn’t affiliated with, endorsed by, or connected to Instagram or Meta."
+    /** Play / 3.1.2-style: auto-renew terms on the purchase screen, not only in Terms. */
+    const val SUBSCRIPTION_FINE_PRINT =
+        "Payment is charged to your Google account at confirmation. Subscriptions auto-renew until you cancel in Google Play. Retract isn’t affiliated with Instagram or Meta."
     val faq = listOf(
         FaqEntry(
             "If Instagram bans me, is that on you?",
@@ -61,7 +66,7 @@ object LegalCopy {
         ),
         LegalSection(
             "Not our platform",
-            "Retract is not affiliated with, endorsed by, or connected to Instagram or Meta. We do not own, operate, or control Instagram. Instagram’s terms, community standards, and enforcement are theirs. If Instagram is unhappy with you, with Unsend, or with any tool you used — including Retract — that is between you and Instagram. It is not our problem, and we are not responsible for their decisions.",
+            "Retract is not affiliated with, endorsed by, authorized by, or connected to Instagram or Meta. Instagram and related names are used only to describe what the app does. We do not own or control Instagram. Using unofficial tools, including Retract, may violate Instagram’s Terms of Use. Instagram may restrict, challenge, or disable accounts. That risk is yours. If Instagram is unhappy with you or with this app, that is between you and Instagram.",
         ),
         LegalSection(
             "Your account, your consequences",
@@ -81,7 +86,7 @@ object LegalCopy {
         ),
         LegalSection(
             "Subscriptions and the free allowance",
-            "You can unsend 100 messages for free. After that, Pro is sold as a monthly or yearly auto-renewing subscription through Google Play. Prices shown in the app are charged by Google. Cancel in Google Play. Refunds follow Google Play’s policies and applicable law. Purchases stay with your Google account if you delete Retract’s local data.",
+            "You can unsend 100 messages for free. After that, Pro is sold as a monthly or yearly auto-renewing subscription through Google Play. Payment is charged to your Google account at confirmation of purchase. Subscriptions renew unless you cancel. Manage or cancel in Google Play. Deleting Retract does not cancel the subscription. Refunds follow Google Play’s policies and applicable law. Purchases stay with your Google account if you delete Retract’s local data.",
         ),
         LegalSection(
             "Privacy",

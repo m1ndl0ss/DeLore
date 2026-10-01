@@ -1,5 +1,6 @@
 package app.delore.android.instagram
 
+import android.annotation.SuppressLint
 import app.delore.android.domain.AccountIdentity
 import app.delore.android.domain.HTTPResponse
 import app.delore.android.domain.IntegrationError
@@ -10,6 +11,45 @@ import kotlinx.serialization.Serializable
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
+
+/** Remembers which Instagram host last served inbox/thread JSON so we don't ping-pong. */
+internal object InstagramRequestHost {
+    @Volatile private var preferred: String? = null
+
+    fun order(): List<String> {
+        val first = preferred ?: InstagramWebConstants.WWW_HOST
+        val other = if (first == InstagramWebConstants.WWW_HOST) {
+            InstagramWebConstants.API_HOST
+        } else {
+            InstagramWebConstants.WWW_HOST
+        }
+        return listOf(first, other)
+    }
+
+    fun remember(host: String) {
+        preferred = host
+    }
+
+    fun reset() {
+        preferred = null
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+fun android.webkit.WebSettings.applyInstagramWebsiteDefaults() {
+    javaScriptEnabled = true
+    domStorageEnabled = true
+    userAgentString = InstagramWebConstants.CHROME_USER_AGENT
+    allowFileAccess = false
+    allowContentAccess = false
+    @Suppress("DEPRECATION")
+    allowFileAccessFromFileURLs = false
+    @Suppress("DEPRECATION")
+    allowUniversalAccessFromFileURLs = false
+    mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+    javaScriptCanOpenWindowsAutomatically = false
+    setSupportMultipleWindows(false)
+}
 
 object InstagramWebConstants {
     const val WWW_HOST = "www.instagram.com"

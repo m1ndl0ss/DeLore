@@ -21,6 +21,8 @@ DL_TERMS_URL = https:/$()/kandalintsev.com/retract/terms
 DL_PRODUCT_ONE_TIME = app.delore.cleanup.single
 DL_PRODUCT_PRO_MONTHLY = app.delore.pro.monthly
 DL_PRODUCT_PRO_YEARLY = app.delore.pro.yearly
+DL_PRODUCT_PRO_MONTHLY_PROMO = app.delore.pro.monthly.promo
+DL_PRODUCT_PRO_YEARLY_PROMO = app.delore.pro.yearly.promo
 
 // Lifetime number of messages free users can clean.
 DL_FREE_LIMIT = 100

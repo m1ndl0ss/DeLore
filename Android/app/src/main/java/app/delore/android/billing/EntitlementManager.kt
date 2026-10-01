@@ -26,6 +26,7 @@ data class StoreProduct(
     val displayName: String,
     val displayPrice: String,
     val monthlyEquivalent: String? = null,
+    val isPromo: Boolean = false,
 ) {
     enum class Kind { ONE_TIME, MONTHLY, YEARLY }
 }
@@ -46,6 +47,7 @@ class EntitlementManager(
         private set
     var products: List<StoreProduct> = fallbackProducts()
         private set
+    private var catalogProducts: List<StoreProduct> = fallbackCatalog()
     var isLoadingProducts: Boolean = false
         private set
     var storeUnavailable: Boolean = false
@@ -59,6 +61,8 @@ class EntitlementManager(
     val appliedPromoCode: String? get() = promo.appliedCode
     val promoGuessesRemaining: Int get() = promo.remainingGuesses()
     val isPromoLocked: Boolean get() = promo.isLocked()
+    val hasStoreSubscription: Boolean get() = paidFromStore
+    private var paidFromStore: Boolean = false
 
     private var billing: BillingClient? = null
     private var details: Map<String, ProductDetails> = emptyMap()
@@ -87,6 +91,7 @@ class EntitlementManager(
 
     suspend fun refresh() {
         val subscription = querySubscription()
+        paidFromStore = subscription.first
         state = EntitlementState(
             isPro = subscription.first || promo.isComplimentary,
             proRenewsOrExpiresAt = subscription.second,
@@ -115,12 +120,18 @@ class EntitlementManager(
         }
     }
 
+    fun checkoutProduct(forDisplay: StoreProduct): StoreProduct? {
+        if (percentOff <= 0) return forDisplay
+        return catalogProducts.firstOrNull { it.kind == forDisplay.kind && it.isPromo }
+    }
+
     suspend fun purchase(activity: Activity, product: StoreProduct): PurchaseOutcome? {
         if (isPurchasing) return null
+        val target = checkoutProduct(forDisplay = product) ?: return null
         isPurchasing = true
         return try {
             ensureClient()
-            val detail = details[product.id] ?: return null.also { storeUnavailable = true }
+            val detail = details[target.id] ?: return null.also { storeUnavailable = true }
             val offerToken = detail.subscriptionOfferDetails?.firstOrNull()?.offerToken
             val params = BillingFlowParams.newBuilder()
                 .setProductDetailsParamsList(
@@ -153,6 +164,13 @@ class EntitlementManager(
         StoreProduct(BuildConfig.PRODUCT_PRO_MONTHLY, StoreProduct.Kind.MONTHLY, "Pro Monthly", "$19.99"),
     )
 
+    private fun fallbackPromoProducts() = listOf(
+        StoreProduct(BuildConfig.PRODUCT_PRO_YEARLY_PROMO, StoreProduct.Kind.YEARLY, "Pro Yearly", "$53.99", "$4.50", isPromo = true),
+        StoreProduct(BuildConfig.PRODUCT_PRO_MONTHLY_PROMO, StoreProduct.Kind.MONTHLY, "Pro Monthly", "$17.99", isPromo = true),
+    )
+
+    private fun fallbackCatalog() = fallbackProducts() + fallbackPromoProducts()
+
     private suspend fun ensureClient() {
         if (billing?.isReady == true) return
         withContext(Dispatchers.IO) {
@@ -181,15 +199,25 @@ class EntitlementManager(
         val subs = queryDetails(
             client,
             BillingClient.ProductType.SUBS,
-            listOf(BuildConfig.PRODUCT_PRO_MONTHLY, BuildConfig.PRODUCT_PRO_YEARLY),
+            listOf(
+                BuildConfig.PRODUCT_PRO_MONTHLY,
+                BuildConfig.PRODUCT_PRO_YEARLY,
+                BuildConfig.PRODUCT_PRO_MONTHLY_PROMO,
+                BuildConfig.PRODUCT_PRO_YEARLY_PROMO,
+            ),
         )
         details = subs.associateBy { it.productId }
-        return fallbackProducts().map { fallback ->
-            val detail = details[fallback.id] ?: return@map fallback
+        if (details.isEmpty()) {
+            catalogProducts = fallbackCatalog()
+            return fallbackProducts()
+        }
+        catalogProducts = fallbackCatalog().mapNotNull { fallback ->
+            val detail = details[fallback.id] ?: return@mapNotNull null
             val price = detail.subscriptionOfferDetails?.firstOrNull()?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice
                 ?: fallback.displayPrice
             fallback.copy(displayPrice = price)
-        }.sortedBy {
+        }
+        return catalogProducts.filter { !it.isPromo }.sortedBy {
             when (it.kind) {
                 StoreProduct.Kind.YEARLY -> 0
                 StoreProduct.Kind.MONTHLY -> 1
@@ -221,7 +249,7 @@ class EntitlementManager(
             ) { _, purchases ->
                 val active = purchases.firstOrNull {
                     it.purchaseState == Purchase.PurchaseState.PURCHASED &&
-                        it.products.any { id -> id == BuildConfig.PRODUCT_PRO_MONTHLY || id == BuildConfig.PRODUCT_PRO_YEARLY }
+                        it.products.any { id -> id in subscriptionIds }
                 }
                 if (cont.isActive) cont.resume((active != null) to active?.let { System.currentTimeMillis() + 30L * 24 * 60 * 60 * 1000 })
             }
@@ -253,7 +281,15 @@ class EntitlementManager(
             ) { }
         }
         state = state.copy(isPro = purchase.products.any {
-            it == BuildConfig.PRODUCT_PRO_MONTHLY || it == BuildConfig.PRODUCT_PRO_YEARLY
+            it in subscriptionIds
         } || promo.isComplimentary || state.isPro, cleanupPasses = ledger.passes)
+        if (purchase.products.any { it in subscriptionIds }) paidFromStore = true
     }
+
+    private val subscriptionIds = setOf(
+        BuildConfig.PRODUCT_PRO_MONTHLY,
+        BuildConfig.PRODUCT_PRO_YEARLY,
+        BuildConfig.PRODUCT_PRO_MONTHLY_PROMO,
+        BuildConfig.PRODUCT_PRO_YEARLY_PROMO,
+    )
 }

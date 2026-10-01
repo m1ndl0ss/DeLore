@@ -31,11 +31,11 @@ struct UnsendingView: View {
         .animation(reduceMotion ? .none : .easeOut(duration: 0.28), value: shown)
         .screenBackground()
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: Spacing.s) {
+            VStack(spacing: Spacing.m) {
                 if let overview = model.overview, !overview.conversations.isEmpty {
                     Button(actionLabel(for: overview)) { model.retractWith(selection) }
                         .buttonStyle(.primary)
-                        .disabled(!canAct(overview) || (!model.env.hasLiveSession && !model.hasUnfinishedSession))
+                        .disabled(!canAct(overview) || (!model.env.isCleanupAvailable && !model.hasUnfinishedSession))
                         .padding(.horizontal, Spacing.screen)
                 } else if model.overview == nil && !model.isLoadingOverview {
                     Button(model.env.hasLiveSession ? "Find people" : "Connect Instagram") { model.showConnect() }
@@ -60,13 +60,33 @@ struct UnsendingView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(alignment: .center, spacing: 0) {
             Wordmark()
-            Spacer()
+                .reviewDemoUnlock()
+            Spacer(minLength: 12)
             if model.overview != nil && model.env.hasLiveSession {
-                QuietLink(title: "Refresh") { model.refreshChats() }
+                Button {
+                    model.refreshChats()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Palette.ink)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Refresh")
             }
-            if model.entitlements.isPro { Pill(text: "Pro") }
+            if model.entitlements.isPro {
+                Button {
+                    model.tab = .settings
+                } label: {
+                    Pill(text: "Pro")
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 20)
+                .accessibilityLabel("Account")
+            }
         }
         .padding(.horizontal, Spacing.screen)
     }
@@ -135,8 +155,14 @@ struct UnsendingView: View {
             }
             .padding(.horizontal, Spacing.screen)
 
-            if !model.env.hasLiveSession {
+            if !model.env.hasLiveSession && !model.isDemoMode {
                 expiredSession
+                    .padding(.horizontal, Spacing.screen)
+            }
+            if model.isDemoMode {
+                Text("Sample chats for review. Connect Instagram in Settings to use a real account.")
+                    .font(Type.body(14))
+                    .foregroundStyle(Palette.secondaryInk)
                     .padding(.horizontal, Spacing.screen)
             }
 
@@ -292,7 +318,7 @@ private struct ActiveCleanupCard: View {
                 }
                 LoreProgressBar(fraction: progress.fraction)
                 Text(progress.status == .running
-                     ? "^[\(progress.remaining) message](inflect: true) to go. You can leave."
+                     ? "^[\(progress.remaining) message](inflect: true) to go. You can exit — don't close Retract."
                      : "Resume. We won't unsend twice.")
                     .font(Type.body(14))
                     .foregroundStyle(Palette.secondaryInk)

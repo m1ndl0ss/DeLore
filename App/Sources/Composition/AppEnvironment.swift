@@ -15,6 +15,7 @@ final class AppEnvironment {
     let entitlements: EntitlementManager
     let connectivity: ConnectivityMonitor
     private let liveUnsender: UnsendService
+    private let demoUnsender = ReviewDemoUnsendService()
     private let dataDirectory: URL
 
     private static let onboardingKey = "onboarding.completed"
@@ -24,6 +25,7 @@ final class AppEnvironment {
     private static let listCursorKey = "inbox.listCursor"
     private static let inboxWorkKey = "inbox.work"
     private static let retractQueueKey = "inbox.retractQueue"
+    private static let reviewDemoKey = "review.demo"
 
     init(configuration: AppConfiguration = .load()) {
         self.configuration = configuration
@@ -67,15 +69,34 @@ final class AppEnvironment {
     }
 
     var messageSource: MessageSource { library }
-    var unsender: UnsendService { liveUnsender }
-    var isCleanupAvailable: Bool { hasLiveSession }
-    var ratePolicy: RatePolicy { configuration.ratePolicy }
+    var unsender: UnsendService { isDemoMode ? demoUnsender : liveUnsender }
+    var isCleanupAvailable: Bool { hasLiveSession || isDemoMode }
+    var ratePolicy: RatePolicy { isDemoMode ? .review : configuration.ratePolicy }
 
     var hasLiveSession: Bool {
         (try? sessionVault.loadSession())?.hasLiveSession == true
     }
 
+    var isDemoMode: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.reviewDemoKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.reviewDemoKey) }
+    }
+
+    func enterReviewDemo() throws {
+        try jobStore.wipe()
+        try ReviewDemo.seed(into: library)
+        saveRetractQueue([])
+        saveInboxWork(nil)
+        inboxListCursor = nil
+        isDemoMode = true
+    }
+
+    func clearReviewDemoFlag() {
+        isDemoMode = false
+    }
+
     func saveInstagramSession(_ session: InstagramWebSession) throws {
+        clearReviewDemoFlag()
         try sessionVault.saveSession(session)
     }
 
@@ -176,6 +197,7 @@ final class AppEnvironment {
     }
 
     func dropStaleFullInbox() {
+        guard !isDemoMode else { return }
         guard !UserDefaults.standard.bool(forKey: Self.listFirstKey) else { return }
         try? library.wipe()
         try? jobStore.wipe()
@@ -230,6 +252,7 @@ final class AppEnvironment {
         UserDefaults.standard.removeObject(forKey: Self.listCursorKey)
         UserDefaults.standard.removeObject(forKey: Self.inboxWorkKey)
         UserDefaults.standard.removeObject(forKey: Self.retractQueueKey)
+        UserDefaults.standard.removeObject(forKey: Self.reviewDemoKey)
         for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix(CleanupBilling.keyPrefix) {
             UserDefaults.standard.removeObject(forKey: key)
         }

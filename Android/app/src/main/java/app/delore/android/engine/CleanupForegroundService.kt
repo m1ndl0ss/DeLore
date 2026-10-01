@@ -38,7 +38,7 @@ class CleanupForegroundService : Service() {
     private fun startForegroundNotification(text: String) {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Reading & unsending", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(CHANNEL, "Cleanup", NotificationManager.IMPORTANCE_LOW),
         )
         val launch = PendingIntent.getActivity(
             this,
@@ -65,7 +65,7 @@ class CleanupForegroundService : Service() {
     companion object {
         private const val CHANNEL = "cleanup"
         private const val EXTRA_TEXT = "text"
-        const val DEFAULT_TEXT = "Retract is working. You can leave."
+        const val DEFAULT_TEXT = "Retract is working"
 
         fun start(context: Context, text: String = DEFAULT_TEXT) {
             val intent = Intent(context, CleanupForegroundService::class.java).putExtra(EXTRA_TEXT, text)

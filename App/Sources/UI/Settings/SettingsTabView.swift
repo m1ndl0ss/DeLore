@@ -1,9 +1,12 @@
 import DeLoreCore
+import StoreKit
 import SwiftUI
 
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var model
     @State private var confirmingErase = false
+    @State private var managingSubscription = false
+    @State private var restoreMessage: LocalizedStringKey?
 
     var body: some View {
         ScrollView {
@@ -21,9 +24,13 @@ struct SettingsTabView: View {
                             Text("Instagram")
                                 .font(Type.medium(17))
                                 .foregroundStyle(Palette.ink)
-                            Text(model.env.hasLiveSession ? "Connected · stays on this phone" : "Not connected")
+                            Text(
+                                model.env.hasLiveSession
+                                    ? "Connected · stays on this phone"
+                                    : (model.isDemoMode ? "Sample inbox · not a real account" : "Not connected")
+                            )
                                 .font(Type.body(14))
-                                .foregroundStyle(model.env.hasLiveSession ? Palette.accent : Palette.secondaryInk)
+                                .foregroundStyle(model.env.hasLiveSession || model.isDemoMode ? Palette.accent : Palette.secondaryInk)
                         }
                         Spacer()
                         if !model.env.hasLiveSession {
@@ -41,26 +48,66 @@ struct SettingsTabView: View {
                 .buttonStyle(.plain)
                 .elevated()
 
-                Button {
-                    model.sheet = .paywall(.settings)
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Plan")
-                                .font(Type.body(17))
-                                .foregroundStyle(Palette.ink)
-                            Text(model.entitlements.isPro ? "Pro" : "Free · Upgrade")
-                                .font(Type.body(14))
-                                .foregroundStyle(model.entitlements.isPro ? Palette.accent : Palette.secondaryInk)
+                VStack(spacing: 0) {
+                    Button {
+                        if !model.entitlements.isPro {
+                            model.sheet = .paywall(.settings)
                         }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Palette.tertiaryInk)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Plan")
+                                    .font(Type.body(17))
+                                    .foregroundStyle(Palette.ink)
+                                Text(model.entitlements.isPro ? "Pro" : "Free · Upgrade")
+                                    .font(Type.body(14))
+                                    .foregroundStyle(model.entitlements.isPro ? Palette.accent : Palette.secondaryInk)
+                            }
+                            Spacer()
+                            if !model.entitlements.isPro {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Palette.tertiaryInk)
+                            }
+                        }
+                        .padding(Metrics.cardInset)
                     }
-                    .padding(Metrics.cardInset)
+                    .buttonStyle(.plain)
+                    .disabled(model.entitlements.isPro)
+
+                    if model.entitlements.hasStoreSubscription {
+                        divider
+                        Button("Cancel or manage subscription") { managingSubscription = true }
+                            .font(Type.body(17))
+                            .foregroundStyle(Palette.ink)
+                            .frame(maxWidth: .infinity, minHeight: Metrics.rowHeight, alignment: .leading)
+                            .padding(.horizontal, Metrics.cardInset)
+                    }
+
+                    divider
+                    Button("Restore purchases") {
+                        Task {
+                            if await model.entitlements.restore() {
+                                restoreMessage = model.entitlements.isPro ? "Purchases restored." : "No Pro plan on this Apple ID."
+                            } else {
+                                restoreMessage = "App Store isn’t reachable."
+                            }
+                        }
+                    }
+                    .font(Type.body(17))
+                    .foregroundStyle(Palette.ink)
+                    .frame(maxWidth: .infinity, minHeight: Metrics.rowHeight, alignment: .leading)
+                    .padding(.horizontal, Metrics.cardInset)
+
+                    if let restoreMessage {
+                        Text(restoreMessage)
+                            .font(Type.body(13))
+                            .foregroundStyle(Palette.secondaryInk)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, Metrics.cardInset)
+                            .padding(.bottom, Spacing.s)
+                    }
                 }
-                .buttonStyle(.plain)
                 .elevated()
 
                 VStack(spacing: 0) {
@@ -94,6 +141,7 @@ struct SettingsTabView: View {
         } message: {
             Text("Login, chats, history and progress leave this phone. Already unsent messages stay unsent. Purchases stay with your Apple ID.")
         }
+        .manageSubscriptionsSheet(isPresented: $managingSubscription)
         .task { await model.reloadOverview() }
     }
 

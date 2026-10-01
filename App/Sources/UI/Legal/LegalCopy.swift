@@ -6,6 +6,11 @@ enum LegalCopy {
     static var supportMailto: URL { URL(string: "mailto:\(supportEmail)")! }
     static let notResponsible =
         "You use Retract at your own risk. We are not responsible for anything that happens — including Instagram bans, locks, lost messages, or failed unsends."
+    static let notAffiliated =
+        "Retract isn’t affiliated with, endorsed by, or connected to Instagram or Meta."
+    /// Guideline 3.1.2: auto-renew terms must be visible on the purchase screen, not only in Terms.
+    static let subscriptionFinePrint =
+        "Payment is charged to your Apple ID at confirmation. Subscriptions auto-renew unless you turn off auto-renew at least 24 hours before the period ends. Manage in Settings → Apple ID → Subscriptions. Retract isn’t affiliated with Instagram or Meta."
 
     static let faq: [(question: String, answer: String)] = [
         (
@@ -57,7 +62,7 @@ enum LegalCopy {
         ),
         (
             "Not our platform",
-            "Retract is not affiliated with, endorsed by, or connected to Instagram or Meta. We do not own, operate, or control Instagram. Instagram’s terms, community standards, and enforcement are theirs. If Instagram is unhappy with you, with Unsend, or with any tool you used — including Retract — that is between you and Instagram. It is not our problem, and we are not responsible for their decisions."
+            "Retract is not affiliated with, endorsed by, authorized by, or connected to Instagram or Meta. Instagram and related names are used only to describe what the app does. We do not own or control Instagram. Using unofficial tools, including Retract, may violate Instagram’s Terms of Use. Instagram may restrict, challenge, or disable accounts. That risk is yours. If Instagram is unhappy with you or with this app, that is between you and Instagram."
         ),
         (
             "Your account, your consequences",
@@ -77,7 +82,11 @@ enum LegalCopy {
         ),
         (
             "Subscriptions and the free allowance",
-            "You can unsend 100 messages for free. After that, Pro is sold as a monthly or yearly auto-renewing subscription through the App Store. Prices shown in the app are charged by Apple. Cancel in Settings → Apple ID → Subscriptions. Refunds follow Apple’s policies and applicable law. Purchases stay with your Apple ID if you delete Retract’s local data."
+            "You can unsend 100 messages for free. After that, Pro is sold as a monthly or yearly auto-renewing subscription through the App Store. Payment is charged to your Apple ID at confirmation of purchase. Subscriptions renew unless you turn off auto-renew at least 24 hours before the period ends. Your account may be charged for renewal within 24 hours before the end of the current period. Manage or cancel in Settings → Apple ID → Subscriptions. Deleting Retract does not cancel the subscription. Refunds follow Apple’s policies and applicable law. Purchases stay with your Apple ID if you delete Retract’s local data."
+        ),
+        (
+            "Apple",
+            "These Terms are between you and the publisher reachable at \(supportEmail), not Apple. Apple is not responsible for Retract or its content, and has no obligation to provide support. Apple and Apple’s subsidiaries are third-party beneficiaries of these Terms to the extent App Store rules require it."
         ),
         (
             "Privacy",

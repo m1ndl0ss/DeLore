@@ -31,6 +31,15 @@ struct PrivacyView: View {
                 }
 
                 Card {
+                    Text("Sample data")
+                        .font(.title(.headline))
+                    Text("Retract may include sample chats for App Review and testing. Sample data is fake, stays on this phone, and never contacts Instagram or a real account.")
+                        .font(.subheadline)
+                        .foregroundStyle(Palette.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Card {
                     Text("Your password")
                         .font(.title(.headline))
                     Text("You type it into Instagram's own sign-in page. We never see it, we never store it, and it never leaves this phone through us. After you sign in, Instagram's session stays in the Keychain on this device until you disconnect.")

@@ -194,12 +194,27 @@ public struct InstagramInboxSync: Sendable {
             "visual_message_return_type": "unseen"
         ]
         if let cursor { query["cursor"] = cursor }
-        let response = try await client.send(InstagramAPIRequest(method: .get, path: "/api/v1/direct_v2/inbox/", query: query))
-        do {
-            return try InstagramWebFormat.parseInbox(response.body)
-        } catch {
-            throw IntegrationError.unexpectedResponse(code: response.statusCode)
+        var last: IntegrationError?
+        for host in InstagramRequestHost.shared.order() {
+            do {
+                let response = try await client.send(
+                    InstagramAPIRequest(method: .get, path: "/api/v1/direct_v2/inbox/", query: query, host: host)
+                )
+                let page = try InstagramWebFormat.parseInbox(response.body)
+                InstagramRequestHost.shared.remember(host)
+                return page
+            } catch let error as IntegrationError {
+                switch error {
+                case .unexpectedResponse, .transportFailure:
+                    last = error
+                default:
+                    throw error
+                }
+            } catch {
+                last = .unexpectedResponse(code: 0)
+            }
         }
+        throw last ?? IntegrationError.unavailable
     }
 
     private struct LoadedConversation {
@@ -253,7 +268,6 @@ public struct InstagramInboxSync: Sendable {
             if let cursor, cursor == lastCursor { hasOlder = false }
             lastCursor = cursor
             onPartial?(ownerMessages.count)
-            if hasOlder, listingDelay > 0 { try await clock.sleep(for: listingDelay) }
         }
 
         ownerMessages.sort { ($0.sentAt, $0.ref.messageID) < ($1.sentAt, $1.ref.messageID) }

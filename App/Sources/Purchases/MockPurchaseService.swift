@@ -8,6 +8,7 @@ final class MockPurchaseService: PurchaseService, @unchecked Sendable {
     private let lock = NSLock()
     private let ledger: PassLedger
     private var subscribed = false
+    private(set) var lastPurchasedID: String?
     private let continuation: AsyncStream<Void>.Continuation
     private let stream: AsyncStream<Void>
 
@@ -20,12 +21,15 @@ final class MockPurchaseService: PurchaseService, @unchecked Sendable {
 
     func products() async throws -> [StoreProduct] {
         [
-            StoreProduct(id: "mock.pro.yearly", kind: .proYearly, displayName: "Pro Yearly", displayPrice: "$59.99", monthlyEquivalent: "$5.00"),
-            StoreProduct(id: "mock.pro.monthly", kind: .proMonthly, displayName: "Pro Monthly", displayPrice: "$19.99", monthlyEquivalent: nil),
+            StoreProduct(id: "mock.pro.yearly", kind: .proYearly, displayName: "Pro Yearly", displayPrice: "$59.99", monthlyEquivalent: "$5.00", isPromo: false),
+            StoreProduct(id: "mock.pro.monthly", kind: .proMonthly, displayName: "Pro Monthly", displayPrice: "$19.99", monthlyEquivalent: nil, isPromo: false),
+            StoreProduct(id: "mock.pro.yearly.promo", kind: .proYearly, displayName: "Pro Yearly", displayPrice: "$53.99", monthlyEquivalent: "$4.50", isPromo: true),
+            StoreProduct(id: "mock.pro.monthly.promo", kind: .proMonthly, displayName: "Pro Monthly", displayPrice: "$17.99", monthlyEquivalent: nil, isPromo: true),
         ]
     }
 
     func purchase(_ productID: String) async throws -> PurchaseOutcome {
+        lock.withLock { lastPurchasedID = productID }
         if productID.contains("single") {
             _ = try ledger.credit(transactionID: UUID().uuidString)
         } else {

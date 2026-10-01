@@ -119,11 +119,25 @@ final class StoreKitPurchaseService: PurchaseService, @unchecked Sendable {
 
     private func map(_ product: Product) -> StoreProduct? {
         let kind: StoreProduct.Kind
+        let isPromo: Bool
         switch product.id {
-        case catalog.oneTimeCleanup: kind = .oneTimeCleanup
-        case catalog.proMonthly: kind = .proMonthly
-        case catalog.proYearly: kind = .proYearly
-        default: return nil
+        case catalog.oneTimeCleanup:
+            kind = .oneTimeCleanup
+            isPromo = false
+        case catalog.proMonthly:
+            kind = .proMonthly
+            isPromo = false
+        case catalog.proYearly:
+            kind = .proYearly
+            isPromo = false
+        case catalog.proMonthlyPromo:
+            kind = .proMonthly
+            isPromo = true
+        case catalog.proYearlyPromo:
+            kind = .proYearly
+            isPromo = true
+        default:
+            return nil
         }
         var monthly: String?
         if kind == .proYearly {
@@ -135,7 +149,8 @@ final class StoreKitPurchaseService: PurchaseService, @unchecked Sendable {
             kind: kind,
             displayName: product.displayName,
             displayPrice: product.displayPrice,
-            monthlyEquivalent: monthly
+            monthlyEquivalent: monthly,
+            isPromo: isPromo
         )
     }
 

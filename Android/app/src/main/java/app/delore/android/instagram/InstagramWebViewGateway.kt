@@ -47,6 +47,7 @@ class InstagramWebViewGateway {
     @Volatile private var ajaxHash: String? = null
     @Volatile private var fbDtsg: String? = null
     @Volatile private var lsdToken: String? = null
+    @Volatile private var lastUserID: String? = null
 
     val isAttached: Boolean get() = webView != null
 
@@ -54,9 +55,7 @@ class InstagramWebViewGateway {
     fun attach(context: Context): WebView {
         webView?.let { return it }
         val view = WebView(context.applicationContext).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.userAgentString = InstagramWebConstants.CHROME_USER_AGENT
+            settings.applyInstagramWebsiteDefaults()
             settings.offscreenPreRaster = true
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -117,6 +116,8 @@ class InstagramWebViewGateway {
         ajaxHash = null
         fbDtsg = null
         lsdToken = null
+        lastUserID = null
+        InstagramRequestHost.reset()
         main.post {
             webView?.destroy()
             webView = null
@@ -126,6 +127,10 @@ class InstagramWebViewGateway {
     suspend fun send(request: InstagramAPIRequest, session: InstagramWebSession): HTTPResponse {
         if (!session.hasLiveSession) throw IntegrationError.SessionExpired
         val csrf = session.csrfToken?.takeIf { it.isNotEmpty() } ?: throw IntegrationError.SessionExpired
+        if (lastUserID != session.userID) {
+            InstagramRequestHost.reset()
+            lastUserID = session.userID
+        }
         val url = InstagramHTTPClient.instagramUrl(request.path, request.query, request.host)
         return mutex.withLock {
             ensureReady(session, request)

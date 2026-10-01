@@ -31,9 +31,9 @@ struct SettingsView: View {
                                 .foregroundStyle(Palette.secondaryInk)
                         }
                     }
-                    if entitlements.isPro {
-                        Button("Manage subscription") { managingSubscription = true }
-                    } else {
+                    if entitlements.hasStoreSubscription {
+                        Button("Cancel or manage subscription") { managingSubscription = true }
+                    } else if !entitlements.isPro {
                         Button("Get Pro") { showingPaywall = true }
                     }
                     Button("Restore purchases") {
@@ -55,9 +55,9 @@ struct SettingsView: View {
                 Section("Your data") {
                     NavigationLink("How we handle your data") { PrivacyView() }
                     if !model.env.hasLiveSession {
-                        Button("Reconnect Instagram") {
+                        Button(model.isDemoMode ? "Connect Instagram" : "Reconnect Instagram") {
                             dismiss()
-                            model.beginLogin(.reconnect)
+                            model.beginLogin(model.isDemoMode ? .connect : .reconnect)
                         }
                     }
                 }

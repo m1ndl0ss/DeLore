@@ -62,6 +62,7 @@ class InstagramWorkController(private val app: Application, private val env: App
         }
 
     fun attachBrowser() {
+        if (env.isDemoMode) return
         val run = {
             env.webBrowser.attach(app)
             env.webBrowser.wake()
@@ -329,16 +330,16 @@ class InstagramWorkController(private val app: Application, private val env: App
             cleanup: app.delore.android.domain.CleanupProgress?,
         ): String {
             if (cleanup?.status == JobStatus.Running) {
-                return "Unsending ${cleanup.processed} of ${cleanup.total}. You can leave."
+                return "Unsending ${cleanup.processed} of ${cleanup.total}"
             }
             if (inbox != null) {
                 return if (inbox.isListing) {
-                    "Finding your chats. You can leave."
+                    "Finding your chats"
                 } else {
-                    "Reading chats. You can leave."
+                    "Reading chats"
                 }
             }
-            return "Retract is working. You can leave."
+            return "Retract is working"
         }
     }
 }

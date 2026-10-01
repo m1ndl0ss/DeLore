@@ -1,0 +1,28 @@
+---
+description: When Matvey asks to launch, submit, ship, release, or apply to App Store / Google Play, stop and walk him through the console checklist. Do not treat the binary as enough.
+alwaysApply: true
+---
+
+# Retract store release
+
+If Matvey asks to launch, submit, ship, release, or apply to the App Store or Play: **stop coding and walk him through these console steps**. Do not send him to a canvas. Do not submit until he has done them. Do not list complimentary unlock codes in public store copy.
+
+## Matvey must do
+
+1. **Host legal URLs** so they 200: `https://kandalintsev.com/retract/privacy` and `https://kandalintsev.com/retract/terms` from `docs/legal/`. Ask before touching the live site. Submission fails without them.
+2. **App Store Connect + Play Console — four auto-renewable products, one group (Retract Pro):**
+   - `app.delore.pro.monthly` $19.99 / month
+   - `app.delore.pro.yearly` $59.99 / year
+   - `app.delore.pro.monthly.promo` $17.99 / month (hidden from paywall)
+   - `app.delore.pro.yearly.promo` $53.99 / year (hidden from paywall)
+   Do not submit `app.delore.cleanup.single`. Until promo SKUs exist, `RETRACT10` / `REF10` will not charge.
+3. **Listing** from `docs/LAUNCH.md`: name Retract; category Social Networking; age 12+ / Teen; honest “automates Instagram’s Unsend”, Instagram.com login, local, not affiliated. No stealth/detection copy. No sample-inbox marketing.
+4. **Privacy nutrition / Play Data safety:** Data Not Collected by Retract. Instagram gets the same website traffic as unsending in a browser. Play: declare `dataSync` FGS if asked.
+5. **Review notes (both stores):** Instagram.com login in-app, session on device, Unsend is Instagram’s Unsend. Reviewers: if login appears, tap the Retract wordmark **seven times** (VoiceOver: Load sample inbox). Fake chats, no IG account. Paywall after 100 free. Promo SKUs exist but are not on the paywall.
+6. **IAP screenshots** of the in-app paywall (monthly + yearly only). Restore + cancel/manage already in Settings.
+7. **Ask Matvey** whether complimentary Pro stays a reviewer-noted gift or becomes a StoreKit / Play offer code (3.1.1).
+8. iOS: Archive Release, TestFlight sandbox purchase. Android: AAB `:app:bundleRelease`, content rating, license testers.
+
+## Do not change at launch
+
+`app.delore.android` package/`applicationId`; product IDs above; desktop Chrome user-agent (never spoof the Instagram app).

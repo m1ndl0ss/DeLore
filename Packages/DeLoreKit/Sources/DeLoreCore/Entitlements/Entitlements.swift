@@ -57,15 +57,40 @@ public struct ProductCatalog: Equatable, Sendable {
     public var oneTimeCleanup: String
     public var proMonthly: String
     public var proYearly: String
+    public var proMonthlyPromo: String
+    public var proYearlyPromo: String
     public var subscriptionGroupID: String?
 
-    public init(oneTimeCleanup: String, proMonthly: String, proYearly: String, subscriptionGroupID: String? = nil) {
+    public init(
+        oneTimeCleanup: String,
+        proMonthly: String,
+        proYearly: String,
+        proMonthlyPromo: String = "app.delore.pro.monthly.promo",
+        proYearlyPromo: String = "app.delore.pro.yearly.promo",
+        subscriptionGroupID: String? = nil
+    ) {
         self.oneTimeCleanup = oneTimeCleanup
         self.proMonthly = proMonthly
         self.proYearly = proYearly
+        self.proMonthlyPromo = proMonthlyPromo
+        self.proYearlyPromo = proYearlyPromo
         self.subscriptionGroupID = subscriptionGroupID
     }
 
-    public var all: [String] { [oneTimeCleanup, proMonthly, proYearly] }
-    public var subscriptions: Set<String> { [proMonthly, proYearly] }
+    public var all: [String] { [oneTimeCleanup, proMonthly, proYearly, proMonthlyPromo, proYearlyPromo] }
+    public var subscriptions: Set<String> { [proMonthly, proYearly, proMonthlyPromo, proYearlyPromo] }
+    public var displaySubscriptions: Set<String> { [proMonthly, proYearly] }
+
+    public func isDisplaySubscription(_ id: String) -> Bool {
+        id == proMonthly || id == proYearly
+    }
+
+    public func checkoutID(forDisplay id: String, discounted: Bool) -> String {
+        guard discounted else { return id }
+        switch id {
+        case proMonthly: return proMonthlyPromo
+        case proYearly: return proYearlyPromo
+        default: return id
+        }
+    }
 }

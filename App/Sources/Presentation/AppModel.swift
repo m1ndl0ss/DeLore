@@ -70,10 +70,12 @@ final class AppModel {
     var termsPrompt: TermsPrompt?
     private var termsNoticeDismissedThisLaunch = false
     private var pendingRetractIDs: Set<ConversationID> = []
+    private var pendingSampleInbox = false
     private var lastInboxJob: InboxSyncModel.Job = .list
     private(set) var overview: LibraryOverview?
     private(set) var isLoadingOverview = false
     private(set) var history: [CleanupHistoryEntry] = []
+    private(set) var isDemoMode = false
 
     let env: AppEnvironment
     var entitlements: EntitlementManager { env.entitlements }
@@ -89,6 +91,7 @@ final class AppModel {
         async let minimumSplash: Void = Self.splashDelay()
         await entitlements.refresh()
         env.dropStaleFullInbox()
+        isDemoMode = env.isDemoMode
 
         if env.hasLibrary {
             await reloadOverview()
@@ -203,7 +206,12 @@ final class AppModel {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(450))
             guard env.hasAcceptedTerms else { return }
-            loginPurpose = .connect
+            if pendingSampleInbox {
+                pendingSampleInbox = false
+                openSampleInbox()
+            } else {
+                loginPurpose = .connect
+            }
         }
     }
 
@@ -224,9 +232,11 @@ final class AppModel {
         } catch {
             env.logger.error("could not keep Instagram session: \(error.safeDescription)")
             loginPurpose = nil
+            isDemoMode = env.isDemoMode
             return
         }
         loginPurpose = nil
+        isDemoMode = env.isDemoMode
         let shouldSync: Bool
         switch purpose {
         case .connect, .refresh:
@@ -405,11 +415,29 @@ final class AppModel {
         withAnimation { route = .home }
     }
 
+    func openSampleInbox() {
+        if env.hasLiveSession { return }
+        loginPurpose = nil
+        if !env.hasAcceptedTerms {
+            pendingSampleInbox = true
+            termsPrompt = .signup
+            return
+        }
+        do {
+            try env.enterReviewDemo()
+            isDemoMode = true
+            Task { await reloadOverview() }
+        } catch {
+            env.logger.error("could not open sample inbox: \(error.safeDescription)")
+        }
+    }
+
     func deletionAppeared() {
         if env.hasLiveSession {
             if !env.hasLibrary { beginInboxSync() }
             return
         }
+        if env.isDemoMode { return }
         guard !didPromptDeletionLogin else { return }
         didPromptDeletionLogin = true
         beginLogin(.connect)
@@ -495,6 +523,7 @@ final class AppModel {
         }
         overview = nil
         history = []
+        isDemoMode = false
         didPromptDeletionLogin = false
         tab = .settings
         withAnimation { route = .home }

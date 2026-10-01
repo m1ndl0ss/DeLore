@@ -43,6 +43,19 @@ data class ProductCatalog(
     val oneTimeCleanup: String,
     val proMonthly: String,
     val proYearly: String,
+    val proMonthlyPromo: String = "app.delore.pro.monthly.promo",
+    val proYearlyPromo: String = "app.delore.pro.yearly.promo",
 ) {
-    val all: List<String> get() = listOf(oneTimeCleanup, proMonthly, proYearly)
+    val all: List<String> get() = listOf(oneTimeCleanup, proMonthly, proYearly, proMonthlyPromo, proYearlyPromo)
+    val subscriptions: List<String> get() = listOf(proMonthly, proYearly, proMonthlyPromo, proYearlyPromo)
+    val displaySubscriptions: List<String> get() = listOf(proMonthly, proYearly)
+
+    fun checkoutId(displayId: String, discounted: Boolean): String {
+        if (!discounted) return displayId
+        return when (displayId) {
+            proMonthly -> proMonthlyPromo
+            proYearly -> proYearlyPromo
+            else -> displayId
+        }
+    }
 }

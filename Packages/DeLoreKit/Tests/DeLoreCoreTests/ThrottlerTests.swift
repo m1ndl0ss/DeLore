@@ -83,10 +83,13 @@ final class ThrottlerTests: XCTestCase {
     func testEstimatedDurationRespectsHourlyCap() throws {
         let policy = RatePolicy.conservative
         XCTAssertEqual(policy.estimatedDuration(forItemCount: 0), 0)
-        let oneHour = try XCTUnwrap(policy.estimatedDuration(forItemCount: policy.hourlyLimit))
-        XCTAssertEqual(oneHour, 3_600, accuracy: 0.001)
-        let twoHours = try XCTUnwrap(policy.estimatedDuration(forItemCount: policy.hourlyLimit * 2))
-        XCTAssertEqual(twoHours, 7_200, accuracy: 0.001)
+        let oneHourCount = policy.hourlyLimit
+        let typicalGap = policy.minimumDelay + policy.maximumJitter / 2
+        let expectedOneHour = max(Double(oneHourCount) * typicalGap, 3_600)
+        let oneHour = try XCTUnwrap(policy.estimatedDuration(forItemCount: oneHourCount))
+        XCTAssertEqual(oneHour, expectedOneHour, accuracy: 0.001)
+        let twoHours = try XCTUnwrap(policy.estimatedDuration(forItemCount: oneHourCount * 2))
+        XCTAssertEqual(twoHours, expectedOneHour * 2, accuracy: 0.001)
     }
 
     func testEstimatorNeedsSamplesBeforeClaimingAnything() {

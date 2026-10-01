@@ -73,6 +73,10 @@
 	<string>$(DL_PRODUCT_PRO_MONTHLY)</string>
 	<key>DLProductProYearly</key>
 	<string>$(DL_PRODUCT_PRO_YEARLY)</string>
+	<key>DLProductProMonthlyPromo</key>
+	<string>$(DL_PRODUCT_PRO_MONTHLY_PROMO)</string>
+	<key>DLProductProYearlyPromo</key>
+	<string>$(DL_PRODUCT_PRO_YEARLY_PROMO)</string>
 	<key>DLFreeCleanupLimit</key>
 	<string>$(DL_FREE_LIMIT)</string>
 	<key>DLAnalyticsEnabled</key>

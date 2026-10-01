@@ -36,6 +36,35 @@ public protocol InstagramAPIClient: Sendable {
     func send(_ request: InstagramAPIRequest) async throws -> HTTPResponse
 }
 
+/// Remembers which Instagram host last served inbox/thread JSON so we don't retry the miss every page.
+final class InstagramRequestHost: @unchecked Sendable {
+    static let shared = InstagramRequestHost()
+    private let lock = NSLock()
+    private var preferred: String?
+
+    func order() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        let first = preferred ?? InstagramWebConstants.wwwHost
+        let other = first == InstagramWebConstants.wwwHost
+            ? InstagramWebConstants.apiHost
+            : InstagramWebConstants.wwwHost
+        return [first, other]
+    }
+
+    func remember(_ host: String) {
+        lock.lock()
+        preferred = host
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        preferred = nil
+        lock.unlock()
+    }
+}
+
 /// Instagram's own website client id, published in `instagram.com` page source as `APP_ID`.
 /// This identifies the website, not a reverse-engineered iOS/Android app.
 public enum InstagramWebConstants {
@@ -63,12 +92,14 @@ func fetchInstagramThread(
     let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
     let path = "/api/v1/direct_v2/threads/\(encoded)/"
     var last: IntegrationError?
-    for host in [InstagramWebConstants.wwwHost, InstagramWebConstants.apiHost] {
+    for host in InstagramRequestHost.shared.order() {
         do {
             let response = try await client.send(
                 InstagramAPIRequest(method: .get, path: path, query: query, host: host)
             )
-            return try InstagramWebFormat.parseThread(response.body)
+            let page = try InstagramWebFormat.parseThread(response.body)
+            InstagramRequestHost.shared.remember(host)
+            return page
         } catch let error as IntegrationError {
             switch error {
             case .unexpectedResponse, .transportFailure:
@@ -302,6 +333,7 @@ final class InstagramWWWClaim: @unchecked Sendable {
             dtsg = nil
             lsd = nil
             value = "0"
+            InstagramRequestHost.shared.reset()
             return true
         }
     }

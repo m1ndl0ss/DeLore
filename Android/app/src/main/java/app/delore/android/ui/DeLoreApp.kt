@@ -3,6 +3,8 @@ package app.delore.android.ui
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.RepeatMode
@@ -29,6 +31,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -68,6 +71,7 @@ import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -175,12 +179,14 @@ fun DeLoreRoot(model: AppViewModel) {
                     reminder = state.termsPrompt == TermsPrompt.REMINDER,
                     onPrimary = { dontShow -> model.acceptTermsPrompt(dontShow) },
                     onCancel = { model.cancelTermsPrompt() },
+                    onReviewDemo = { model.openSampleInbox() },
                 )
             }
             if (state.loginPurpose != null) {
                 InstagramLoginScreen(
                     onComplete = { session -> model.handleLogin(session, state.loginPurpose!!) },
                     onCancel = { model.cancelLogin() },
+                    onReviewDemo = { model.openSampleInbox() },
                 )
             }
             if (state.sessionPresented && state.progress != null) {
@@ -265,6 +271,10 @@ private fun MainTabs(model: AppViewModel) {
 @Composable
 private fun AccountScreen(model: AppViewModel) {
     var confirmErase by remember { mutableStateOf(false) }
+    var restoreNotice by remember { mutableStateOf<String?>(null) }
+    val restoreScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val state by model.state.collectAsState()
     LaunchedEffect(Unit) { model.reloadOverview() }
     Column(
         Modifier
@@ -296,8 +306,12 @@ private fun AccountScreen(model: AppViewModel) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Instagram", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                 Text(
-                    if (model.hasLiveSession) "Connected · stays on this phone" else "Not connected",
-                    color = if (model.hasLiveSession) Palette.accent else Palette.secondaryInk(),
+                    when {
+                        model.hasLiveSession -> "Connected · stays on this phone"
+                        state.isDemoMode -> "Sample inbox · not a real account"
+                        else -> "Not connected"
+                    },
+                    color = if (model.hasLiveSession || state.isDemoMode) Palette.accent else Palette.secondaryInk(),
                     fontFamily = Type.sans,
                     fontSize = 14.sp,
                 )
@@ -315,7 +329,33 @@ private fun AccountScreen(model: AppViewModel) {
             }
         }
         Column(Modifier.clip(RoundedCornerShape(Radius.m)).background(Palette.surface())) {
-            YouRow("Plan", if (model.entitlements.isPro) "Pro" else "Free · Upgrade") { model.showSheet(Sheet.Paywall("settings")) }
+            YouRow("Plan", if (model.entitlements.isPro) "Pro" else "Free · Upgrade") {
+                if (!model.entitlements.isPro) model.showSheet(Sheet.Paywall("settings"))
+            }
+            if (model.entitlements.hasStoreSubscription) {
+                YouDivider()
+                YouRow("Cancel or manage subscription") {
+                    openPlaySubscriptions(context)
+                }
+            }
+            YouDivider()
+            YouRow("Restore purchases") {
+                restoreScope.launch {
+                    val ok = model.entitlements.restore()
+                    restoreNotice = if (!ok) "Play Store isn’t reachable."
+                    else if (!model.entitlements.isPro) "No Pro plan found."
+                    else "Purchases restored."
+                }
+            }
+            restoreNotice?.let {
+                Text(
+                    it,
+                    color = Palette.secondaryInk(),
+                    fontFamily = Type.sans,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = Metrics.cardInset, vertical = Spacing.s),
+                )
+            }
         }
         Column(Modifier.clip(RoundedCornerShape(Radius.m)).background(Palette.surface())) {
             YouRow("Privacy") { model.showSheet(Sheet.Privacy) }
@@ -564,7 +604,7 @@ private fun InboxSyncScreen(model: AppViewModel) {
                 Spacer(Modifier.weight(1f))
             }
             Spacer(Modifier.height(Spacing.s))
-            Text("This happens on your phone. You can leave — Retract keeps reading.", color = Palette.secondaryInk(), textAlign = TextAlign.Center, fontSize = 13.sp)
+            Text("This happens on your phone. You can exit — don't close Retract.", color = Palette.secondaryInk(), textAlign = TextAlign.Center, fontSize = 13.sp)
         }
     }
 }
@@ -597,21 +637,36 @@ private fun HomeScreen(model: AppViewModel) {
                 .statusBarsPadding()
                 .padding(horizontal = Spacing.screen)
                 .padding(bottom = when {
-                    overview != null && overview.conversations.isNotEmpty() && !model.entitlements.isPro -> 176.dp
+                    overview != null && overview.conversations.isNotEmpty() && !model.entitlements.isPro -> 196.dp
                     overview != null && overview.conversations.isNotEmpty() -> 88.dp
-                    !model.entitlements.isPro -> 108.dp
+                    !model.entitlements.isPro -> 120.dp
                     else -> Spacing.xl
                 }),
             verticalArrangement = Arrangement.spacedBy(Spacing.m),
         ) {
             Spacer(Modifier.height(Spacing.s))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Wordmark()
+                Wordmark(onSecretUnlock = { model.openSampleInbox() })
                 Spacer(Modifier.weight(1f))
                 if (overview != null && model.hasLiveSession) {
-                    QuietLink("Refresh") { model.refreshChats() }
+                    IconButton(
+                        onClick = { model.refreshChats() },
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = "Refresh",
+                            tint = Palette.ink(),
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
-                if (model.entitlements.isPro) Pill("Pro")
+                if (model.entitlements.isPro) {
+                    Spacer(Modifier.width(20.dp))
+                    Box(Modifier.clickable { model.selectTab(MainTab.SETTINGS) }) {
+                        Pill("Pro")
+                    }
+                }
             }
             val progress = state.progress
             if (progress != null && !progress.status.isFinished) {
@@ -631,7 +686,7 @@ private fun HomeScreen(model: AppViewModel) {
                     }
                     LoreProgressBar(progress.fraction)
                     Text(
-                        if (progress.status == JobStatus.Running) "${inflect(progress.remaining, "message")} to go. You can leave."
+                        if (progress.status == JobStatus.Running) "${inflect(progress.remaining, "message")} to go. You can exit — don't close Retract."
                         else "Resume. We won't unsend twice.",
                         color = Palette.secondaryInk(),
                         fontFamily = Type.sans,
@@ -650,12 +705,20 @@ private fun HomeScreen(model: AppViewModel) {
                     fontFamily = Type.sans,
                     fontSize = 15.sp,
                 )
-                if (!model.hasLiveSession) {
+                if (!model.hasLiveSession && !state.isDemoMode) {
                     Card {
                         Text("Instagram signed you out", color = Palette.ink(), fontWeight = FontWeight.SemiBold)
                         Text("Progress is still on this phone. Reconnect to keep cleaning — we won't unsend twice.", color = Palette.secondaryInk())
                         SecondaryButton("Reconnect Instagram") { model.beginLogin(LoginPurpose.RECONNECT) }
                     }
+                }
+                if (state.isDemoMode) {
+                    Text(
+                        "Sample chats for review. Connect Instagram in Settings to use a real account.",
+                        color = Palette.secondaryInk(),
+                        fontFamily = Type.sans,
+                        fontSize = 14.sp,
+                    )
                 }
                 OutlinedTextField(
                     value = query,
@@ -730,10 +793,10 @@ private fun HomeScreen(model: AppViewModel) {
                 .align(Alignment.BottomCenter)
                 .padding(horizontal = Spacing.screen)
                 .padding(bottom = Spacing.s),
-            verticalArrangement = Arrangement.spacedBy(Spacing.s),
+            verticalArrangement = Arrangement.spacedBy(Spacing.m),
         ) {
             if (overview != null && overview.conversations.isNotEmpty()) {
-                PrimaryButton(actionLabel, enabled = canAct && (model.hasLiveSession || model.hasUnfinishedSession)) {
+                PrimaryButton(actionLabel, enabled = canAct && (model.isCleanupAvailable || model.hasUnfinishedSession)) {
                     model.retractWith(selection)
                 }
             } else if (overview == null && !state.loadingOverview) {
@@ -777,6 +840,10 @@ private fun SheetHost(model: AppViewModel, sheet: Sheet) {
 @Composable
 private fun SettingsSheet(model: AppViewModel) {
     var confirmErase by remember { mutableStateOf(false) }
+    var restoreNotice by remember { mutableStateOf<String?>(null) }
+    val restoreScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val state by model.state.collectAsState()
     Column(Modifier.verticalScroll(rememberScrollState()).padding(Spacing.screen)) {
         Text("Your plan", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
         Spacer(Modifier.height(Spacing.s))
@@ -790,14 +857,27 @@ private fun SettingsSheet(model: AppViewModel) {
         if (!model.entitlements.isPro) {
             Spacer(Modifier.height(Spacing.s))
             PrimaryButton("Get Pro") { model.showSheet(Sheet.Paywall("settings")) }
+        } else if (model.entitlements.hasStoreSubscription) {
+            Spacer(Modifier.height(Spacing.s))
+            SecondaryButton("Cancel or manage subscription") { openPlaySubscriptions(context) }
         }
+        Spacer(Modifier.height(Spacing.s))
+        QuietButton("Restore purchases") {
+            restoreScope.launch {
+                val ok = model.entitlements.restore()
+                restoreNotice = if (!ok) "Play Store isn’t reachable."
+                else if (!model.entitlements.isPro) "No Pro plan found."
+                else "Purchases restored."
+            }
+        }
+        restoreNotice?.let { Text(it, color = Palette.secondaryInk(), fontSize = 13.sp) }
         Spacer(Modifier.height(Spacing.l))
         Text("Your data", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
         QuietButton("How we handle your data") { model.showSheet(Sheet.Privacy) }
         if (!model.hasLiveSession) {
-            QuietButton("Reconnect Instagram") {
+            QuietButton(if (state.isDemoMode) "Connect Instagram" else "Reconnect Instagram") {
                 model.showSheet(null)
-                model.beginLogin(LoginPurpose.RECONNECT)
+                model.beginLogin(if (state.isDemoMode) LoginPurpose.CONNECT else LoginPurpose.RECONNECT)
             }
         }
         Spacer(Modifier.height(Spacing.l))
@@ -1196,7 +1276,7 @@ private fun ConfirmBlock(model: AppViewModel, setup: CleanupSetupState, prepared
         PromiseRow(Icons.Filled.Visibility, "Unsent messages may already have been seen, copied, screenshotted, or retained elsewhere.")
         PromiseRow(Icons.Filled.Refresh, "This can't be undone.")
         PromiseRow(Icons.Filled.Person, "Only messages you sent.", "Never anyone else's.")
-        PromiseRow(Icons.Filled.Shield, "Slow on purpose.", "We pace unsends because Instagram rate-limits. Big cleanups can take hours. You can leave — Retract keeps reading and unsending on this phone. That does not protect your account.")
+        PromiseRow(Icons.Filled.Shield, "Slow on purpose.", "We pace unsends because Instagram rate-limits. Big cleanups can take hours. You can exit — don't close Retract. That does not protect your account.")
         PromiseRow(Icons.Filled.Warning, "We are not responsible for anything.", LegalCopy.NOT_RESPONSIBLE)
     }
     Spacer(Modifier.height(Spacing.m))
@@ -1287,7 +1367,7 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
     val activity = LocalContext.current.findActivity()
     val scope = rememberCoroutineScope()
     val plans = model.entitlements.products
-        .filter { it.kind == StoreProduct.Kind.YEARLY || it.kind == StoreProduct.Kind.MONTHLY }
+        .filter { (it.kind == StoreProduct.Kind.YEARLY || it.kind == StoreProduct.Kind.MONTHLY) && !it.isPromo }
         .sortedBy { if (it.kind == StoreProduct.Kind.YEARLY) 0 else 1 }
     var selected by remember { mutableStateOf(plans.firstOrNull { it.kind == StoreProduct.Kind.YEARLY }?.id) }
     var notice by remember { mutableStateOf<String?>(null) }
@@ -1317,6 +1397,10 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
         val host = activity
         if (host == null) {
             notice = "Play Store isn’t reachable."
+            return
+        }
+        if (percentOff > 0 && model.entitlements.checkoutProduct(product) == null) {
+            notice = "That discount isn’t in the store yet."
             return
         }
         selected = product.id
@@ -1436,6 +1520,7 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
             else -> {
                 Column(verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
                     plans.forEach { product ->
+                        val checkout = model.entitlements.checkoutProduct(product)
                         PlanCard(
                             product = product,
                             selected = product.id == selected,
@@ -1443,6 +1528,9 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
                             purchasing = model.entitlements.isPurchasing,
                             pro = model.entitlements.isPro,
                             percentOff = percentOff,
+                            checkoutPrice = if (percentOff > 0) checkout?.displayPrice else null,
+                            checkoutMonthly = if (percentOff > 0) checkout?.monthlyEquivalent else null,
+                            discountReady = percentOff <= 0 || checkout != null,
                             onSelect = { selected = product.id },
                             onBuy = { buy(product) },
                         )
@@ -1464,6 +1552,12 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
             QuietLink("Terms") { legal = "terms" }
             QuietLink("Privacy") { legal = "privacy" }
         }
+        Text(
+            LegalCopy.SUBSCRIPTION_FINE_PRINT,
+            color = Palette.secondaryInk(),
+            fontFamily = Type.sans,
+            fontSize = 12.sp,
+        )
         }
     }
 }
@@ -1476,6 +1570,9 @@ private fun PlanCard(
     purchasing: Boolean,
     pro: Boolean,
     percentOff: Int = 0,
+    checkoutPrice: String? = null,
+    checkoutMonthly: String? = null,
+    discountReady: Boolean = true,
     onSelect: () -> Unit,
     onBuy: () -> Unit,
 ) {
@@ -1531,7 +1628,7 @@ private fun PlanCard(
             }
         }
         Row(verticalAlignment = Alignment.Bottom) {
-            if (percentOff > 0) {
+            if (percentOff > 0 && checkoutPrice != null) {
                 Text(
                     product.displayPrice,
                     color = Palette.secondaryInk(),
@@ -1542,7 +1639,7 @@ private fun PlanCard(
                 )
                 Spacer(Modifier.size(8.dp))
                 Text(
-                    PromoCatalog.discountedPrice(product.displayPrice, percentOff),
+                    checkoutPrice,
                     color = Palette.ink(),
                     fontFamily = Type.sans,
                     fontWeight = FontWeight.SemiBold,
@@ -1566,20 +1663,19 @@ private fun PlanCard(
                 modifier = Modifier.padding(bottom = 4.dp),
             )
         }
-        product.monthlyEquivalent?.takeIf { yearly }?.let { monthly ->
-            val shown = if (percentOff > 0) PromoCatalog.discountedPrice(monthly, percentOff) else monthly
-            Text("$shown / mo", color = Palette.accent, fontFamily = Type.sans, fontSize = 14.sp)
+        (checkoutMonthly ?: product.monthlyEquivalent)?.takeIf { yearly }?.let { monthly ->
+            Text("$monthly / mo", color = Palette.accent, fontFamily = Type.sans, fontSize = 14.sp)
         }
         if (yearly) {
             PrimaryButton(
                 if (purchasing && selected) "Working…" else "Subscribe yearly",
-                enabled = !purchasing && !pro,
+                enabled = !purchasing && !pro && discountReady,
                 onClick = onBuy,
             )
         } else {
             SecondaryButton(
                 if (purchasing && selected) "Working…" else "Subscribe monthly",
-                enabled = !purchasing && !pro,
+                enabled = !purchasing && !pro && discountReady,
                 onClick = onBuy,
             )
         }
@@ -1656,9 +1752,7 @@ private fun CleanupRunScreen(model: AppViewModel) {
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                Text("You can leave. Retract keeps going.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-                Text("If Instagram asks us to wait, we wait. That does not mean your account is safe.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-                Text(LegalCopy.NOT_RESPONSIBLE, color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                Text("You can exit. Don't close Retract.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(Spacing.s))
                 when (copy.action) {
                     StatusCopy.Action.PAUSE -> SecondaryButton("Pause") { model.pauseCleanup() }
@@ -1733,4 +1827,13 @@ private fun Context.findActivity(): Activity? {
         current = current.baseContext
     }
     return current as? Activity
+}
+
+private fun openPlaySubscriptions(context: Context) {
+    val intent = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("https://play.google.com/store/account/subscriptions?package=app.delore.android"),
+    )
+    if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    context.startActivity(intent)
 }

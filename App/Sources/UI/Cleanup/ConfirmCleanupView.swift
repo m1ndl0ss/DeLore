@@ -40,7 +40,7 @@ struct ConfirmCleanupView: View {
                             PromiseRow(symbol: "eye.fill", title: "Unsent messages may already have been seen, copied, screenshotted, or retained elsewhere.")
                             PromiseRow(symbol: "arrow.uturn.backward", title: "This can't be undone.")
                             PromiseRow(symbol: "person.fill.checkmark", title: "Only messages you sent.", detail: "Never anyone else's.")
-                            PromiseRow(symbol: "tortoise.fill", title: "Slow on purpose.", detail: "We pace unsends because Instagram rate-limits. Big cleanups can take hours. You can leave — Retract keeps reading and unsending on this phone. That does not protect your account.")
+                            PromiseRow(symbol: "tortoise.fill", title: "Slow on purpose.", detail: "We pace unsends because Instagram rate-limits. Big cleanups can take hours. You can exit — don't close Retract. That does not protect your account.")
                             PromiseRow(symbol: "exclamationmark.triangle.fill", title: "We are not responsible for anything.", detail: "You use Retract at your own risk. We are not responsible for anything that happens — including Instagram bans, locks, lost messages, or failed unsends.")
                         }
 

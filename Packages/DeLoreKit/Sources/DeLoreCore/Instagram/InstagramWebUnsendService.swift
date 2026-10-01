@@ -4,10 +4,9 @@ import Foundation
 /// in Instagram's own web inbox.
 ///
 /// Order that works today:
-/// 1. GraphQL `direct_unsend_message` on www.instagram.com (`mid.$…` + real `fb_dtsg`).
-///    Relay-only headers; do not send Instagram mobile-API extras or `__a=1`.
-/// 2. Empty-body POST to `i.instagram.com/.../items/{id}/delete/` (www has no such route;
-///    a form body with `_uid` returns 4415001).
+/// 1. GraphQL `direct_unsend_message` on www when we already have a `mid.$…` id.
+/// 2. Otherwise empty-body POST to `i.instagram.com/.../items/{id}/delete/` using the
+///    item id from the local library. Do not re-page the thread for every unsend.
 /// Desktop Chrome UA only. Does not retry a single failing request.
 public struct InstagramWebUnsendService: UnsendService {
     private let client: InstagramAPIClient
@@ -28,9 +27,10 @@ public struct InstagramWebUnsendService: UnsendService {
         guard try isOwned(target) else { return .notOwned }
         guard let owner = try ownerID(), !owner.isEmpty else { throw IntegrationError.sessionExpired }
         var last: IntegrationError?
-        if let mid = try? await webMessageID(of: target), let mid, !mid.isEmpty {
+        let itemID = target.ref.messageID
+        if itemID.hasPrefix("mid."), !itemID.isEmpty {
             do {
-                let response = try await client.send(graphqlUnsend(target, owner: owner, messageID: mid))
+                let response = try await client.send(graphqlUnsend(target, owner: owner, messageID: itemID))
                 return try InstagramDeleteParse.outcome(from: response)
             } catch let error as IntegrationError {
                 switch error {
@@ -78,7 +78,8 @@ public struct InstagramWebUnsendService: UnsendService {
             }
             cursor = next
         }
-        return .gone
+        // Oldest sends sit far past the newest pages. Unknown is "still there" so we retry unsend.
+        return .present
     }
 
     private func isOwned(_ target: CleanupTarget) throws -> Bool {
@@ -129,21 +130,6 @@ public struct InstagramWebUnsendService: UnsendService {
             isIdempotent: false,
             destructive: true
         )
-    }
-
-    private func webMessageID(of target: CleanupTarget) async throws -> String? {
-        var cursor: String?
-        for _ in 0..<presencePageLimit {
-            let page = try await fetchInstagramThread(client: client, id: target.ref.conversationID.rawValue, cursor: cursor)
-            if let item = page.thread?.items?.first(where: { $0.itemID == target.ref.messageID }) {
-                return item.webMessageID
-            }
-            guard page.thread?.hasOlder == true, let next = page.thread?.oldestCursor else {
-                return nil
-            }
-            cursor = next
-        }
-        return nil
     }
 
     private func encode(_ value: String) -> String {

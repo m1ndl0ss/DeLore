@@ -172,6 +172,9 @@ class InstagramHTTPClient(
     }
 
     private fun warmupIfNeeded(session: InstagramWebSession, csrf: String) {
+        if (warmedForUser != session.userID) {
+            InstagramRequestHost.reset()
+        }
         if (warmedForUser == session.userID) return
         wwwClaim = session.wwwClaimCookie ?: "0"
         asbdID = null
@@ -273,9 +276,8 @@ class InstagramWebUnsendService(
     override suspend fun unsend(target: CleanupTarget): UnsendOutcome {
         if (!isOwned(target)) return UnsendOutcome.NOT_OWNED
         val owner = ownerID()?.takeIf { it.isNotEmpty() } ?: throw IntegrationError.SessionExpired
-        val live = runCatching { liveUnsendIDs(target) }.getOrNull()
-        val itemId = live?.itemID?.ifBlank { null } ?: target.ref.messageID
-        val mid = live?.webMessageID
+        val itemId = target.ref.messageID
+        val mid = itemId.takeIf { it.startsWith("mid.") }
         var last: IntegrationError? = null
         if (!mid.isNullOrBlank()) {
             try {
@@ -290,8 +292,6 @@ class InstagramWebUnsendService(
                 last = error
                 Log.w("Retract", "IG unsend skip graphql transport")
             }
-        } else {
-            Log.w("Retract", "IG unsend no mid.$ id for graphql")
         }
         val restId = itemId.takeIf { it.isNotBlank() && !it.startsWith("mid.") } ?: itemId
         for (request in restUnsendAttempts(target, restId)) {
@@ -329,7 +329,8 @@ class InstagramWebUnsendService(
             if (!page.hasOlder || page.oldestCursor == null) return MessagePresence.GONE
             cursor = page.oldestCursor
         }
-        return MessagePresence.GONE
+        // Oldest sends sit far past the newest pages. Unknown is "still there" so we retry unsend.
+        return MessagePresence.PRESENT
     }
 
     private fun isOwned(target: CleanupTarget): Boolean {
@@ -380,23 +381,6 @@ class InstagramWebUnsendService(
         )
     }
 
-    private data class LiveUnsendIDs(val itemID: String, val webMessageID: String?)
-
-    private suspend fun liveUnsendIDs(target: CleanupTarget): LiveUnsendIDs? {
-        var cursor: String? = null
-        repeat(maxOf(1, presencePageLimit)) {
-            val page = fetchThread(target.ref.conversationID.rawValue, cursor)
-            val item = page.items.firstOrNull { it.itemID == target.ref.messageID }
-            if (item != null) {
-                Log.i("Retract", "IG item mid=${item.webMessageID != null}")
-                return LiveUnsendIDs(item.itemID, item.webMessageID)
-            }
-            if (!page.hasOlder || page.oldestCursor == null) return null
-            cursor = page.oldestCursor
-        }
-        return null
-    }
-
     private suspend fun fetchThread(id: String, cursor: String?): ThreadPage =
         client.fetchDirectThread(id, cursor)
 }
@@ -414,13 +398,15 @@ internal suspend fun InstagramAPIClient.fetchDirectThread(
     val encoded = URLEncoder.encode(id, Charsets.UTF_8)
     val path = "/api/v1/direct_v2/threads/$encoded/"
     var last: Exception? = null
-    for (host in listOf(InstagramWebConstants.WWW_HOST, InstagramWebConstants.API_HOST)) {
+    for (host in InstagramRequestHost.order()) {
         try {
             val response = send(InstagramAPIRequest(HTTPMethod.GET, path, query, host = host))
-            return runCatching { InstagramWebFormat.parseThread(response.body) }.getOrElse {
+            val page = runCatching { InstagramWebFormat.parseThread(response.body) }.getOrElse {
                 Log.w("Retract", "IG thread parse $host keys=${InstagramWebFormat.topKeys(response.body)}")
                 throw IntegrationError.UnexpectedResponse(response.statusCode)
             }
+            InstagramRequestHost.remember(host)
+            return page
         } catch (error: IntegrationError.UnexpectedResponse) {
             last = error
             Log.w("Retract", "IG thread $host skip code=${error.code}")
@@ -596,15 +582,29 @@ class InstagramInboxSync(
             "visual_message_return_type" to "unseen",
         )
         if (cursor != null) query["cursor"] = cursor
-        val response = client.send(InstagramAPIRequest(HTTPMethod.GET, "/api/v1/direct_v2/inbox/", query))
-        return runCatching { InstagramWebFormat.parseInbox(response.body) }
-            .getOrElse {
-                Log.e(
-                    "Retract",
-                    "IG inbox parse: ${it.javaClass.simpleName}: ${it.message} keys=${InstagramWebFormat.topKeys(response.body)}",
-                )
-                throw IntegrationError.UnexpectedResponse(response.statusCode)
+        var last: Exception? = null
+        for (host in InstagramRequestHost.order()) {
+            try {
+                val response = client.send(InstagramAPIRequest(HTTPMethod.GET, "/api/v1/direct_v2/inbox/", query, host = host))
+                val page = runCatching { InstagramWebFormat.parseInbox(response.body) }
+                    .getOrElse {
+                        Log.e(
+                            "Retract",
+                            "IG inbox parse $host: ${it.javaClass.simpleName}: ${it.message} keys=${InstagramWebFormat.topKeys(response.body)}",
+                        )
+                        throw IntegrationError.UnexpectedResponse(response.statusCode)
+                    }
+                InstagramRequestHost.remember(host)
+                return page
+            } catch (error: IntegrationError.UnexpectedResponse) {
+                last = error
+                Log.w("Retract", "IG inbox $host skip code=${error.code}")
+            } catch (error: IntegrationError.TransportFailure) {
+                last = error
+                Log.w("Retract", "IG inbox $host skip transport")
             }
+        }
+        throw last ?: IntegrationError.Unavailable
     }
 
     private suspend fun loadConversation(
@@ -648,7 +648,6 @@ class InstagramInboxSync(
             if (cursor == null || cursor == lastCursor) hasOlder = false
             lastCursor = cursor
             onPartial?.invoke(ownerMessages.size)
-            if (hasOlder && listingDelaySeconds > 0) clock.sleep(listingDelaySeconds)
         }
         ownerMessages.sortWith(compareBy({ it.sentAtMillis }, { it.ref.messageID }))
         val byKind = mutableMapOf<MessageKind, Int>()

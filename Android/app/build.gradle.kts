@@ -27,6 +27,8 @@ android {
         buildConfigField("String", "PRODUCT_ONE_TIME", "\"app.delore.cleanup.single\"")
         buildConfigField("String", "PRODUCT_PRO_MONTHLY", "\"app.delore.pro.monthly\"")
         buildConfigField("String", "PRODUCT_PRO_YEARLY", "\"app.delore.pro.yearly\"")
+        buildConfigField("String", "PRODUCT_PRO_MONTHLY_PROMO", "\"app.delore.pro.monthly.promo\"")
+        buildConfigField("String", "PRODUCT_PRO_YEARLY_PROMO", "\"app.delore.pro.yearly.promo\"")
     }
 
     buildTypes {

@@ -34,6 +34,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import app.delore.android.instagram.InstagramLoginPolicy
 import app.delore.android.instagram.InstagramWebConstants
 import app.delore.android.instagram.InstagramWebSession
+import app.delore.android.instagram.applyInstagramWebsiteDefaults
 import java.util.concurrent.atomic.AtomicBoolean
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -41,6 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 fun InstagramLoginScreen(
     onComplete: (InstagramWebSession) -> Unit,
     onCancel: () -> Unit,
+    onReviewDemo: () -> Unit = {},
 ) {
     var working by remember { mutableStateOf(true) }
     BackHandler(onBack = onCancel)
@@ -55,12 +57,12 @@ fun InstagramLoginScreen(
             Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.s),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Wordmark()
+            Wordmark(onSecretUnlock = onReviewDemo)
             Spacer(Modifier.weight(1f))
             CloseButton(onCancel)
         }
         Text(
-            "Sign in with Instagram",
+            "Continue on Instagram.com",
             color = Palette.ink(),
             fontWeight = FontWeight.Bold,
             fontSize = 20.sp,
@@ -84,9 +86,7 @@ fun InstagramLoginScreen(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT,
                         )
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.userAgentString = InstagramWebConstants.CHROME_USER_AGENT
+                        settings.applyInstagramWebsiteDefaults()
                         settings.useWideViewPort = true
                         settings.loadWithOverviewMode = true
                         settings.builtInZoomControls = true
@@ -118,7 +118,7 @@ fun InstagramLoginScreen(
             }
         }
         Text(
-            "This is Instagram's sign-in page. We never see your password. If Instagram asks you to verify, do that here — we won't skip it.",
+            "This is Instagram.com’s sign-in page. We never see your password. If Instagram asks you to verify, do that here — we won't skip it.",
             color = Palette.secondaryInk(),
             fontSize = 13.sp,
             modifier = Modifier.padding(Spacing.screen),

@@ -13,8 +13,21 @@ final class PromoCodeTests: XCTestCase {
         XCTAssertNil(PromoCatalog.offer(for: " "))
     }
 
+    func testCheckoutIDUsesPromoSku() {
+        let catalog = ProductCatalog(
+            oneTimeCleanup: "app.delore.cleanup.single",
+            proMonthly: "app.delore.pro.monthly",
+            proYearly: "app.delore.pro.yearly"
+        )
+        XCTAssertEqual(catalog.checkoutID(forDisplay: "app.delore.pro.yearly", discounted: false), "app.delore.pro.yearly")
+        XCTAssertEqual(catalog.checkoutID(forDisplay: "app.delore.pro.yearly", discounted: true), "app.delore.pro.yearly.promo")
+        XCTAssertEqual(catalog.all.count, 5)
+    }
+
     func testCampaignCodesAreTenPercentOff() {
-        XCTAssertEqual(PromoCatalog.offer(for: "REF10", percentOffCodes: ["REF10"]), .percentOff(10))
+        XCTAssertEqual(PromoCatalog.offer(for: "RETRACT10"), .percentOff(10))
+        XCTAssertEqual(PromoCatalog.offer(for: "ref10"), .percentOff(10))
+        XCTAssertEqual(PromoCatalog.percentOffCodes, ["RETRACT10", "REF10"])
     }
 
     func testDiscountedPriceKeepsCurrency() {
@@ -58,11 +71,10 @@ final class PromoCodeTests: XCTestCase {
 
     func testPercentOffPersists() {
         let store = InMemorySecretStore()
-        let vault = PromoVault(store: store) { code in
-            code == "REF10" ? .percentOff(10) : PromoCatalog.offer(for: code)
-        }
+        let vault = PromoVault(store: store)
         XCTAssertEqual(vault.redeem("ref10"), .applied(.percentOff(10)))
         XCTAssertEqual(PromoVault(store: store).percentOff, 10)
         XCTAssertFalse(PromoVault(store: store).isComplimentary)
+        XCTAssertEqual(PromoVault(store: store).appliedCode, "REF10")
     }
 }

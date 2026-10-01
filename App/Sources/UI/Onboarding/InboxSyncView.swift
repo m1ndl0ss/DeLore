@@ -26,7 +26,7 @@ struct InboxSyncView: View {
                 titles: titles,
                 caption: caption
             )
-            Text("This happens on your phone. You can leave — Retract keeps reading.")
+            Text("This happens on your phone. You can exit — don't close Retract.")
                 .font(.subheadline)
                 .foregroundStyle(Palette.secondaryInk)
                 .multilineTextAlignment(.center)

@@ -77,13 +77,13 @@ public struct RatePolicy: Hashable, Codable, Sendable {
         self.maxConsecutiveFailures = maxConsecutiveFailures
     }
 
-    /// Production default: slow and steady.
+    /// Production default: about one unsend every two seconds. 429s still back off.
     public static let conservative = RatePolicy(
-        minimumDelay: 4,
-        maximumJitter: 2,
-        burstLimit: 10,
+        minimumDelay: 2,
+        maximumJitter: 0.4,
+        burstLimit: 30,
         burstWindow: 60,
-        hourlyLimit: 300,
+        hourlyLimit: 1_800,
         backoffBase: 15,
         backoffFactor: 2,
         backoffMaximum: 15 * 60,
@@ -94,6 +94,27 @@ public struct RatePolicy: Hashable, Codable, Sendable {
         slowdownFactor: 2,
         maximumSlowdown: 8,
         successesToRelax: 50,
+        maxAttemptsPerItem: 3,
+        maxConsecutiveFailures: 5
+    )
+
+    /// Sample inbox only. Fast enough for App Review guideline 2.1; never used against Instagram.
+    public static let review = RatePolicy(
+        minimumDelay: 0.35,
+        maximumJitter: 0.1,
+        burstLimit: 200,
+        burstWindow: 60,
+        hourlyLimit: 10_000,
+        backoffBase: 0.5,
+        backoffFactor: 2,
+        backoffMaximum: 4,
+        rateLimitCooldown: 2,
+        rateLimitCooldownMaximum: 8,
+        maxConsecutiveRateLimits: 3,
+        maxRateLimitsPerRun: 6,
+        slowdownFactor: 2,
+        maximumSlowdown: 4,
+        successesToRelax: 20,
         maxAttemptsPerItem: 3,
         maxConsecutiveFailures: 5
     )

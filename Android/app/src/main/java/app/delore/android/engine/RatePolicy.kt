@@ -35,11 +35,11 @@ data class RatePolicy(
 
     companion object {
         val conservative = RatePolicy(
-            minimumDelay = 4.0,
-            maximumJitter = 2.0,
-            burstLimit = 10,
+            minimumDelay = 2.0,
+            maximumJitter = 0.4,
+            burstLimit = 30,
             burstWindow = 60.0,
-            hourlyLimit = 300,
+            hourlyLimit = 1_800,
             backoffBase = 15.0,
             backoffFactor = 2.0,
             backoffMaximum = 15 * 60.0,
@@ -50,6 +50,27 @@ data class RatePolicy(
             slowdownFactor = 2.0,
             maximumSlowdown = 8.0,
             successesToRelax = 50,
+            maxAttemptsPerItem = 3,
+            maxConsecutiveFailures = 5,
+        )
+
+        /** Sample inbox only. Fast enough for review; never used against Instagram. */
+        val review = RatePolicy(
+            minimumDelay = 0.35,
+            maximumJitter = 0.1,
+            burstLimit = 200,
+            burstWindow = 60.0,
+            hourlyLimit = 10_000,
+            backoffBase = 0.5,
+            backoffFactor = 2.0,
+            backoffMaximum = 4.0,
+            rateLimitCooldown = 2.0,
+            rateLimitCooldownMaximum = 8.0,
+            maxConsecutiveRateLimits = 3,
+            maxRateLimitsPerRun = 6,
+            slowdownFactor = 2.0,
+            maximumSlowdown = 4.0,
+            successesToRelax = 20,
             maxAttemptsPerItem = 3,
             maxConsecutiveFailures = 5,
         )

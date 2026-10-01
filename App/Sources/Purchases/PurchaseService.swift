@@ -14,6 +14,8 @@ struct StoreProduct: Identifiable, Equatable, Sendable {
     let displayPrice: String
     /// Localized price per month for yearly plans, when StoreKit can compute it.
     let monthlyEquivalent: String?
+    /// Hidden 10% SKU. Paywall lists the normal plan and checks this out after a code.
+    let isPromo: Bool
 }
 
 enum PurchaseOutcome: Equatable, Sendable {
