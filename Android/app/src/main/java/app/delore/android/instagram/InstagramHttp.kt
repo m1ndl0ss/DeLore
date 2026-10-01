@@ -496,6 +496,7 @@ class InstagramInboxSync(
         session: InstagramWebSession,
         ids: Collection<ConversationID>,
         titles: Map<String, String> = emptyMap(),
+        forceRefresh: Boolean = false,
         onProgress: ((InboxReadProgress) -> Unit)? = null,
     ): LibraryOverview {
         val ownerID = session.userID
@@ -530,7 +531,7 @@ class InstagramInboxSync(
             )
         }
         wanted.forEachIndexed { index, listed ->
-            if (listed.messagesLoaded) {
+            if (listed.messagesLoaded && !forceRefresh) {
                 sends += listed.sentByOwner
                 onProgress?.invoke(
                     InboxReadProgress(

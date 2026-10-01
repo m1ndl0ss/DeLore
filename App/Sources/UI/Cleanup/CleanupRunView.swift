@@ -18,7 +18,8 @@ struct CleanupRunView: View {
                 running
             }
         }
-        .screenBackground()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Palette.background.ignoresSafeArea())
         .animation(.easeInOut, value: session.isFinished)
         .interactiveDismissDisabled(session.isRunning)
     }
@@ -28,27 +29,28 @@ struct CleanupRunView: View {
         let copy = session.copy
         return VStack(alignment: .leading, spacing: Spacing.l) {
             HStack {
-                Wordmark()
-                Spacer()
-                if !session.isRunning {
-                    Button {
-                        model.isSessionPresented = false
-                    } label: {
-                        Image(systemName: "chevron.down")
-                            .font(.system(.headline, weight: .bold))
-                            .foregroundStyle(Palette.ink)
-                            .frame(width: 44, height: 44)
-                    }
-                    .accessibilityLabel("Back to home")
+                Button {
+                    model.isSessionPresented = false
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Palette.ink)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .disabled(session.isRunning)
+                .opacity(session.isRunning ? 0.35 : 1)
+                .accessibilityLabel("Back")
+                Spacer()
             }
-            .padding(.top, Spacing.m)
+            .padding(.top, Spacing.s)
 
             Spacer(minLength: Spacing.m)
 
             VStack(alignment: .leading, spacing: Spacing.m) {
                 Text(copy.headline)
-                    .font(.display(.title))
+                    .font(Type.medium(28))
                     .foregroundStyle(Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
@@ -75,35 +77,23 @@ struct CleanupRunView: View {
                 if progress.remaining > 0 {
                     Text(TimeRemainingCopy.text(for: progress.estimatedSecondsRemaining
                         ?? model.env.ratePolicy.estimatedDuration(forItemCount: progress.remaining)))
-                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .font(Type.body(15))
                         .foregroundStyle(Palette.secondaryInk)
                 }
 
                 if let message = copy.message {
-                    Card {
-                        Label {
-                            Text(message)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } icon: {
-                            Image(systemName: copy.tone == .caution ? "shield.lefthalf.filled" : "info.circle.fill")
-                                .foregroundStyle(copy.tone == .caution ? Palette.accentInk : Palette.secondaryInk)
-                        }
-                        .font(.subheadline)
-                        .foregroundStyle(Palette.ink)
-                        if let until = session.tryAgainAt ?? progress.resumeNotBefore, until > Date(), progress.status.pauseReason != nil {
-                            Text("You can try again after \(until.formatted(date: .omitted, time: .shortened)).")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(Palette.secondaryInk)
-                        }
-                    }
+                    Text(message)
+                        .font(Type.body(15))
+                        .foregroundStyle(Palette.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
             Spacer(minLength: Spacing.m)
 
             VStack(spacing: Spacing.s) {
-                Label("You can exit. Don't close Retract.", systemImage: "iphone")
-                    .font(.footnote.weight(.medium))
+                Text("You can leave. Don't close Retract.")
+                    .font(Type.body(13))
                     .foregroundStyle(Palette.secondaryInk)
                     .frame(maxWidth: .infinity)
 
@@ -123,7 +113,7 @@ struct CleanupRunView: View {
             }
             Button("Keep going", role: .cancel) {}
         } message: {
-            Text("Messages already unsent stay unsent. The rest stay where they are.")
+            Text("Messages already unsent stay unsent.")
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: progress.status)
         .fullScreenCover(item: loginBinding) { purpose in
@@ -142,7 +132,7 @@ struct CleanupRunView: View {
             Button {
                 Task { await session.pause() }
             } label: {
-                Label("Pause", systemImage: "pause.fill")
+                Text("Pause")
             }
             .buttonStyle(.secondary)
             .accessibilityIdentifier("pause")
@@ -150,11 +140,7 @@ struct CleanupRunView: View {
             Button {
                 Task { await session.resume() }
             } label: {
-                if action == .resume {
-                    Label("Resume", systemImage: "play.fill")
-                } else {
-                    Label("Try again", systemImage: "arrow.clockwise")
-                }
+                Text(action == .resume ? "Resume" : "Try again")
             }
             .buttonStyle(.primary)
             .disabled(session.isBusy)
@@ -163,7 +149,7 @@ struct CleanupRunView: View {
             Button {
                 Task { await session.resume(userResolvedIssue: true) }
             } label: {
-                Text("I've done that, continue")
+                Text("Continue")
             }
             .buttonStyle(.primary)
             .disabled(session.isBusy)
@@ -172,7 +158,7 @@ struct CleanupRunView: View {
                 Button("Reconnect Instagram") { model.beginLogin(.reconnect) }
                     .buttonStyle(.primary)
                     .accessibilityIdentifier("reconnectInstagram")
-                Button("I've signed in, continue") {
+                Button("Continue") {
                     Task { await session.resume(userResolvedIssue: true) }
                 }
                 .buttonStyle(.secondary)
@@ -197,6 +183,22 @@ struct CleanupDoneView: View {
 
     var body: some View {
         VStack(spacing: Spacing.l) {
+            HStack {
+                Button {
+                    Task { await model.closeSession() }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Palette.ink)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back")
+                Spacer()
+            }
+            .padding(.top, Spacing.s)
+
             Spacer()
 
             Image(systemName: wasCancelled ? "stop.fill" : "checkmark")
@@ -209,26 +211,33 @@ struct CleanupDoneView: View {
                 .accessibilityHidden(true)
 
             VStack(spacing: Spacing.s) {
-                Group {
-                    if wasCancelled {
-                        Text("Cleanup stopped")
-                    } else {
-                        Text("Fresh start ✨")
-                    }
+                Text(wasCancelled ? "Stopped" : "Done")
+                    .font(Type.medium(28))
+                    .foregroundStyle(Palette.ink)
+                    .multilineTextAlignment(.center)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("doneHeadline")
+
+                if progress.completed > 0 {
+                    Text("^[\(progress.completed) message](inflect: true) cleaned.")
+                        .font(Type.body(17))
+                        .foregroundStyle(Palette.secondaryInk)
+                } else if wasCancelled {
+                    Text("Nothing cleaned yet.")
+                        .font(Type.body(17))
+                        .foregroundStyle(Palette.secondaryInk)
                 }
-                .font(.display())
-                .foregroundStyle(Palette.ink)
-                .multilineTextAlignment(.center)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("doneHeadline")
 
-                Text("^[\(progress.completed) message](inflect: true) cleaned.")
-                    .font(.system(.title3, design: .rounded, weight: .semibold))
-                    .foregroundStyle(Palette.secondaryInk)
-
+                // Cancelled leftovers are not failures — they simply weren't reached.
+                if wasCancelled, progress.cancelled > 0 {
+                    Text("The rest stay where they are.")
+                        .font(Type.body(15))
+                        .foregroundStyle(Palette.secondaryInk)
+                        .multilineTextAlignment(.center)
+                }
                 if notCleaned > 0 {
-                    Text("^[\(notCleaned) message](inflect: true) couldn't be unsent. They're still there.")
-                        .font(.subheadline)
+                    Text("^[\(notCleaned) message](inflect: true) couldn't be unsent.")
+                        .font(Type.body(15))
                         .foregroundStyle(Palette.secondaryInk)
                         .multilineTextAlignment(.center)
                 }
@@ -236,17 +245,11 @@ struct CleanupDoneView: View {
 
             Spacer()
 
-            VStack(spacing: Spacing.s) {
-                Button("Done") {
-                    Task { await model.closeSession() }
-                }
-                .buttonStyle(.primary)
-                .accessibilityIdentifier("done")
-                Button("Clean another chat") {
-                    Task { await model.closeSession(thenChooseChats: true) }
-                }
-                .buttonStyle(.text)
+            Button("Done") {
+                Task { await model.closeSession() }
             }
+            .buttonStyle(.primary)
+            .accessibilityIdentifier("done")
         }
         .padding(.horizontal, Spacing.screen)
         .padding(.bottom, Spacing.m)
@@ -267,23 +270,18 @@ struct CleanupUnavailableView: View {
                 CloseButton { dismiss() }
             }
             Text("Sign in to Instagram first")
-                .font(.display(.title))
+                .font(Type.medium(28))
                 .foregroundStyle(Palette.ink)
                 .accessibilityAddTraits(.isHeader)
             Text("Cleaning uses Instagram's own Unsend action from this phone. Reconnect your account, then try again.")
                 .foregroundStyle(Palette.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
-            Card {
-                PromiseRow(symbol: "key.slash", title: "We never see your password", detail: "You sign in on Instagram's page.")
-                PromiseRow(symbol: "lock.fill", title: "Still private", detail: "Your login stays on this phone.")
-                PromiseRow(symbol: "chart.bar.xaxis", title: "No analytics", detail: "We don't collect identifiers or usage stats.")
-            }
             Spacer()
             Button("Got it") { dismiss() }
                 .buttonStyle(.primary)
         }
         .padding(Spacing.screen)
-        .screenBackground()
+        .background(Palette.background.ignoresSafeArea())
         .presentationDetents([.large])
     }
 }

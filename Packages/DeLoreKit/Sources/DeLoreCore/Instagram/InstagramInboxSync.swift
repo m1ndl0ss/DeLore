@@ -113,6 +113,7 @@ public struct InstagramInboxSync: Sendable {
         session: InstagramWebSession,
         ids: [ConversationID],
         titles: [String: String] = [:],
+        forceRefresh: Bool = false,
         onProgress: (@Sendable (InboxReadProgress) -> Void)? = nil
     ) async throws -> LibraryOverview {
         let ownerID = session.userID
@@ -147,7 +148,7 @@ public struct InstagramInboxSync: Sendable {
         }
         for (index, listed) in wanted.enumerated() {
             try Task.checkCancellation()
-            if listed.messagesLoaded {
+            if listed.messagesLoaded && !forceRefresh {
                 sends += listed.sentByOwner
                 onProgress?(InboxReadProgress(
                     chatsFound: total,

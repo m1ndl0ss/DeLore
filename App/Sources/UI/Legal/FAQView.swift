@@ -27,6 +27,7 @@ struct FAQView: View {
             }
             .padding(Spacing.screen)
         }
+        .background(Palette.background)
         .screenBackground()
         .navigationTitle("FAQ")
         .navigationBarTitleDisplayMode(.inline)

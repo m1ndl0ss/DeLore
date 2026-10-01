@@ -121,6 +121,7 @@ final class AppEnvironment {
     func loadInbox(
         ids: [ConversationID],
         titles: [String: String] = [:],
+        forceRefresh: Bool = false,
         onProgress: (@Sendable (InboxReadProgress) -> Void)? = nil
     ) async throws -> LibraryOverview {
         guard let session = try sessionVault.loadSession(), session.hasLiveSession else {
@@ -128,7 +129,13 @@ final class AppEnvironment {
         }
         let sync = LiveIntegration.makeInboxSync(sessionVault: sessionVault, library: library, logger: logger)
         return try await Task.detached(priority: .userInitiated) {
-            try await sync.load(session: session, ids: ids, titles: titles, onProgress: onProgress)
+            try await sync.load(
+                session: session,
+                ids: ids,
+                titles: titles,
+                forceRefresh: forceRefresh,
+                onProgress: onProgress
+            )
         }.value
     }
 

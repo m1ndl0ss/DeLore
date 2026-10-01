@@ -117,7 +117,7 @@ final class AppModel {
                 try? env.jobStore.discardActiveJob()
                 return
             }
-            session = CleanupSessionModel(engine: engine, initial: progress, entitlements: entitlements)
+            attachSession(CleanupSessionModel(engine: engine, initial: progress, entitlements: entitlements))
             isSessionPresented = true
             switch job.status {
             case .ready, .paused(.interrupted), .paused(.appInBackground):
@@ -447,7 +447,25 @@ final class AppModel {
         isLoadingOverview = true
         defer { isLoadingOverview = false }
         overview = try? await env.loadOverview()
+        reloadHistory()
+    }
+
+    func reloadHistory() {
         history = (try? env.history.load())?.reversed() ?? []
+    }
+
+    private fun attachSession(_ model: CleanupSessionModel) {
+        model.onActivityChanged = { [weak self] in self?.reloadHistory() }
+        model.onCleaned = { [weak self] keys in
+            Task { @MainActor in
+                guard let self, !keys.isEmpty else { return }
+                _ = try? self.env.library.excludeCleaned(keys)
+                await self.reloadOverview()
+                self.reloadHistory()
+            }
+        }
+        session = model
+        reloadHistory()
     }
 
     // MARK: Cleanup
@@ -485,11 +503,10 @@ final class AppModel {
 
         do {
             guard let engine = try CleanupEngine.loadActive(dependencies: env.engineDependencies()) else { return }
-            let model = CleanupSessionModel(engine: engine, initial: await engine.progress(), entitlements: entitlements)
+            attachSession(CleanupSessionModel(engine: engine, initial: await engine.progress(), entitlements: entitlements))
             sheet = nil
-            session = model
             isSessionPresented = true
-            await model.authorizeAndStart()
+            await session?.authorizeAndStart()
         } catch {
             env.logger.error("could not start job: \(error.safeDescription)")
         }

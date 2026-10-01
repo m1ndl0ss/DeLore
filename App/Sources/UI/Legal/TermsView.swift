@@ -18,6 +18,7 @@ struct TermsView: View {
             }
             .padding(Spacing.screen)
         }
+        .background(Palette.background)
         .screenBackground()
         .navigationTitle("Terms of use")
         .navigationBarTitleDisplayMode(.inline)

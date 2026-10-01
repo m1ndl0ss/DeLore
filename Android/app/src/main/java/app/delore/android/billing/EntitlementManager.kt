@@ -90,11 +90,13 @@ class EntitlementManager(
     }
 
     suspend fun refresh() {
+        runCatching { ensureClient() }
         val subscription = querySubscription()
-        paidFromStore = subscription.first
+        val ready = billing?.isReady == true
+        paidFromStore = if (ready) subscription.first else paidFromStore || subscription.first
         state = EntitlementState(
-            isPro = subscription.first || promo.isComplimentary,
-            proRenewsOrExpiresAt = subscription.second,
+            isPro = paidFromStore || promo.isComplimentary || (!ready && state.isPro),
+            proRenewsOrExpiresAt = subscription.second ?: state.proRenewsOrExpiresAt,
             cleanupPasses = ledger.passes,
             freeMessagesUsed = ledger.freeMessagesUsed,
         )

@@ -1,6 +1,7 @@
 package app.delore.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -41,7 +42,11 @@ import androidx.compose.ui.unit.sp
 fun FAQSheet(onBack: (() -> Unit)? = null) {
     val uri = LocalUriHandler.current
     Column(
-        Modifier.verticalScroll(rememberScrollState()).padding(Spacing.screen),
+        Modifier
+            .fillMaxWidth()
+            .background(Palette.backgroundDark)
+            .verticalScroll(rememberScrollState())
+            .padding(Spacing.screen),
         verticalArrangement = Arrangement.spacedBy(Spacing.m),
     ) {
         onBack?.let { QuietButton("Back", onClick = it) }
@@ -66,7 +71,11 @@ fun FAQSheet(onBack: (() -> Unit)? = null) {
 @Composable
 fun TermsSheet(onBack: (() -> Unit)? = null) {
     Column(
-        Modifier.verticalScroll(rememberScrollState()).padding(Spacing.screen),
+        Modifier
+            .fillMaxWidth()
+            .background(Palette.backgroundDark)
+            .verticalScroll(rememberScrollState())
+            .padding(Spacing.screen),
         verticalArrangement = Arrangement.spacedBy(Spacing.m),
     ) {
         onBack?.let { QuietButton("Back", onClick = it) }
@@ -199,7 +208,11 @@ private fun TermsCheckRow(label: String, checked: Boolean, onCheckedChange: (Boo
 @Composable
 fun PrivacySheet(onBack: (() -> Unit)? = null) {
     Column(
-        Modifier.verticalScroll(rememberScrollState()).padding(Spacing.screen),
+        Modifier
+            .fillMaxWidth()
+            .background(Palette.backgroundDark)
+            .verticalScroll(rememberScrollState())
+            .padding(Spacing.screen),
         verticalArrangement = Arrangement.spacedBy(Spacing.m),
     ) {
         onBack?.let { QuietButton("Back", onClick = it) }

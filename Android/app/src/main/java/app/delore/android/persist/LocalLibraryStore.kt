@@ -183,7 +183,7 @@ class LocalLibraryStore(private val root: File) : MessageSource {
         }
         val fileName = current.files[summary.id.rawValue] ?: "c${current.conversations.size}.jsonl"
         val file = File(indexDirectory(root), fileName)
-        file.parentFile.mkdirs()
+            file.parentFile?.mkdirs()
         val builder = StringBuilder()
         for (message in messages) {
             builder.append(
@@ -201,6 +201,46 @@ class LocalLibraryStore(private val root: File) : MessageSource {
             conversations = conversations,
             files = current.files + (loaded.id.rawValue to fileName),
         )
+        manifestFile.writeText(json.encodeToString(updated))
+        cached = updated
+        LibraryOverview(updated.conversations)
+    }
+
+    /** Drop cleaned messages from the on-device index so counts stay honest after cancel. */
+    fun excludeCleaned(cleaned: Set<String>): LibraryOverview? = lock.withLock {
+        if (cleaned.isEmpty()) return@withLock runCatching { LibraryOverview(loadManifest().conversations) }.getOrNull()
+        val current = runCatching { loadManifest() }.getOrNull() ?: return@withLock null
+        val conversations = current.conversations.map { summary ->
+            if (!summary.messagesLoaded) return@map summary
+            val fileName = current.files[summary.id.rawValue] ?: return@map summary
+            val file = File(indexDirectory(root), fileName)
+            if (!file.exists()) return@map summary
+            var sent = 0
+            val byKind = mutableMapOf<MessageKind, Int>()
+            var first: Long? = null
+            var last: Long? = null
+            val kept = StringBuilder()
+            file.forEachLine { line ->
+                if (line.isEmpty()) return@forEachLine
+                val entry = runCatching { json.decodeFromString<IndexLine>(line) }.getOrNull() ?: return@forEachLine
+                val key = "${summary.id.rawValue}|${entry.m}"
+                if (key in cleaned) return@forEachLine
+                kept.append(line).append('\n')
+                sent += 1
+                byKind[entry.k] = (byKind[entry.k] ?: 0) + 1
+                val millis = (entry.t * 1000).toLong()
+                if (first == null) first = millis
+                last = millis
+            }
+            file.writeText(kept.toString())
+            summary.copy(
+                sentByOwner = sent,
+                firstSentAt = first,
+                lastSentAt = last,
+                sentByKind = byKind,
+            )
+        }
+        val updated = current.copy(conversations = conversations)
         manifestFile.writeText(json.encodeToString(updated))
         cached = updated
         LibraryOverview(updated.conversations)

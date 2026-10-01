@@ -135,11 +135,12 @@ class AppEnvironment(private val context: Context) {
     suspend fun loadInbox(
         ids: Collection<ConversationID>,
         titles: Map<String, String> = emptyMap(),
+        forceRefresh: Boolean = false,
         onProgress: ((InboxReadProgress) -> Unit)?,
     ): LibraryOverview {
         val session = loadSession()?.takeIf { it.hasLiveSession } ?: throw app.delore.android.domain.IntegrationError.SessionExpired
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            InstagramInboxSync(http, library).load(session, ids, titles, onProgress)
+            InstagramInboxSync(http, library).load(session, ids, titles, forceRefresh, onProgress)
         }
     }
 

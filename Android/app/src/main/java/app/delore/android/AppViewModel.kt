@@ -133,6 +133,7 @@ class AppViewModel(
                     }
                     current.copy(progress = progress, sessionPresented = present)
                 }
+                if (progress != null) reloadHistory()
             }
         }
     }
@@ -301,6 +302,7 @@ class AppViewModel(
 
     fun selectTab(tab: MainTab) {
         _state.update { it.copy(tab = tab) }
+        if (tab == MainTab.ACTIVITY) reloadHistory()
     }
 
     fun openSampleInbox() {
@@ -343,6 +345,11 @@ class AppViewModel(
         val overview = runCatching { env.loadOverview() }.getOrNull()
         val history = runCatching { env.history.load() }.getOrDefault(emptyList()).asReversed()
         _state.update { it.copy(overview = overview, history = history, loadingOverview = false) }
+    }
+
+    private fun reloadHistory() {
+        val history = runCatching { env.history.load() }.getOrDefault(emptyList()).asReversed()
+        _state.update { it.copy(history = history) }
     }
 
     fun openSetup(scope: CleanupScope) {
@@ -400,7 +407,14 @@ class AppViewModel(
     }
 
     fun pauseCleanup() = viewModelScope.launch { engine?.pause() }
-    fun cancelCleanup() = viewModelScope.launch { engine?.cancel() }
+    fun cancelCleanup() = viewModelScope.launch {
+        val cleaned = engine?.cancel().orEmpty()
+        if (cleaned.isNotEmpty()) {
+            runCatching { env.library.excludeCleaned(cleaned) }
+        }
+        reloadHistory()
+        reloadOverview()
+    }
 
     fun resumeCleanup(userResolvedIssue: Boolean = false) = viewModelScope.launch {
         val current = engine ?: return@launch
@@ -421,7 +435,7 @@ class AppViewModel(
     }
 
     fun onAppForeground() = viewModelScope.launch {
-        work.attachBrowser()
+        if (work.isInboxActive || work.isCleanupBusy) work.attachBrowser()
         engine?.resumeAfterBackground()
         engine?.let { _state.update { s -> s.copy(progress = it.progress()) } }
     }
@@ -516,19 +530,22 @@ data class PreparedCleanup(val job: CleanupJob, val decision: CleanupAllowanceDe
 }
 
 class CleanupSetupState(
-    val overview: LibraryOverview,
+    overview: LibraryOverview,
     initial: CleanupScope,
     private val env: AppEnvironment,
 ) {
     enum class ScopeKind { EVERYTHING, CHOSEN }
     enum class DateBound { ANY, BEFORE, AFTER }
 
+    var overview: LibraryOverview = overview
+        private set
     var scopeKind: ScopeKind = if (initial is CleanupScope.Conversations) ScopeKind.CHOSEN else ScopeKind.EVERYTHING
     var chosen: Set<ConversationID> = (initial as? CleanupScope.Conversations)?.ids ?: emptySet()
     var dateBound: DateBound = DateBound.ANY
     var cutoff: Long = Calendar.getInstance().apply { add(Calendar.YEAR, -1) }.timeInMillis
     var kinds: Set<MessageKind> = filterableKinds.toSet()
     var isPreparing: Boolean = false
+    var isEvaluating: Boolean = false
     var prepared: PreparedCleanup? = null
     var failed: Boolean = false
 
@@ -542,11 +559,11 @@ class CleanupSetupState(
             val dayStart = cal.timeInMillis
             cal.add(Calendar.DAY_OF_YEAR, 1)
             val nextDay = cal.timeInMillis
-            val kindFilter = if (kinds.size == filterableKinds.size) null else kinds
+            // Kind filters omitted — Instagram item_type is often wrong, so type toggles would skip real messages.
             return when (dateBound) {
-                DateBound.ANY -> CleanupFilter(kinds = kindFilter)
-                DateBound.BEFORE -> CleanupFilter(sentBefore = nextDay, kinds = kindFilter)
-                DateBound.AFTER -> CleanupFilter(sentAfter = dayStart, kinds = kindFilter)
+                DateBound.ANY -> CleanupFilter()
+                DateBound.BEFORE -> CleanupFilter(sentBefore = nextDay)
+                DateBound.AFTER -> CleanupFilter(sentAfter = dayStart)
             }
         }
 
@@ -557,13 +574,16 @@ class CleanupSetupState(
     val estimatedCount: Int
         get() = QueueBuilder.estimatedCount(CleanupRequest(scope, filter), overview.conversations)
     val canContinue: Boolean
-        get() = !(scopeKind == ScopeKind.CHOSEN && chosen.isEmpty()) && kinds.isNotEmpty() && estimatedCount > 0
+        get() = !(scopeKind == ScopeKind.CHOSEN && chosen.isEmpty()) && estimatedCount > 0
 
     suspend fun prepare(limit: Int? = null) {
         if (isPreparing) return
         isPreparing = true
         failed = false
         try {
+            isEvaluating = true
+            refreshChatSizes()
+            isEvaluating = false
             val request = CleanupRequest(scope, filter, limit)
             val account = env.library.account()
             val report = QueueBuilder(env.library, env.jobStore).build(
@@ -577,8 +597,21 @@ class CleanupSetupState(
         } catch (_: Exception) {
             failed = true
         } finally {
+            isEvaluating = false
             isPreparing = false
         }
+    }
+
+    private suspend fun refreshChatSizes() {
+        val targets = QueueBuilder.targetConversations(scope, overview.conversations)
+        if (targets.isEmpty()) return
+        if (env.hasLiveSession) {
+            val titles = targets.associate { it.id.rawValue to it.title }
+            runCatching {
+                env.loadInbox(targets.map { it.id }, titles, forceRefresh = true, onProgress = null)
+            }
+        }
+        overview = env.loadOverview()
     }
 
     fun discardPrepared() {

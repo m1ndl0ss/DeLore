@@ -23,8 +23,8 @@ struct ConfirmCleanupView: View {
                     if prepared.count == 0 {
                         nothingToClean
                     } else {
-                        Text("You're about to unsend ^[\(prepared.count) message](inflect: true).")
-                            .font(.display(.title))
+                        Text("Unsend ^[\(prepared.count) message](inflect: true)?")
+                            .font(Type.medium(28))
                             .foregroundStyle(Palette.ink)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityAddTraits(.isHeader)
@@ -32,17 +32,14 @@ struct ConfirmCleanupView: View {
 
                         if let eta = model.env.ratePolicy.estimatedDuration(forItemCount: prepared.count) {
                             Text(TimeRemainingCopy.text(for: eta))
-                                .font(.system(.title3, design: .rounded, weight: .semibold))
+                                .font(Type.body(17))
                                 .foregroundStyle(Palette.secondaryInk)
                         }
 
-                        Card {
-                            PromiseRow(symbol: "eye.fill", title: "Unsent messages may already have been seen, copied, screenshotted, or retained elsewhere.")
-                            PromiseRow(symbol: "arrow.uturn.backward", title: "This can't be undone.")
-                            PromiseRow(symbol: "person.fill.checkmark", title: "Only messages you sent.", detail: "Never anyone else's.")
-                            PromiseRow(symbol: "tortoise.fill", title: "Slow on purpose.", detail: "We pace unsends because Instagram rate-limits. Big cleanups can take hours. You can exit — don't close Retract. That does not protect your account.")
-                            PromiseRow(symbol: "exclamationmark.triangle.fill", title: "We are not responsible for anything.", detail: "You use Retract at your own risk. We are not responsible for anything that happens — including Instagram bans, locks, lost messages, or failed unsends.")
-                        }
+                        Text("This can't be undone. You can leave — don't close Retract.")
+                            .font(Type.body(15))
+                            .foregroundStyle(Palette.secondaryInk)
+                            .fixedSize(horizontal: false, vertical: true)
 
                         allowanceSection
                     }
@@ -93,7 +90,7 @@ struct ConfirmCleanupView: View {
     private var allowanceSection: some View {
         switch decision {
         case let .limited(remaining)?:
-            Card {
+            VStack(alignment: .leading, spacing: Spacing.m) {
                 Group {
                     if remaining > 0 {
                         Text("Free covers ^[\(remaining) message](inflect: true)")
@@ -101,11 +98,8 @@ struct ConfirmCleanupView: View {
                         Text("You've used your free cleanups")
                     }
                 }
-                .font(.title(.headline))
+                .font(Type.medium(17))
                 .foregroundStyle(Palette.ink)
-                Text("Unlock everything to clean it all in one go.")
-                    .font(.subheadline)
-                    .foregroundStyle(Palette.secondaryInk)
                 Button("Unlock everything") { showingPaywall = true }
                     .buttonStyle(.primary)
                     .accessibilityIdentifier("unlockEverything")
@@ -120,14 +114,18 @@ struct ConfirmCleanupView: View {
                     .accessibilityIdentifier("cleanFree")
                 }
             }
+            .padding(Metrics.cardInset)
+            .elevated()
         case .filtersRequirePro?:
-            Card {
+            VStack(alignment: .leading, spacing: Spacing.m) {
                 Text("Filters are part of Pro")
-                    .font(.title(.headline))
+                    .font(Type.medium(17))
                     .foregroundStyle(Palette.ink)
                 Button("Unlock Pro") { showingPaywall = true }
                     .buttonStyle(.primary)
             }
+            .padding(Metrics.cardInset)
+            .elevated()
         default:
             EmptyView()
         }
@@ -136,7 +134,7 @@ struct ConfirmCleanupView: View {
     private var nothingToClean: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {
             Text("Nothing to clean here")
-                .font(.display(.title))
+                .font(Type.medium(28))
                 .foregroundStyle(Palette.ink)
             Text("Everything you picked is already gone, or doesn't match your filters.")
                 .foregroundStyle(Palette.secondaryInk)

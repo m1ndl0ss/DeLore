@@ -17,6 +17,9 @@ final class CleanupSessionModel: Identifiable {
     private let entitlements: EntitlementManager
     /// Only touched on the main actor, plus `deinit` once no other reference exists.
     @ObservationIgnored private nonisolated(unsafe) var observation: Task<Void, Never>?
+    var onActivityChanged: (() -> Void)?
+    var onCleaned: ((Set<String>) -> Void)?
+    private var lastCompleted = -1
     private var finishHandled = false
 
     init(engine: CleanupEngine, initial: CleanupProgress, entitlements: EntitlementManager) {
@@ -71,8 +74,10 @@ final class CleanupSessionModel: Identifiable {
     }
 
     func cancel() async {
-        await engine.cancel()
+        let cleaned = await engine.cancel()
         await refresh()
+        onActivityChanged?()
+        onCleaned?(cleaned)
     }
 
     // MARK: Lifecycle
@@ -109,8 +114,13 @@ final class CleanupSessionModel: Identifiable {
     }
 
     private func apply(_ update: CleanupProgress) {
+        let changed = update.completed != lastCompleted || update.status != progress.status
         progress = update
         UIApplication.shared.isIdleTimerDisabled = update.status == .running
+        if changed {
+            lastCompleted = update.completed
+            onActivityChanged?()
+        }
         if update.status.isFinished { handleFinish() }
     }
 
@@ -122,5 +132,7 @@ final class CleanupSessionModel: Identifiable {
         }
         CleanupBilling.clear(for: id)
         UIApplication.shared.isIdleTimerDisabled = false
+        onCleaned?(engine.completedKeys())
+        onActivityChanged?()
     }
 }

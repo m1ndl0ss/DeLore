@@ -55,6 +55,7 @@ struct PrivacyView: View {
             .foregroundStyle(Palette.ink)
             .padding(Spacing.screen)
         }
+        .background(Palette.background)
         .screenBackground()
         .navigationTitle("Privacy")
         .navigationBarTitleDisplayMode(.inline)

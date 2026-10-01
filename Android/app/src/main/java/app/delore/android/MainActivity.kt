@@ -21,6 +21,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         window.setBackgroundDrawableResource(R.color.background_dark)
+        window.decorView.post { startApp() }
+    }
+
+    private fun startApp() {
+        if (::model.isInitialized) return
         val app = application as DeLoreApplication
         model = ViewModelProvider(this, AppViewModel.Factory(app.environment, app.work))[AppViewModel::class.java]
         setContent { DeLoreRoot(model) }
@@ -38,7 +43,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        model.onAppBackground()
+        if (::model.isInitialized) model.onAppBackground()
     }
 
     override fun onStart() {

@@ -20,16 +20,23 @@ struct RootView: View {
         }
         .screenBackground()
         .task { await model.bootstrap() }
-        .sheet(item: $model.sheet) { sheet in
+        .sheet(item: otherSheetBinding) { sheet in
             SheetContent(sheet: sheet)
                 .environment(model)
                 .paywallChrome(sheet)
+        }
+        .fullScreenCover(item: setupSheetBinding) { presented in
+            if let overview = model.overview {
+                CleanupSetupView(setup: CleanupSetupModel(overview: overview, scope: presented.scope, env: model.env))
+                    .environment(model)
+                    .presentationBackground(Palette.background)
+            }
         }
         .fullScreenCover(isPresented: sessionBinding) {
             if let session = model.session {
                 CleanupRunView(session: session)
                     .environment(model)
-                    .presentationBackground(.clear)
+                    .presentationBackground(Palette.background)
             }
         }
         .fullScreenCover(item: $model.termsPrompt) { prompt in
@@ -76,12 +83,42 @@ struct RootView: View {
         )
     }
 
+    private var setupSheetBinding: Binding<SetupPresentation?> {
+        Binding(
+            get: {
+                if case let .setup(scope) = model.sheet { return SetupPresentation(scope: scope) }
+                return nil
+            },
+            set: { if $0 == nil { model.sheet = nil } }
+        )
+    }
+
+    private var otherSheetBinding: Binding<AppModel.Sheet?> {
+        Binding(
+            get: {
+                if case .setup = model.sheet { return nil }
+                return model.sheet
+            },
+            set: { model.sheet = $0 }
+        )
+    }
+
     private var inboxSyncBinding: Binding<InboxSyncModel?> {
         Binding(get: { model.inboxSyncModel }, set: { if $0 == nil { model.dismissSync() } })
     }
 
     private var importBinding: Binding<ImportModel?> {
         Binding(get: { model.importModel }, set: { if $0 == nil { model.dismissImport() } })
+    }
+}
+
+private struct SetupPresentation: Identifiable {
+    let scope: CleanupScope
+    var id: String {
+        switch scope {
+        case .everything: return "everything"
+        case let .conversations(ids): return ids.map(\.rawValue).sorted().joined(separator: ",")
+        }
     }
 }
 
@@ -104,6 +141,9 @@ private struct MainTabs: View {
         .toolbarBackground(.hidden, for: .tabBar)
         .toolbarColorScheme(.dark, for: .tabBar)
         .background { ClearHostingBackground() }
+        .onChange(of: model.tab) { _, tab in
+            if tab == .activity { model.reloadHistory() }
+        }
         .onAppear {
             let appearance = UITabBarAppearance()
             appearance.configureWithTransparentBackground()
@@ -145,10 +185,8 @@ private struct SheetContent: View {
             if let overview = model.overview {
                 IncludedView(overview: overview)
             }
-        case let .setup(scope):
-            if let overview = model.overview {
-                CleanupSetupView(setup: CleanupSetupModel(overview: overview, scope: scope, env: model.env))
-            }
+        case .setup:
+            EmptyView()
         case let .paywall(context):
             PaywallView(context: context)
         case .unavailable:
@@ -174,9 +212,10 @@ struct SplashView: View {
 private extension View {
     @ViewBuilder
     func paywallChrome(_ sheet: AppModel.Sheet) -> some View {
-        if case .paywall = sheet {
+        switch sheet {
+        case .paywall, .privacy, .support, .terms:
             self.presentationBackground(Palette.background)
-        } else {
+        default:
             self
         }
     }

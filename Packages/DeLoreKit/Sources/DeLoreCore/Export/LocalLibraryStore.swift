@@ -37,13 +37,15 @@ public final class LocalLibraryStore: MessageSource, @unchecked Sendable {
     public var importedAt: Date? { (try? loadManifest())?.importedAt }
 
     private func loadManifest() throws -> Manifest {
-        try lock.withLock {
-            if let cached { return cached }
-            guard let data = try? Data(contentsOf: manifestURL) else { throw JobStoreError.noActiveJob }
-            let manifest = try JSONDecoder().decode(Manifest.self, from: data)
-            cached = manifest
-            return manifest
-        }
+        try lock.withLock { try loadManifestUnlocked() }
+    }
+
+    private func loadManifestUnlocked() throws -> Manifest {
+        if let cached { return cached }
+        guard let data = try? Data(contentsOf: manifestURL) else { throw JobStoreError.noActiveJob }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: data)
+        cached = manifest
+        return manifest
     }
 
     public func overview() throws -> LibraryOverview {
@@ -264,6 +266,65 @@ public final class LocalLibraryStore: MessageSource, @unchecked Sendable {
             try fileManager.moveItem(at: staging, to: root)
             try ProtectedFiles.prepareDirectory(root)
             cached = manifest
+        }
+    }
+
+    /// Drop cleaned messages from the on-device index so counts stay honest after cancel.
+    public func excludeCleaned(_ cleaned: Set<String>) throws -> LibraryOverview {
+        try lock.withLock {
+            let current = try loadManifestUnlocked()
+            guard !cleaned.isEmpty else {
+                return LibraryOverview(conversations: current.conversations)
+            }
+            var conversations: [ConversationSummary] = []
+            conversations.reserveCapacity(current.conversations.count)
+            for summary in current.conversations {
+                guard summary.messagesLoaded, let fileName = current.files[summary.id.rawValue] else {
+                    conversations.append(summary)
+                    continue
+                }
+                let url = indexDirectory(in: root).appendingPathComponent(fileName)
+                guard let data = try? Data(contentsOf: url) else {
+                    conversations.append(summary)
+                    continue
+                }
+                let decoder = JSONDecoder()
+                let encoder = JSONEncoder()
+                var kept = Data()
+                var sent = 0
+                var byKind: [MessageKind: Int] = [:]
+                var first: Date?
+                var last: Date?
+                for line in data.split(separator: 0x0A) where !line.isEmpty {
+                    guard let entry = try? decoder.decode(IndexLine.self, from: Data(line)) else { continue }
+                    let key = summary.id.rawValue + "|" + entry.m
+                    if cleaned.contains(key) { continue }
+                    kept.append(Data(line))
+                    kept.append(0x0A)
+                    sent += 1
+                    byKind[entry.k, default: 0] += 1
+                    let date = Date(timeIntervalSince1970: entry.t)
+                    first = first ?? date
+                    last = date
+                }
+                try ProtectedFiles.write(kept, to: url)
+                conversations.append(ConversationSummary(
+                    id: summary.id,
+                    title: summary.title,
+                    sentByOwner: sent,
+                    receivedFromOthers: summary.receivedFromOthers,
+                    firstSentAt: first,
+                    lastSentAt: last,
+                    sentByKind: byKind,
+                    ownershipAmbiguous: summary.ownershipAmbiguous,
+                    messagesLoaded: summary.messagesLoaded
+                ))
+            }
+            var updated = current
+            updated.conversations = conversations
+            try ProtectedFiles.write(JSONEncoder().encode(updated), to: manifestURL)
+            cached = updated
+            return LibraryOverview(conversations: conversations)
         }
     }
 

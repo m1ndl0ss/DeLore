@@ -181,8 +181,8 @@ public actor CleanupEngine {
         try start()
     }
 
-    public func cancel() {
-        guard !job.status.isFinished else { return }
+    public func cancel() async -> Set<String> {
+        guard !job.status.isFinished else { return completedKeys() }
         let wasRunning = job.status == .running
         job.status = .cancelled
         job.resumeNotBefore = nil
@@ -197,11 +197,48 @@ public actor CleanupEngine {
             items[index].nextAttemptAt = nil
         }
         retryIndices.removeAll()
-        if wasRunning { runTask?.cancel() }
+        let task = runTask
+        if wasRunning { task?.cancel() }
         estimator.endSegment()
         deps.analytics.track(.cleanupCancelled)
         logger.info("job cancelled")
+        // Don't broadcast Cancelled yet — wait for in-flight unsends so the Stopped
+        // screen shows the real cleaned count, not a premature zero.
+        _ = persistCompleted()
+        // Let in-flight unsends finish and land in the ledger.
+        _ = await task?.value
+        for index in items.indices where items[index].state == .processing {
+            setState(index, .cancelled)
+            items[index].nextAttemptAt = nil
+        }
+        let cleaned = persistCompleted()
         broadcast()
+        return cleaned
+    }
+
+    public func completedKeys() -> Set<String> {
+        Set(items.compactMap { $0.state == .completed ? $0.ref.key : nil })
+    }
+
+    private func persistCompleted() -> Set<String> {
+        let cleaned = completedKeys()
+        guard !cleaned.isEmpty else { return cleaned }
+        do {
+            try deps.store.addToLedger(Array(cleaned))
+        } catch {
+            logger.error("ledger flush failed: \(error.safeDescription)")
+        }
+        let known = Set((try? deps.history?.load().map(\.key)) ?? [])
+        for item in items where item.state == .completed && !known.contains(item.ref.key) {
+            try? deps.history?.append(CleanupHistoryEntry(
+                key: item.ref.key,
+                conversationID: item.ref.conversationID.rawValue,
+                kind: item.kind,
+                sentAt: item.sentAt,
+                cleanedAt: deps.clock.now
+            ))
+        }
+        return cleaned
     }
 
     /// Waits until the current run loop exits (paused, completed, cancelled).

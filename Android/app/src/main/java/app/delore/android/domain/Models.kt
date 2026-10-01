@@ -77,7 +77,7 @@ data class LibraryOverview(val conversations: List<ConversationSummary>) {
 
 fun MessageKind.title(): String = when (this) {
     MessageKind.TEXT -> "Texts"
-    MessageKind.MEDIA -> "Photos & videos"
+        MessageKind.MEDIA -> "Media"
     MessageKind.LINK -> "Links & shared posts"
     MessageKind.VOICE -> "Voice messages"
     MessageKind.OTHER -> "Everything else"

@@ -2,6 +2,7 @@ package app.delore.android.ui
 
 import android.app.Activity
 import android.content.Context
+import android.text.format.DateUtils
 import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
@@ -40,6 +41,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
@@ -68,7 +70,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -81,6 +83,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
@@ -142,7 +145,10 @@ import app.delore.android.domain.title
 import app.delore.android.instagram.InstagramWebViewGateway
 import app.delore.android.persist.CleanupHistoryEntry
 import kotlinx.coroutines.launch
+import java.text.DateFormat
 import java.text.NumberFormat
+import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 
 @Composable
@@ -165,11 +171,20 @@ fun DeLoreRoot(model: AppViewModel) {
                 state.termsPrompt != null ||
                 state.syncing ||
                 state.syncErrorTitle != null ||
-                (state.sessionPresented && state.progress != null)
-            if (state.route != Route.HOME || covering) {
-                MeshBackground(Modifier.matchParentSize())
+                (state.sessionPresented && state.progress != null) ||
+                state.sheet is Sheet.Setup
+            when {
+                state.sessionPresented && state.progress != null ->
+                    Box(Modifier.fillMaxSize().background(Palette.backgroundDark))
+                state.route != Route.HOME || covering ->
+                    MeshBackground(Modifier.matchParentSize())
             }
-            InstagramBrowserHost(model.environment.webBrowser)
+            val needBrowser = !state.isDemoMode &&
+                state.route == Route.HOME &&
+                (model.hasLiveSession || state.syncing || state.sessionPresented)
+            if (needBrowser) {
+                InstagramBrowserHost(model.environment.webBrowser)
+            }
             when (state.route) {
                 Route.LAUNCHING -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Wordmark() }
                 Route.HOME -> if (!covering) MainTabs(model)
@@ -193,7 +208,15 @@ fun DeLoreRoot(model: AppViewModel) {
                 CleanupRunScreen(model)
             }
             if (!state.syncing && state.syncErrorTitle == null) {
-                state.sheet?.let { SheetHost(model, it) }
+                when (val sheet = state.sheet) {
+                    is Sheet.Setup -> state.overview?.let { overview ->
+                        Box(Modifier.fillMaxSize().background(Palette.backgroundDark)) {
+                            CleanupSetupScreen(model, overview, sheet.scope)
+                        }
+                    }
+                    null -> Unit
+                    else -> SheetHost(model, sheet)
+                }
             }
             if (state.syncing || state.syncErrorTitle != null) {
                 InboxSyncScreen(model)
@@ -209,9 +232,19 @@ private fun InstagramBrowserHost(gateway: InstagramWebViewGateway) {
             .size(360.dp, 640.dp)
             .offset(x = (-4800).dp),
         factory = { context ->
-            val view = gateway.attach(context)
-            (view.parent as? android.view.ViewGroup)?.removeView(view)
-            view
+            android.widget.FrameLayout(context).apply {
+                post {
+                    val view = gateway.attach(context)
+                    (view.parent as? android.view.ViewGroup)?.removeView(view)
+                    if (view.parent == null) {
+                        addView(
+                            view,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        )
+                    }
+                }
+            }
         },
     )
 }
@@ -273,7 +306,6 @@ private fun AccountScreen(model: AppViewModel) {
     var confirmErase by remember { mutableStateOf(false) }
     var restoreNotice by remember { mutableStateOf<String?>(null) }
     val restoreScope = rememberCoroutineScope()
-    val context = LocalContext.current
     val state by model.state.collectAsState()
     LaunchedEffect(Unit) { model.reloadOverview() }
     Column(
@@ -330,13 +362,7 @@ private fun AccountScreen(model: AppViewModel) {
         }
         Column(Modifier.clip(RoundedCornerShape(Radius.m)).background(Palette.surface())) {
             YouRow("Plan", if (model.entitlements.isPro) "Pro" else "Free · Upgrade") {
-                if (!model.entitlements.isPro) model.showSheet(Sheet.Paywall("settings"))
-            }
-            if (model.entitlements.hasStoreSubscription) {
-                YouDivider()
-                YouRow("Cancel or manage subscription") {
-                    openPlaySubscriptions(context)
-                }
+                model.showSheet(Sheet.Paywall("settings"))
             }
             YouDivider()
             YouRow("Restore purchases") {
@@ -439,7 +465,9 @@ private fun YouDivider() {
 private fun ActivityScreen(model: AppViewModel) {
     val state by model.state.collectAsState()
     LaunchedEffect(Unit) { model.reloadOverview() }
-    val groups = groupedHistory(state.history, state.overview)
+    val snapshot = remember(state.history, state.overview) {
+        activitySnapshot(state.history, state.overview)
+    }
     Column(
         Modifier
             .fillMaxSize()
@@ -450,65 +478,165 @@ private fun ActivityScreen(model: AppViewModel) {
         verticalArrangement = Arrangement.spacedBy(Spacing.l),
     ) {
         Spacer(Modifier.height(Spacing.s))
-        Text("Activity", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 26.sp, lineHeight = 32.sp)
-        if (groups.isEmpty()) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.m))
-                    .background(Palette.surface())
-                    .padding(Metrics.cardInset),
-                verticalArrangement = Arrangement.spacedBy(Spacing.s),
-            ) {
-                Text("Nothing unsent yet.", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-                Text("When you clean, chats show up here. Message text never leaves this phone.", color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 15.sp)
-            }
-        } else {
-            Column(Modifier.clip(RoundedCornerShape(Radius.m)).background(Palette.surface())) {
-                groups.forEachIndexed { index, group ->
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = Metrics.cardInset, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(group.title, color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                            Text(group.detail, color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 13.sp)
-                        }
-                        Text("${group.count}", color = Palette.accent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold)
-                    }
-                    if (index < groups.lastIndex) YouDivider()
+        LoreHeadline(if (snapshot.total == 0) "Nothing taken back yet." else "What you took back.")
+        ActivityHero(snapshot)
+        if (snapshot.groups.isNotEmpty()) {
+            Text("By person", color = Palette.secondaryInk(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                snapshot.groups.forEach { group ->
+                    ActivityPersonCard(group)
                 }
             }
         }
     }
 }
 
-private data class HistoryGroup(val id: String, val title: String, val count: Int, val detail: String)
+@Composable
+private fun ActivityHero(snapshot: ActivitySnapshot) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.m))
+            .background(Palette.surface())
+            .border(1.dp, Palette.accent.copy(alpha = 0.16f), RoundedCornerShape(Radius.m))
+            .padding(Metrics.cardInset),
+        verticalArrangement = Arrangement.spacedBy(Spacing.m),
+    ) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                NumberFormat.getIntegerInstance().format(snapshot.total),
+                color = Palette.ink(),
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 48.sp,
+                lineHeight = 52.sp,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "unsent",
+                color = Palette.accent,
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 17.sp,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
+        if (snapshot.total == 0) {
+            Text(
+                "When you retract, people show up here. Message text never leaves this phone.",
+                color = Palette.secondaryInk(),
+                fontFamily = Type.sans,
+                fontSize = 15.sp,
+            )
+        } else {
+            Text(activityHeroSubtitle(snapshot), color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 15.sp)
+        }
+    }
+}
 
-private fun groupedHistory(
+@Composable
+private fun ActivityPersonCard(group: HistoryGroup) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.m))
+            .background(Palette.surface())
+            .border(1.dp, Palette.accent.copy(alpha = 0.16f), RoundedCornerShape(Radius.m))
+            .padding(Metrics.cardInset),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(Palette.accent.copy(alpha = 0.22f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                personInitial(group.title),
+                color = Palette.accent,
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.size(Spacing.m))
+        Column(Modifier.weight(1f)) {
+            Text(
+                group.title,
+                color = Palette.ink(),
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "Unsent ${relativeTime(group.lastCleanedMillis)}",
+                color = Palette.secondaryInk(),
+                fontFamily = Type.sans,
+                fontSize = 13.sp,
+            )
+        }
+        Text(
+            NumberFormat.getIntegerInstance().format(group.count),
+            color = Palette.accent,
+            fontFamily = Type.sans,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 20.sp,
+        )
+    }
+}
+
+private data class ActivitySnapshot(
+    val total: Int,
+    val people: Int,
+    val lastCleanedMillis: Long?,
+    val groups: List<HistoryGroup>,
+)
+
+private data class HistoryGroup(
+    val id: String,
+    val title: String,
+    val count: Int,
+    val lastCleanedMillis: Long,
+)
+
+private fun activitySnapshot(
     history: List<CleanupHistoryEntry>,
     overview: LibraryOverview?,
-): List<HistoryGroup> {
+): ActivitySnapshot {
     val titles = overview?.conversations?.associate { it.id.rawValue to it.title }.orEmpty()
-    return history.groupBy { it.conversationID }.map { (id, entries) ->
-        val kinds = entries.groupBy { it.kind }.map { (kind, items) ->
-            "${kindHistoryLabel(kind)} ×${items.size}"
-        }.sorted()
+    val groups = history.groupBy { it.conversationID }.map { (id, entries) ->
         HistoryGroup(
             id = id,
             title = titles[id] ?: "A chat",
             count = entries.size,
-            detail = kinds.joinToString(" · "),
+            lastCleanedMillis = entries.maxOf { it.cleanedAtMillis },
         )
-    }.sortedByDescending { it.count }
+    }.sortedWith(compareByDescending<HistoryGroup> { it.lastCleanedMillis }.thenByDescending { it.count })
+    return ActivitySnapshot(
+        total = history.size,
+        people = groups.size,
+        lastCleanedMillis = groups.maxOfOrNull { it.lastCleanedMillis },
+        groups = groups,
+    )
 }
 
-private fun kindHistoryLabel(kind: MessageKind): String = when (kind) {
-    MessageKind.TEXT -> "Texts"
-    MessageKind.MEDIA -> "Photos"
-    MessageKind.LINK -> "Links"
-    MessageKind.VOICE -> "Voice"
-    MessageKind.OTHER -> "Other"
+private fun activityHeroSubtitle(snapshot: ActivitySnapshot): String {
+    val people = inflect(snapshot.people, "person", "people")
+    val last = snapshot.lastCleanedMillis?.let { relativeTime(it) }
+    return if (last != null) "across $people · last $last" else "across $people"
+}
+
+private fun relativeTime(millis: Long): String {
+    val now = System.currentTimeMillis()
+    if (now - millis < 45_000) return "just now"
+    return DateUtils.getRelativeTimeSpanString(
+        millis,
+        now,
+        DateUtils.MINUTE_IN_MILLIS,
+        DateUtils.FORMAT_ABBREV_RELATIVE,
+    ).toString()
 }
 
 @Composable
@@ -820,7 +948,10 @@ private fun SheetHost(model: AppViewModel, sheet: Sheet) {
     ModalBottomSheet(
         onDismissRequest = { model.showSheet(null) },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = if (sheet is Sheet.Paywall) Palette.backgroundDark else Palette.backgroundDark.copy(alpha = 0.78f),
+        containerColor = when (sheet) {
+            is Sheet.Paywall, Sheet.Privacy, Sheet.Support, Sheet.Terms -> Palette.backgroundDark
+            else -> Palette.backgroundDark.copy(alpha = 0.78f)
+        },
         scrimColor = Color.Black.copy(alpha = 0.42f),
     ) {
         when (sheet) {
@@ -830,7 +961,7 @@ private fun SheetHost(model: AppViewModel, sheet: Sheet) {
             Sheet.Terms -> TermsSheet()
             Sheet.ChooseChats -> state.overview?.let { ChooseChatsSheet(model, it) }
             Sheet.Included -> state.overview?.let { IncludedSheet(it) }
-            is Sheet.Setup -> state.overview?.let { CleanupSetupSheet(model, it, sheet.scope) }
+            is Sheet.Setup -> Unit
             is Sheet.Paywall -> PaywallSheet(model)
             Sheet.Unavailable -> UnavailableSheet { model.showSheet(null) }
         }
@@ -842,7 +973,6 @@ private fun SettingsSheet(model: AppViewModel) {
     var confirmErase by remember { mutableStateOf(false) }
     var restoreNotice by remember { mutableStateOf<String?>(null) }
     val restoreScope = rememberCoroutineScope()
-    val context = LocalContext.current
     val state by model.state.collectAsState()
     Column(Modifier.verticalScroll(rememberScrollState()).padding(Spacing.screen)) {
         Text("Your plan", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
@@ -857,9 +987,9 @@ private fun SettingsSheet(model: AppViewModel) {
         if (!model.entitlements.isPro) {
             Spacer(Modifier.height(Spacing.s))
             PrimaryButton("Get Pro") { model.showSheet(Sheet.Paywall("settings")) }
-        } else if (model.entitlements.hasStoreSubscription) {
+        } else {
             Spacer(Modifier.height(Spacing.s))
-            SecondaryButton("Cancel or manage subscription") { openPlaySubscriptions(context) }
+            SecondaryButton("View plan") { model.showSheet(Sheet.Paywall("settings")) }
         }
         Spacer(Modifier.height(Spacing.s))
         QuietButton("Restore purchases") {
@@ -914,17 +1044,13 @@ private fun IncludedSheet(overview: LibraryOverview) {
         Card {
             Text("Messages you sent", color = Palette.ink(), fontWeight = FontWeight.Bold)
             KindLine("Texts", overview.sentByKind[MessageKind.TEXT] ?: 0)
-            KindLine("Photos & videos", overview.sentByKind[MessageKind.MEDIA] ?: 0)
+            KindLine("Media", overview.sentByKind[MessageKind.MEDIA] ?: 0)
             KindLine("Links & shared posts", overview.sentByKind[MessageKind.LINK] ?: 0)
             KindLine("Voice messages", overview.sentByKind[MessageKind.VOICE] ?: 0)
             val other = overview.sentByKind[MessageKind.OTHER] ?: 0
             if (other > 0) KindLine("Everything else", other)
         }
-        Card {
-            Text("Messages from others: never touched", color = Palette.ink(), fontWeight = FontWeight.Bold)
-            Text("${inflect(overview.receivedFromOthers, "message")} other people sent you stay exactly where they are. Only you can clean what you sent.", color = Palette.secondaryInk())
-        }
-        Text("Counts come from the chats we read on this phone. Refresh chats to pick up newer messages. Message requests aren't included.", color = Palette.secondaryInk(), fontSize = 13.sp)
+        Text("Counts come from the chats we read on this phone. Refresh chats to pick up newer messages.", color = Palette.secondaryInk(), fontSize = 13.sp)
         Spacer(Modifier.height(Spacing.xl))
     }
 }
@@ -1121,7 +1247,7 @@ private fun ChatRow(chat: ConversationSummary, selected: Boolean, onClick: () ->
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CleanupSetupSheet(model: AppViewModel, overview: LibraryOverview, scope: CleanupScope) {
+private fun CleanupSetupScreen(model: AppViewModel, overview: LibraryOverview, scope: CleanupScope) {
     val setup = remember(overview, scope) { CleanupSetupState(overview, scope, model.environment) }
     var tick by remember { mutableStateOf(0) }
     fun bump() { tick++ }
@@ -1130,14 +1256,27 @@ private fun CleanupSetupSheet(model: AppViewModel, overview: LibraryOverview, sc
     val isPro = model.entitlements.isPro
     val scopeHandle = rememberCoroutineScope()
     var showPaywall by remember { mutableStateOf(false) }
-    var showDate by remember { mutableStateOf(false) }
+    BackHandler { model.showSheet(null) }
+    Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.screen)) {
+        IconButton(onClick = { model.showSheet(null) }) {
+            Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Palette.ink())
+        }
         Text("Clean up", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
         Spacer(Modifier.height(Spacing.l))
-        Text("What should go?", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+        Text(
+            "Messages you sent ${NumberFormat.getIntegerInstance().format(setup.estimatedCount)}",
+            color = Palette.ink(),
+            fontFamily = Type.sans,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 26.sp,
+            lineHeight = 32.sp,
+        )
+        Spacer(Modifier.height(Spacing.l))
+        Text("Who", color = Palette.secondaryInk(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
         Spacer(Modifier.height(Spacing.s))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-            Segment("Everything", setup.scopeKind == CleanupSetupState.ScopeKind.EVERYTHING) {
+            Segment("Everyone", setup.scopeKind == CleanupSetupState.ScopeKind.EVERYTHING) {
                 setup.scopeKind = CleanupSetupState.ScopeKind.EVERYTHING
                 bump()
             }
@@ -1153,65 +1292,43 @@ private fun CleanupSetupSheet(model: AppViewModel, overview: LibraryOverview, sc
             }
         }
         Spacer(Modifier.height(Spacing.l))
-        Card {
-            Row {
-                Text("Messages you sent", color = Palette.ink(), fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                Text(NumberFormat.getIntegerInstance().format(setup.estimatedCount), color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 22.sp)
-            }
-            Row {
-                Icon(Icons.Filled.Lock, null, tint = Palette.secondaryInk())
-                Spacer(Modifier.size(8.dp))
-                Text("Messages from others", color = Palette.secondaryInk())
-                Spacer(Modifier.weight(1f))
-                Text("Never touched", color = Palette.secondaryInk(), fontWeight = FontWeight.Bold)
-            }
-        }
-        Spacer(Modifier.height(Spacing.l))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Filters", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            Text("When", color = Palette.secondaryInk(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
             Spacer(Modifier.size(8.dp))
             if (!isPro) Pill("Pro")
         }
         Spacer(Modifier.height(Spacing.s))
-        Card {
-            Text("When they were sent", color = Palette.ink(), fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                listOf(
-                    CleanupSetupState.DateBound.ANY to "Anytime",
-                    CleanupSetupState.DateBound.BEFORE to "Before",
-                    CleanupSetupState.DateBound.AFTER to "After",
-                ).forEach { (value, label) ->
-                    Segment(label, setup.dateBound == value) {
-                        if (isPro || value == CleanupSetupState.DateBound.ANY) {
-                            setup.dateBound = value
-                            bump()
-                        } else showPaywall = true
-                    }
-                }
-            }
-            if (setup.dateBound != CleanupSetupState.DateBound.ANY) {
-                QuietButton(if (setup.dateBound == CleanupSetupState.DateBound.BEFORE) "Sent before" else "Sent after") { showDate = true }
-            }
-            CleanupSetupState.filterableKinds.forEach { kind ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(kind.title(), color = Palette.ink(), modifier = Modifier.weight(1f))
-                    Switch(
-                        checked = kind in setup.kinds,
-                        onCheckedChange = { on ->
-                            if (!isPro) {
-                                showPaywall = true
-                            } else {
-                                setup.kinds = if (on) setup.kinds + kind else setup.kinds - kind
-                                bump()
-                            }
-                        },
-                    )
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            listOf(
+                Triple(CleanupSetupState.DateBound.ANY, "Any time", "All messages you sent"),
+                Triple(CleanupSetupState.DateBound.BEFORE, "Before a date", "Older than the day you pick"),
+                Triple(CleanupSetupState.DateBound.AFTER, "After a date", "Newer than the day you pick"),
+            ).forEach { (value, title, detail) ->
+                DateOptionRow(
+                    title = title,
+                    detail = detail,
+                    selected = setup.dateBound == value,
+                ) {
+                    if (isPro || value == CleanupSetupState.DateBound.ANY) {
+                        setup.dateBound = value
+                        bump()
+                    } else showPaywall = true
                 }
             }
         }
+        if (setup.dateBound != CleanupSetupState.DateBound.ANY) {
+            Spacer(Modifier.height(Spacing.s))
+            CleanupDateCalendar(
+                label = if (setup.dateBound == CleanupSetupState.DateBound.BEFORE) "Before this day" else "After this day",
+                selectedMillis = setup.cutoff,
+                onDateSelected = {
+                    setup.cutoff = it
+                    bump()
+                },
+            )
+        }
         Spacer(Modifier.height(Spacing.l))
-        PrimaryButton(if (setup.isPreparing) "Working…" else "Review", enabled = setup.canContinue && !setup.isPreparing) {
+        PrimaryButton(if (setup.isPreparing) "Working…" else "Continue", enabled = setup.canContinue && !setup.isPreparing) {
             scopeHandle.launch {
                 setup.prepare()
                 bump()
@@ -1223,23 +1340,140 @@ private fun CleanupSetupSheet(model: AppViewModel, overview: LibraryOverview, sc
         setup.prepared?.let { ConfirmBlock(model, setup, it) { bump() } }
         Spacer(Modifier.height(Spacing.xl))
     }
+    if (setup.isEvaluating) {
+        EvaluatingChatSizeOverlay()
+    }
     if (showPaywall) {
         Box(Modifier.fillMaxSize().background(Palette.backgroundDark)) {
             PaywallSheet(model) { showPaywall = false }
         }
     }
-    if (showDate) {
-        val picker = rememberDatePickerState(initialSelectedDateMillis = setup.cutoff)
-        DatePickerDialog(
-            onDismissRequest = { showDate = false },
-            confirmButton = {
-                QuietButton("OK") {
-                    picker.selectedDateMillis?.let { setup.cutoff = it }
-                    bump()
-                    showDate = false
-                }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CleanupDateCalendar(
+    label: String,
+    selectedMillis: Long,
+    onDateSelected: (Long) -> Unit,
+) {
+    val pickerState = rememberDatePickerState(
+        initialSelectedDateMillis = selectedMillis,
+        selectableDates = object : SelectableDates {
+            override fun isSelectableDate(utcTimeMillis: Long): Boolean =
+                utcTimeMillis <= System.currentTimeMillis()
+        },
+    )
+    LaunchedEffect(pickerState.selectedDateMillis) {
+        val picked = pickerState.selectedDateMillis ?: return@LaunchedEffect
+        if (picked != selectedMillis) onDateSelected(picked)
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.m))
+            .background(Palette.surface())
+            .border(1.dp, Palette.accent.copy(alpha = 0.16f), RoundedCornerShape(Radius.m))
+            .padding(top = Spacing.s, bottom = Spacing.xs),
+    ) {
+        Text(
+            label,
+            color = Palette.secondaryInk(),
+            fontFamily = Type.sans,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 13.sp,
+            modifier = Modifier.padding(horizontal = Metrics.cardInset),
+        )
+        DatePicker(
+            state = pickerState,
+            title = null,
+            headline = {
+                Text(
+                    DateFormat.getDateInstance(DateFormat.FULL).format(Date(pickerState.selectedDateMillis ?: selectedMillis)),
+                    color = Palette.ink(),
+                    fontFamily = Type.sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 20.sp,
+                    modifier = Modifier.padding(horizontal = Metrics.cardInset, vertical = Spacing.xs),
+                )
             },
-        ) { DatePicker(state = picker) }
+            showModeToggle = false,
+            colors = DatePickerDefaults.colors(
+                containerColor = Color.Transparent,
+                titleContentColor = Palette.ink(),
+                headlineContentColor = Palette.ink(),
+                weekdayContentColor = Palette.secondaryInk(),
+                subheadContentColor = Palette.ink(),
+                navigationContentColor = Palette.accent,
+                yearContentColor = Palette.ink(),
+                currentYearContentColor = Palette.accent,
+                selectedYearContentColor = Palette.onAccent,
+                selectedYearContainerColor = Palette.accent,
+                dayContentColor = Palette.ink(),
+                disabledDayContentColor = Palette.secondaryInk().copy(alpha = 0.35f),
+                selectedDayContentColor = Palette.onAccent,
+                selectedDayContainerColor = Palette.accent,
+                todayContentColor = Palette.accent,
+                todayDateBorderColor = Palette.accent,
+                dayInSelectionRangeContentColor = Palette.ink(),
+                dayInSelectionRangeContainerColor = Palette.accent.copy(alpha = 0.22f),
+                dividerColor = Palette.hairline(),
+            ),
+        )
+    }
+}
+
+@Composable
+private fun EvaluatingChatSizeOverlay() {
+    val reduce = reduceMotion()
+    val spin by rememberInfiniteTransition(label = "evaluate").animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Restart),
+        label = "evaluateSpin",
+    )
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Palette.backgroundDark.copy(alpha = 0.92f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
+            CircularProgressIndicator(
+                color = Palette.accent,
+                modifier = Modifier
+                    .size(48.dp)
+                    .graphicsLayer { rotationZ = if (reduce) 0f else spin },
+            )
+            Text("Evaluating chat size", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+            Text("Checking what's still there…", color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 14.sp)
+        }
+    }
+}
+
+@Composable
+private fun DateOptionRow(title: String, detail: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.m))
+            .background(Palette.surface())
+            .border(1.dp, if (selected) Palette.accent.copy(alpha = 0.5f) else Palette.accent.copy(alpha = 0.16f), RoundedCornerShape(Radius.m))
+            .clickable(onClick = onClick)
+            .padding(Metrics.cardInset),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (selected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
+            contentDescription = null,
+            tint = if (selected) Palette.accent else Palette.tertiaryDark,
+        )
+        Spacer(Modifier.size(Spacing.m))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text(detail, color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 13.sp)
+        }
     }
 }
 
@@ -1267,24 +1501,17 @@ private fun ConfirmBlock(model: AppViewModel, setup: CleanupSetupState, prepared
         Text("Everything you picked is already gone, or doesn't match your filters.", color = Palette.secondaryInk())
         return
     }
-    Text("You're about to unsend ${inflect(prepared.count, "message")}.", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
+    Text("Unsend ${inflect(prepared.count, "message")}?", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
     model.ratePolicy.estimatedDuration(prepared.count)?.let {
-        Text(StatusCopyFactory.timeRemaining(it), color = Palette.secondaryInk(), fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+        Text(StatusCopyFactory.timeRemaining(it), color = Palette.secondaryInk(), fontSize = 17.sp)
     }
-    Spacer(Modifier.height(Spacing.m))
-    Card {
-        PromiseRow(Icons.Filled.Visibility, "Unsent messages may already have been seen, copied, screenshotted, or retained elsewhere.")
-        PromiseRow(Icons.Filled.Refresh, "This can't be undone.")
-        PromiseRow(Icons.Filled.Person, "Only messages you sent.", "Never anyone else's.")
-        PromiseRow(Icons.Filled.Shield, "Slow on purpose.", "We pace unsends because Instagram rate-limits. Big cleanups can take hours. You can exit — don't close Retract. That does not protect your account.")
-        PromiseRow(Icons.Filled.Warning, "We are not responsible for anything.", LegalCopy.NOT_RESPONSIBLE)
-    }
+    Spacer(Modifier.height(Spacing.s))
+    Text("This can't be undone. You can leave — don't close Retract.", color = Palette.secondaryInk(), fontSize = 15.sp)
     Spacer(Modifier.height(Spacing.m))
     when (decision) {
         is CleanupAllowanceDecision.Limited -> {
             Card {
                 Text(if (decision.remainingFree > 0) "Free covers ${inflect(decision.remainingFree, "message")}" else "You've used your free cleanups", color = Palette.ink(), fontWeight = FontWeight.Bold)
-                Text("Unlock everything to clean it all in one go.", color = Palette.secondaryInk())
                 PrimaryButton("Unlock everything") { model.showSheet(Sheet.Paywall("limit")) }
                 if (decision.remainingFree > 0) {
                     SecondaryButton("Clean ${decision.remainingFree} for free") {
@@ -1365,6 +1592,7 @@ private fun PaywallSheet(model: AppViewModel, onClose: () -> Unit = { model.show
 @Composable
 private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -> Unit = { model.showSheet(null) }) {
     val activity = LocalContext.current.findActivity()
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val plans = model.entitlements.products
         .filter { (it.kind == StoreProduct.Kind.YEARLY || it.kind == StoreProduct.Kind.MONTHLY) && !it.isPromo }
@@ -1377,6 +1605,8 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
     var percentOff by remember { mutableStateOf(model.entitlements.percentOff) }
     var appliedCode by remember { mutableStateOf(model.entitlements.appliedPromoCode) }
     var promoLocked by remember { mutableStateOf(model.entitlements.isPromoLocked) }
+    var isPro by remember { mutableStateOf(model.entitlements.isPro) }
+    var untilMillis by remember { mutableStateOf(model.entitlements.state.proRenewsOrExpiresAt) }
     val reduce = reduceMotion()
     val glowPulse by rememberInfiniteTransition(label = "planGlow").animateFloat(
         initialValue = 0.7f,
@@ -1386,6 +1616,10 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
     )
     val glow = if (reduce) 0.78f else glowPulse
     LaunchedEffect(Unit) {
+        model.entitlements.refresh()
+        isPro = model.entitlements.isPro
+        untilMillis = model.entitlements.state.proRenewsOrExpiresAt
+        if (isPro) return@LaunchedEffect
         model.entitlements.loadProducts()
         if (selected == null) {
             selected = model.entitlements.products
@@ -1439,9 +1673,13 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
             }
         }
     }
-    when (legal) {
-        "terms" -> TermsSheet(onBack = { legal = null })
-        "privacy" -> PrivacySheet(onBack = { legal = null })
+    when {
+        legal == "terms" -> TermsSheet(onBack = { legal = null })
+        legal == "privacy" -> PrivacySheet(onBack = { legal = null })
+        isPro -> SubscribedPlanSheet(
+            untilMillis = untilMillis,
+            onCancel = { openPlaySubscriptions(activity ?: context) },
+        )
         else -> Column(
             Modifier
                 .fillMaxWidth()
@@ -1454,13 +1692,12 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
         ) {
         Text("Go Pro", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 26.sp, lineHeight = 32.sp)
         Text(
-            if (model.entitlements.isPro) "You're on Pro" else "Unlimited unsends. Pick a plan.",
-            color = if (model.entitlements.isPro) Palette.accent else Palette.secondaryInk(),
+            "Unlimited unsends. Pick a plan.",
+            color = Palette.secondaryInk(),
             fontFamily = Type.sans,
             fontSize = 15.sp,
         )
-        if (!model.entitlements.isPro) {
-            Text(LegalCopy.NOT_RESPONSIBLE, color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 14.sp)
+        Text(LegalCopy.NOT_RESPONSIBLE, color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 14.sp)
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1506,7 +1743,6 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
                 Text("$percentOff% off with $appliedCode", color = Palette.accent, fontFamily = Type.sans, fontSize = 13.sp)
             }
             promoNotice?.let { Text(it, color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 13.sp) }
-        }
         when {
             model.entitlements.isLoadingProducts && plans.isEmpty() -> {
                 CircularProgressIndicator(color = Palette.accent, modifier = Modifier.align(Alignment.CenterHorizontally))
@@ -1560,6 +1796,40 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
         )
         }
     }
+}
+
+@Composable
+private fun SubscribedPlanSheet(untilMillis: Long?, onCancel: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Palette.backgroundDark)
+            .padding(Spacing.screen)
+            .padding(bottom = Spacing.xl),
+        verticalArrangement = Arrangement.spacedBy(Spacing.l),
+    ) {
+        Text(
+            "Plan",
+            color = Palette.ink(),
+            fontFamily = Type.sans,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 26.sp,
+            lineHeight = 32.sp,
+        )
+        Text(
+            subscribedUntilCopy(untilMillis),
+            color = Palette.accent,
+            fontFamily = Type.sans,
+            fontSize = 17.sp,
+        )
+        QuietButton("Cancel my subscription", tint = Palette.secondaryInk(), onClick = onCancel)
+    }
+}
+
+private fun subscribedUntilCopy(untilMillis: Long?): String {
+    if (untilMillis == null) return "Subscribed"
+    val formatted = DateFormat.getDateInstance(DateFormat.MEDIUM, Locale.getDefault()).format(Date(untilMillis))
+    return "Subscribed till $formatted"
 }
 
 @Composable
@@ -1710,6 +1980,7 @@ private fun CleanupRunScreen(model: AppViewModel) {
     Box(
         Modifier
             .fillMaxSize()
+            .background(Palette.backgroundDark)
             .clickable(indication = null, interactionSource = consumeClicks) {},
     ) {
         if (progress.status.isFinished) {
@@ -1723,11 +1994,16 @@ private fun CleanupRunScreen(model: AppViewModel) {
                     .navigationBarsPadding()
                     .padding(horizontal = Spacing.screen),
             ) {
-                Spacer(Modifier.height(Spacing.m))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Wordmark()
-                    Spacer(Modifier.weight(1f))
-                    if (progress.status != JobStatus.Running) CloseButton { model.presentSession(false) }
+                Spacer(Modifier.height(Spacing.s))
+                IconButton(
+                    onClick = { model.presentSession(false) },
+                    enabled = progress.status != JobStatus.Running,
+                ) {
+                    Icon(
+                        Icons.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Palette.ink().copy(alpha = if (progress.status == JobStatus.Running) 0.35f else 1f),
+                    )
                 }
                 Spacer(Modifier.weight(1f))
                 Text(copy.headline, color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, lineHeight = 34.sp)
@@ -1739,29 +2015,23 @@ private fun CleanupRunScreen(model: AppViewModel) {
                 LoreProgressBar(progress.fraction)
                 if (progress.remaining > 0) {
                     val eta = progress.estimatedSecondsRemaining ?: model.ratePolicy.estimatedDuration(progress.remaining)
-                    Text(StatusCopyFactory.timeRemaining(eta), color = Palette.secondaryInk(), fontWeight = FontWeight.SemiBold)
+                    Text(StatusCopyFactory.timeRemaining(eta), color = Palette.secondaryInk())
                 }
                 copy.message?.let { message ->
                     Spacer(Modifier.height(Spacing.m))
-                    Card {
-                        Row {
-                            Icon(if (copy.caution) Icons.Filled.Shield else Icons.Filled.Info, null, tint = if (copy.caution) Palette.accentInk() else Palette.secondaryInk())
-                            Spacer(Modifier.size(8.dp))
-                            Text(message, color = Palette.ink())
-                        }
-                    }
+                    Text(message, color = Palette.secondaryInk(), fontSize = 15.sp)
                 }
                 Spacer(Modifier.weight(1f))
-                Text("You can exit. Don't close Retract.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                Text("You can leave. Don't close Retract.", color = Palette.secondaryInk(), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(Spacing.s))
                 when (copy.action) {
                     StatusCopy.Action.PAUSE -> SecondaryButton("Pause") { model.pauseCleanup() }
                     StatusCopy.Action.RESUME -> PrimaryButton("Resume") { model.resumeCleanup() }
                     StatusCopy.Action.TRY_AGAIN -> PrimaryButton("Try again") { model.resumeCleanup() }
-                    StatusCopy.Action.RESUME_AFTER_VERIFYING -> PrimaryButton("I've done that, continue") { model.resumeCleanup(userResolvedIssue = true) }
+                    StatusCopy.Action.RESUME_AFTER_VERIFYING -> PrimaryButton("Continue") { model.resumeCleanup(userResolvedIssue = true) }
                     StatusCopy.Action.RECONNECT -> {
                         PrimaryButton("Reconnect Instagram") { model.beginLogin(LoginPurpose.RECONNECT) }
-                        SecondaryButton("I've signed in, continue") { model.resumeCleanup(userResolvedIssue = true) }
+                        SecondaryButton("Continue") { model.resumeCleanup(userResolvedIssue = true) }
                     }
                     StatusCopy.Action.NONE -> Unit
                 }
@@ -1772,7 +2042,7 @@ private fun CleanupRunScreen(model: AppViewModel) {
                 AlertDialog(
                     onDismissRequest = { confirmCancel = false },
                     title = { Text("Stop cleaning?") },
-                    text = { Text("Messages already unsent stay unsent. The rest stay where they are.") },
+                    text = { Text("Messages already unsent stay unsent.") },
                     confirmButton = {
                         QuietButton("Stop cleaning", tint = Palette.danger()) {
                             confirmCancel = false
@@ -1793,29 +2063,43 @@ private fun CleanupDoneScreen(model: AppViewModel, progress: app.delore.android.
     Column(
         Modifier
             .fillMaxSize()
+            .background(Palette.backgroundDark)
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(horizontal = Spacing.screen),
-        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.weight(1f))
-        Box(
-            Modifier
-                .size(64.dp)
-                .background(Palette.accent, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(if (cancelled) Icons.Filled.Warning else Icons.Filled.Check, null, tint = Palette.onAccent, modifier = Modifier.size(28.dp))
+        Spacer(Modifier.height(Spacing.s))
+        IconButton(onClick = { model.closeSession() }) {
+            Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Palette.ink())
         }
-        Spacer(Modifier.height(Spacing.l))
-        Text(if (cancelled) "Cleanup stopped" else "Fresh start ✨", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, lineHeight = 34.sp, textAlign = TextAlign.Center)
-        Text("${inflect(progress.completed, "message")} cleaned.", color = Palette.secondaryInk(), fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-        if (notCleaned > 0) {
-            Text("${inflect(notCleaned, "message")} couldn't be unsent. They're still there.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
+        Spacer(Modifier.weight(1f))
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier
+                    .size(64.dp)
+                    .background(Palette.accent, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(if (cancelled) Icons.Filled.Warning else Icons.Filled.Check, null, tint = Palette.onAccent, modifier = Modifier.size(28.dp))
+            }
+            Spacer(Modifier.height(Spacing.l))
+            Text(if (cancelled) "Stopped" else "Done", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, textAlign = TextAlign.Center)
+            when {
+                progress.completed > 0 ->
+                    Text("${inflect(progress.completed, "message")} cleaned.", color = Palette.secondaryInk(), fontSize = 17.sp)
+                cancelled ->
+                    Text("Nothing cleaned yet.", color = Palette.secondaryInk(), fontSize = 17.sp)
+            }
+            // Cancelled leftovers are not failures — they simply weren't reached.
+            if (cancelled && progress.cancelled > 0) {
+                Text("The rest stay where they are.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
+            }
+            if (notCleaned > 0) {
+                Text("${inflect(notCleaned, "message")} couldn't be unsent.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
+            }
         }
         Spacer(Modifier.weight(1f))
         PrimaryButton("Done") { model.closeSession() }
-        QuietButton("Clean another chat") { model.closeSession(thenChooseChats = true) }
         Spacer(Modifier.height(Spacing.m))
     }
 }

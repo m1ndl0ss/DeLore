@@ -10,25 +10,44 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
-import app.delore.android.DeLoreApplication
 import app.delore.android.MainActivity
+import java.util.concurrent.atomic.AtomicBoolean
 
 class CleanupForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        (application as? DeLoreApplication)?.work?.attachBrowser()
+        startForegroundNotification(DEFAULT_TEXT)
+        if (pendingStop.get()) {
+            stopSelf()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val text = intent?.getStringExtra(EXTRA_TEXT) ?: DEFAULT_TEXT
-        startForegroundNotification(text)
-        if (intent == null) {
-            (application as? DeLoreApplication)?.work?.resumePersistedWork()
+        if (pendingStop.get()) {
+            startForegroundNotification(intent?.getStringExtra(EXTRA_TEXT) ?: DEFAULT_TEXT)
+            stopSelf()
+            return START_NOT_STICKY
         }
-        return START_STICKY
+        startForegroundNotification(intent?.getStringExtra(EXTRA_TEXT) ?: DEFAULT_TEXT)
+        return START_NOT_STICKY
+    }
+
+    override fun onTimeout(startId: Int) {
+        stopSelf()
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopSelf()
+    }
+
+    override fun onDestroy() {
+        promoted.set(false)
+        inForeground.set(false)
+        super.onDestroy()
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -36,10 +55,7 @@ class CleanupForegroundService : Service() {
     }
 
     private fun startForegroundNotification(text: String) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Cleanup", NotificationManager.IMPORTANCE_LOW),
-        )
+        ensureChannel(this)
         val launch = PendingIntent.getActivity(
             this,
             0,
@@ -60,20 +76,49 @@ class CleanupForegroundService : Service() {
         } else {
             startForeground(1, notification)
         }
+        inForeground.set(true)
+        if (pendingStop.get()) stopSelf()
     }
 
     companion object {
         private const val CHANNEL = "cleanup"
         private const val EXTRA_TEXT = "text"
         const val DEFAULT_TEXT = "Retract is working"
+        private val promoted = AtomicBoolean(false)
+        private val inForeground = AtomicBoolean(false)
+        private val pendingStop = AtomicBoolean(false)
+
+        fun ensureChannel(context: Context) {
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            manager.createNotificationChannel(
+                NotificationChannel(CHANNEL, "Cleanup", NotificationManager.IMPORTANCE_LOW),
+            )
+        }
 
         fun start(context: Context, text: String = DEFAULT_TEXT) {
-            val intent = Intent(context, CleanupForegroundService::class.java).putExtra(EXTRA_TEXT, text)
-            if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
+            val app = context.applicationContext
+            pendingStop.set(false)
+            val intent = Intent(app, CleanupForegroundService::class.java).putExtra(EXTRA_TEXT, text)
+            try {
+                if (promoted.compareAndSet(false, true)) {
+                    if (Build.VERSION.SDK_INT >= 26) app.startForegroundService(intent) else app.startService(intent)
+                } else {
+                    app.startService(intent)
+                }
+            } catch (error: Exception) {
+                promoted.set(false)
+                Log.e("Retract", "could not start cleanup service: ${error.message}")
+            }
         }
 
         fun stop(context: Context) {
-            context.stopService(Intent(context, CleanupForegroundService::class.java))
+            pendingStop.set(true)
+            if (!inForeground.get()) return
+            promoted.set(false)
+            inForeground.set(false)
+            context.applicationContext.stopService(
+                Intent(context.applicationContext, CleanupForegroundService::class.java),
+            )
         }
     }
 }

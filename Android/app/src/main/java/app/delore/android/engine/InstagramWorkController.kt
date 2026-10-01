@@ -205,7 +205,6 @@ class InstagramWorkController(private val app: Application, private val env: App
 
     fun resumePersistedWork(): Job = scope.launch {
         mutex.withLock {
-            attachBrowser()
             if (!resumeCleanupLocked()) resumeInboxLocked()
         }
     }
@@ -289,6 +288,12 @@ class InstagramWorkController(private val app: Application, private val env: App
             env.entitlements.recordFreeUsage(update.completed)
         }
         BillingLedger.clear(env.prefs, id)
+        scope.launch {
+            val cleaned = engine?.completedKeys().orEmpty()
+            if (cleaned.isNotEmpty()) {
+                runCatching { env.library.excludeCleaned(cleaned) }
+            }
+        }
         stopIfIdle()
     }
 
@@ -313,7 +318,8 @@ class InstagramWorkController(private val app: Application, private val env: App
     }
 
     private fun keepAlive(text: String) {
-        attachBrowser()
+        val runningCleanup = _cleanup.value?.status == JobStatus.Running
+        if (!runningCleanup && inboxJob?.isActive != true && !_inbox.value.active) return
         CleanupForegroundService.start(app, text)
     }
 

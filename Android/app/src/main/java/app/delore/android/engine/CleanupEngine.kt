@@ -17,6 +17,7 @@ import app.delore.android.persist.CleanupHistoryStore
 import app.delore.android.persist.JobStore
 import app.delore.android.persist.JobStoreError
 import app.delore.android.persist.PersistedJob
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -152,24 +153,72 @@ class CleanupEngine private constructor(
         if (should) start()
     }
 
-    suspend fun cancel() = mutex.withLock {
-        if (job.status.isFinished) return@withLock
-        val wasRunning = job.status == JobStatus.Running
-        job = job.copy(status = JobStatus.Cancelled, resumeNotBefore = null)
-        runCatching {
-            deps.store.recordCancelPending()
-            deps.store.updateJob(job)
+    suspend fun cancel(): Set<String> {
+        val running: Job?
+        mutex.withLock {
+            if (job.status.isFinished) return completedKeysLocked()
+            val wasRunning = job.status == JobStatus.Running
+            job = job.copy(status = JobStatus.Cancelled, resumeNotBefore = null)
+            runCatching {
+                deps.store.recordCancelPending()
+                deps.store.updateJob(job)
+            }
+            for (index in items.indices) {
+                if (items[index].state.isPending) {
+                    setState(index, CleanupItemState.CANCELLED)
+                    items[index] = items[index].copy(nextAttemptAt = null)
+                }
+            }
+            retryIndices.clear()
+            running = if (wasRunning) runJob else null
+            running?.cancel()
+            estimator.endSegment()
+            // Don't emit Cancelled yet — wait for in-flight unsends so the Stopped
+            // screen shows the real cleaned count, not a premature zero.
+            persistCompletedLocked()
         }
-        for (index in items.indices) {
-            if (items[index].state.isPending) {
-                setState(index, CleanupItemState.CANCELLED)
-                items[index] = items[index].copy(nextAttemptAt = null)
+        // Let in-flight NonCancellable unsends finish and land in the ledger.
+        running?.join()
+        return mutex.withLock {
+            for (index in items.indices) {
+                if (items[index].state == CleanupItemState.PROCESSING) {
+                    setState(index, CleanupItemState.CANCELLED)
+                    items[index] = items[index].copy(nextAttemptAt = null)
+                }
+            }
+            val cleaned = persistCompletedLocked()
+            emitLocked()
+            cleaned
+        }
+    }
+
+    /** Keys of messages already cleaned in this job — for ledger/history/library sync after cancel. */
+    suspend fun completedKeys(): Set<String> = mutex.withLock { completedKeysLocked() }
+
+    private fun completedKeysLocked(): Set<String> =
+        items.asSequence().filter { it.state == CleanupItemState.COMPLETED }.map { it.ref.key }.toSet()
+
+    private fun persistCompletedLocked(): Set<String> {
+        val cleaned = completedKeysLocked()
+        if (cleaned.isEmpty()) return cleaned
+        runCatching { deps.store.addToLedger(cleaned.toList()) }
+        val known = runCatching { deps.history?.load()?.map { it.key }?.toSet() }.getOrNull().orEmpty()
+        for (item in items) {
+            if (item.state != CleanupItemState.COMPLETED) continue
+            if (item.ref.key in known) continue
+            runCatching {
+                deps.history?.append(
+                    CleanupHistoryEntry(
+                        key = item.ref.key,
+                        conversationID = item.ref.conversationID.rawValue,
+                        kind = item.kind,
+                        sentAtMillis = item.sentAtMillis,
+                        cleanedAtMillis = deps.clock.nowMillis(),
+                    ),
+                )
             }
         }
-        retryIndices.clear()
-        if (wasRunning) runJob?.cancel()
-        estimator.endSegment()
-        emitLocked()
+        return cleaned
     }
 
     suspend fun waitUntilStopped() {
@@ -253,50 +302,62 @@ class CleanupEngine private constructor(
         }
         if (!shouldSend) return
         mutex.withLock { throttler.recordRequest(deps.clock.nowMillis()) }
-        val result = runCatching { withContext(Dispatchers.IO) { deps.unsender.unsend(target) } }
-        mutex.withLock {
-            if (items[index].state != CleanupItemState.PROCESSING) return@withLock
-            result.fold(
-                onSuccess = { outcome ->
-                    when (outcome) {
-                        UnsendOutcome.UNSENT, UnsendOutcome.ALREADY_GONE -> markCompleted(index)
-                        UnsendOutcome.NOT_OWNED -> {
-                            consecutiveFailures = 0
-                            transition(index, CleanupItemState.SKIPPED)
+        // Don't cancel mid-flight: cancel() stops scheduling more work, but an unsend that
+        // already left the phone must still land in the ledger — including markCompleted
+        // after the HTTP call (a cancelled parent would otherwise skip it at mutex.withLock).
+        val result = runCatching {
+            withContext(NonCancellable + Dispatchers.IO) { deps.unsender.unsend(target) }
+        }
+        withContext(NonCancellable) {
+            mutex.withLock {
+                if (items[index].state != CleanupItemState.PROCESSING) return@withLock
+                result.fold(
+                    onSuccess = { outcome ->
+                        when (outcome) {
+                            UnsendOutcome.UNSENT, UnsendOutcome.ALREADY_GONE -> markCompleted(index)
+                            UnsendOutcome.NOT_OWNED -> {
+                                consecutiveFailures = 0
+                                transition(index, CleanupItemState.SKIPPED)
+                            }
                         }
-                    }
-                },
-                onFailure = { error -> handleFailure(index, error, destructive = true) },
-            )
+                    },
+                    onFailure = { error ->
+                        if (error is CancellationException) return@fold
+                        handleFailure(index, error, destructive = true)
+                    },
+                )
+            }
         }
     }
 
     private suspend fun reconcile(index: Int, target: CleanupTarget) {
         mutex.withLock { throttler.recordRequest(deps.clock.nowMillis()) }
-        val result = runCatching { withContext(Dispatchers.IO) { deps.unsender.presence(target) } }
-        mutex.withLock {
-            if (items[index].state.isTerminal) return@withLock
-            result.fold(
-                onSuccess = { presence ->
-                    when (presence) {
-                        MessagePresence.GONE -> {
-                            items[index] = items[index].copy(needsReconcile = false)
-                            markCompleted(index)
+        val result = runCatching { withContext(NonCancellable + Dispatchers.IO) { deps.unsender.presence(target) } }
+        withContext(NonCancellable) {
+            mutex.withLock {
+                if (items[index].state.isTerminal) return@withLock
+                result.fold(
+                    onSuccess = { presence ->
+                        when (presence) {
+                            MessagePresence.GONE -> {
+                                items[index] = items[index].copy(needsReconcile = false)
+                                markCompleted(index)
+                            }
+                            MessagePresence.NOT_OWNED -> {
+                                items[index] = items[index].copy(needsReconcile = false)
+                                transition(index, CleanupItemState.SKIPPED)
+                            }
+                            MessagePresence.PRESENT -> {
+                                throttler.recordSuccess()
+                                items[index] = items[index].copy(needsReconcile = false, nextAttemptAt = null)
+                                val next = if (job.status == JobStatus.Cancelled) CleanupItemState.CANCELLED else CleanupItemState.RETRY_WAIT
+                                transition(index, next)
+                            }
                         }
-                        MessagePresence.NOT_OWNED -> {
-                            items[index] = items[index].copy(needsReconcile = false)
-                            transition(index, CleanupItemState.SKIPPED)
-                        }
-                        MessagePresence.PRESENT -> {
-                            throttler.recordSuccess()
-                            items[index] = items[index].copy(needsReconcile = false, nextAttemptAt = null)
-                            val next = if (job.status == JobStatus.Cancelled) CleanupItemState.CANCELLED else CleanupItemState.RETRY_WAIT
-                            transition(index, next)
-                        }
-                    }
-                },
-                onFailure = { error -> handleFailure(index, error, destructive = false) },
-            )
+                    },
+                    onFailure = { error -> handleFailure(index, error, destructive = false) },
+                )
+            }
         }
     }
 

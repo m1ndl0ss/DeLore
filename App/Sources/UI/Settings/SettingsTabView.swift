@@ -1,11 +1,9 @@
 import DeLoreCore
-import StoreKit
 import SwiftUI
 
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var model
     @State private var confirmingErase = false
-    @State private var managingSubscription = false
     @State private var restoreMessage: LocalizedStringKey?
 
     var body: some View {
@@ -50,9 +48,7 @@ struct SettingsTabView: View {
 
                 VStack(spacing: 0) {
                     Button {
-                        if !model.entitlements.isPro {
-                            model.sheet = .paywall(.settings)
-                        }
+                        model.sheet = .paywall(.settings)
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
@@ -64,25 +60,13 @@ struct SettingsTabView: View {
                                     .foregroundStyle(model.entitlements.isPro ? Palette.accent : Palette.secondaryInk)
                             }
                             Spacer()
-                            if !model.entitlements.isPro {
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(Palette.tertiaryInk)
-                            }
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Palette.tertiaryInk)
                         }
                         .padding(Metrics.cardInset)
                     }
                     .buttonStyle(.plain)
-                    .disabled(model.entitlements.isPro)
-
-                    if model.entitlements.hasStoreSubscription {
-                        divider
-                        Button("Cancel or manage subscription") { managingSubscription = true }
-                            .font(Type.body(17))
-                            .foregroundStyle(Palette.ink)
-                            .frame(maxWidth: .infinity, minHeight: Metrics.rowHeight, alignment: .leading)
-                            .padding(.horizontal, Metrics.cardInset)
-                    }
 
                     divider
                     Button("Restore purchases") {
@@ -141,7 +125,6 @@ struct SettingsTabView: View {
         } message: {
             Text("Login, chats, history and progress leave this phone. Already unsent messages stay unsent. Purchases stay with your Apple ID.")
         }
-        .manageSubscriptionsSheet(isPresented: $managingSubscription)
         .task { await model.reloadOverview() }
     }
 

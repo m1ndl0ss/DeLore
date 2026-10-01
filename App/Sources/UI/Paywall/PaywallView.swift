@@ -1,4 +1,5 @@
 import DeLoreCore
+import StoreKit
 import SwiftUI
 
 struct PaywallView: View {
@@ -13,6 +14,7 @@ struct PaywallView: View {
     @State private var legal: LegalDestination?
     @State private var promoCode = ""
     @State private var promoNotice: String?
+    @State private var managingSubscription = false
 
     private var entitlements: EntitlementManager { model.entitlements }
     private var plans: [StoreProduct] {
@@ -20,6 +22,82 @@ struct PaywallView: View {
     }
 
     var body: some View {
+        Group {
+            if entitlements.isPro {
+                subscribedContent
+            } else {
+                buyContent
+            }
+        }
+        .background(Palette.background)
+        .presentationBackground(Palette.background)
+        .manageSubscriptionsSheet(isPresented: $managingSubscription)
+        .sheet(item: $legal) { destination in
+            NavigationStack {
+                Group {
+                    switch destination {
+                    case .terms: TermsView()
+                    case .privacy: PrivacyView()
+                    }
+                }
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { legal = nil }
+                    }
+                }
+            }
+            .presentationBackground(Palette.background)
+        }
+        .task {
+            await entitlements.refresh()
+            if entitlements.isPro { return }
+            model.env.analytics.track(.paywallShown(context: context))
+            await entitlements.loadProducts()
+            if selectedID == nil {
+                selectedID = plans.first { $0.kind == .proYearly }?.id ?? plans.first?.id
+            }
+        }
+        .onAppear {
+            guard !entitlements.isPro, !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) { glow = true }
+        }
+        .onChange(of: entitlements.isPro) { wasPro, isPro in
+            if isPro && !wasPro { dismiss() }
+        }
+    }
+
+    private var subscribedUntilCopy: String {
+        if let date = entitlements.state.proRenewsOrExpiresAt {
+            return "Subscribed till \(date.formatted(date: .abbreviated, time: .omitted))"
+        }
+        return "Subscribed"
+    }
+
+    private var subscribedContent: some View {
+        VStack(alignment: .leading, spacing: Spacing.l) {
+            if !embedded {
+                HStack {
+                    Spacer()
+                    CloseButton { dismiss() }
+                }
+            }
+            Text("Plan")
+                .font(Type.medium(28))
+                .foregroundStyle(Palette.ink)
+            Text(subscribedUntilCopy)
+                .font(Type.body(17))
+                .foregroundStyle(Palette.accent)
+            Button("Cancel my subscription") { managingSubscription = true }
+                .buttonStyle(TextButtonStyle(tint: Palette.secondaryInk))
+            Spacer()
+        }
+        .padding(.horizontal, Spacing.screen)
+        .padding(.top, Spacing.m)
+        .padding(.bottom, Spacing.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var buyContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.l) {
                 if !embedded {
@@ -40,10 +118,7 @@ struct PaywallView: View {
                     .foregroundStyle(Palette.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if !entitlements.isPro {
-                    promoBox
-                }
-
+                promoBox
                 plansBlock
 
                 if let notice {
@@ -79,37 +154,6 @@ struct PaywallView: View {
             .padding(.bottom, Spacing.xl)
         }
         .scrollIndicators(.hidden)
-        .background(Palette.background)
-        .presentationBackground(Palette.background)
-        .sheet(item: $legal) { destination in
-            NavigationStack {
-                Group {
-                    switch destination {
-                    case .terms: TermsView()
-                    case .privacy: PrivacyView()
-                    }
-                }
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { legal = nil }
-                    }
-                }
-            }
-        }
-        .task {
-            model.env.analytics.track(.paywallShown(context: context))
-            await entitlements.loadProducts()
-            if selectedID == nil {
-                selectedID = plans.first { $0.kind == .proYearly }?.id ?? plans.first?.id
-            }
-        }
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) { glow = true }
-        }
-        .onChange(of: entitlements.isPro) { _, isPro in
-            if isPro { dismiss() }
-        }
     }
 
     @ViewBuilder

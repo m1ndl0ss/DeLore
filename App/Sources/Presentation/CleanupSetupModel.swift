@@ -30,10 +30,11 @@ final class CleanupSetupModel {
     var kinds: Set<MessageKind> = Set(CleanupSetupModel.filterableKinds)
 
     private(set) var isPreparing = false
+    private(set) var isEvaluating = false
     private(set) var prepared: PreparedCleanup?
     private(set) var failed = false
+    private(set) var overview: LibraryOverview
 
-    let overview: LibraryOverview
     private let env: AppEnvironment
 
     init(overview: LibraryOverview, scope: CleanupScope, env: AppEnvironment) {
@@ -52,18 +53,16 @@ final class CleanupSetupModel {
     var filter: CleanupFilter {
         let dayStart = Calendar.current.startOfDay(for: cutoff)
         let nextDay = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? cutoff
+        // Kind filters are intentionally omitted — Instagram's item_type is often wrong
+        // (media labeled "text", missing xma_*), so type toggles would silently skip messages.
         switch dateBound {
         case .any:
-            return CleanupFilter(sentAfter: nil, sentBefore: nil, kinds: kindFilter)
+            return CleanupFilter(sentAfter: nil, sentBefore: nil, kinds: nil)
         case .before:
-            return CleanupFilter(sentAfter: nil, sentBefore: nextDay, kinds: kindFilter)
+            return CleanupFilter(sentAfter: nil, sentBefore: nextDay, kinds: nil)
         case .after:
-            return CleanupFilter(sentAfter: dayStart, sentBefore: nil, kinds: kindFilter)
+            return CleanupFilter(sentAfter: dayStart, sentBefore: nil, kinds: nil)
         }
-    }
-
-    private var kindFilter: Set<MessageKind>? {
-        kinds.count == Self.filterableKinds.count ? nil : kinds
     }
 
     var scope: CleanupScope {
@@ -73,7 +72,7 @@ final class CleanupSetupModel {
     var usesAdvancedFilters: Bool { filter.isAdvanced }
 
     var canContinue: Bool {
-        !(scopeKind == .chosen && chosen.isEmpty) && !kinds.isEmpty && estimatedCount > 0
+        !(scopeKind == .chosen && chosen.isEmpty) && estimatedCount > 0
     }
 
     /// Upper bound from summaries; the exact number comes from `prepare()`.
@@ -89,8 +88,15 @@ final class CleanupSetupModel {
         guard !isPreparing else { return }
         isPreparing = true
         failed = false
-        defer { isPreparing = false }
+        defer {
+            isEvaluating = false
+            isPreparing = false
+        }
         do {
+            isEvaluating = true
+            try await refreshChatSizes()
+            isEvaluating = false
+
             let request = CleanupRequest(scope: scope, filter: filter, limit: limit)
             let source = env.messageSource
             let store = env.jobStore
@@ -107,6 +113,18 @@ final class CleanupSetupModel {
             env.logger.error("queue build failed: \(error.safeDescription)")
             failed = true
         }
+    }
+
+    /// Re-reads target chats from Instagram so leftover counts match reality after a cancel.
+    private func refreshChatSizes() async throws {
+        let targets = QueueBuilder.targetConversations(for: scope, in: overview.conversations)
+        guard !targets.isEmpty else { return }
+        if env.hasLiveSession {
+            let ids = targets.map(\.id)
+            let titles = Dictionary(uniqueKeysWithValues: targets.map { ($0.id.rawValue, $0.title) })
+            _ = try await env.loadInbox(ids: ids, titles: titles, forceRefresh: true)
+        }
+        overview = try await env.loadOverview()
     }
 
     /// Discards a job the user didn't confirm.

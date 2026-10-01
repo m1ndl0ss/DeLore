@@ -1,4 +1,3 @@
-import StoreKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -6,7 +5,6 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingErase = false
     @State private var showingPaywall = false
-    @State private var managingSubscription = false
     @State private var restoreMessage: LocalizedStringKey?
 
     private var entitlements: EntitlementManager { model.entitlements }
@@ -31,10 +29,10 @@ struct SettingsView: View {
                                 .foregroundStyle(Palette.secondaryInk)
                         }
                     }
-                    if entitlements.hasStoreSubscription {
-                        Button("Cancel or manage subscription") { managingSubscription = true }
-                    } else if !entitlements.isPro {
+                    if !entitlements.isPro {
                         Button("Get Pro") { showingPaywall = true }
+                    } else {
+                        Button("View plan") { showingPaywall = true }
                     }
                     Button("Restore purchases") {
                         Task {
@@ -104,7 +102,6 @@ struct SettingsView: View {
                     .environment(model)
                     .presentationBackground(Palette.background)
             }
-            .manageSubscriptionsSheet(isPresented: $managingSubscription)
         }
     }
 
