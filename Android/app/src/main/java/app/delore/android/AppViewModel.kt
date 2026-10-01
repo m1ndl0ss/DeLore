@@ -23,6 +23,9 @@ import app.delore.android.instagram.InstagramWebSession
 import app.delore.android.persist.CleanupHistoryEntry
 import app.delore.android.secrets.BillingLedger
 import app.delore.android.secrets.CleanupBilling as SecretBilling
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -537,17 +540,21 @@ class CleanupSetupState(
     enum class ScopeKind { EVERYTHING, CHOSEN }
     enum class DateBound { ANY, BEFORE, AFTER }
 
-    var overview: LibraryOverview = overview
+    var overview: LibraryOverview by mutableStateOf(overview)
         private set
-    var scopeKind: ScopeKind = if (initial is CleanupScope.Conversations) ScopeKind.CHOSEN else ScopeKind.EVERYTHING
-    var chosen: Set<ConversationID> = (initial as? CleanupScope.Conversations)?.ids ?: emptySet()
-    var dateBound: DateBound = DateBound.ANY
-    var cutoff: Long = Calendar.getInstance().apply { add(Calendar.YEAR, -1) }.timeInMillis
-    var kinds: Set<MessageKind> = filterableKinds.toSet()
-    var isPreparing: Boolean = false
-    var isEvaluating: Boolean = false
-    var prepared: PreparedCleanup? = null
-    var failed: Boolean = false
+    var scopeKind: ScopeKind by mutableStateOf(
+        if (initial is CleanupScope.Conversations) ScopeKind.CHOSEN else ScopeKind.EVERYTHING,
+    )
+    var chosen: Set<ConversationID> by mutableStateOf(
+        (initial as? CleanupScope.Conversations)?.ids ?: emptySet(),
+    )
+    var dateBound: DateBound by mutableStateOf(DateBound.ANY)
+    var cutoff: Long by mutableStateOf(Calendar.getInstance().apply { add(Calendar.YEAR, -1) }.timeInMillis)
+    var kinds: Set<MessageKind> by mutableStateOf(filterableKinds.toSet())
+    var isPreparing: Boolean by mutableStateOf(false)
+    var isEvaluating: Boolean by mutableStateOf(false)
+    var prepared: PreparedCleanup? by mutableStateOf(null)
+    var failed: Boolean by mutableStateOf(false)
 
     companion object {
         val filterableKinds = listOf(MessageKind.TEXT, MessageKind.MEDIA, MessageKind.LINK, MessageKind.VOICE)
@@ -582,7 +589,11 @@ class CleanupSetupState(
         failed = false
         try {
             isEvaluating = true
+            val started = System.currentTimeMillis()
             refreshChatSizes()
+            // Keep the evaluating screen up long enough to actually read.
+            val elapsed = System.currentTimeMillis() - started
+            if (elapsed < 900) delay(900 - elapsed)
             isEvaluating = false
             val request = CleanupRequest(scope, filter, limit)
             val account = env.library.account()

@@ -257,7 +257,7 @@ private struct EvaluatingChatSizeOverlay: View {
 
     var body: some View {
         ZStack {
-            Palette.background.opacity(0.92).ignoresSafeArea()
+            Palette.background.ignoresSafeArea()
             VStack(spacing: Spacing.m) {
                 Circle()
                     .stroke(Palette.accent.opacity(0.35), lineWidth: 3)

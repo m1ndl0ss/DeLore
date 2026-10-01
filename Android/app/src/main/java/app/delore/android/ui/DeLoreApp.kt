@@ -174,7 +174,7 @@ fun DeLoreRoot(model: AppViewModel) {
                 (state.sessionPresented && state.progress != null) ||
                 state.sheet is Sheet.Setup
             when {
-                state.sessionPresented && state.progress != null ->
+                state.sessionPresented && state.progress != null || state.sheet is Sheet.Setup ->
                     Box(Modifier.fillMaxSize().background(Palette.backgroundDark))
                 state.route != Route.HOME || covering ->
                     MeshBackground(Modifier.matchParentSize())
@@ -948,11 +948,8 @@ private fun SheetHost(model: AppViewModel, sheet: Sheet) {
     ModalBottomSheet(
         onDismissRequest = { model.showSheet(null) },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = when (sheet) {
-            is Sheet.Paywall, Sheet.Privacy, Sheet.Support, Sheet.Terms -> Palette.backgroundDark
-            else -> Palette.backgroundDark.copy(alpha = 0.78f)
-        },
-        scrimColor = Color.Black.copy(alpha = 0.42f),
+        containerColor = Palette.backgroundDark,
+        scrimColor = Color.Black.copy(alpha = 0.72f),
     ) {
         when (sheet) {
             Sheet.Settings -> SettingsSheet(model)
@@ -1436,7 +1433,7 @@ private fun EvaluatingChatSizeOverlay() {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Palette.backgroundDark.copy(alpha = 0.92f)),
+            .background(Palette.backgroundDark),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
@@ -2091,7 +2088,7 @@ private fun CleanupDoneScreen(model: AppViewModel, progress: app.delore.android.
                     Text("Nothing cleaned yet.", color = Palette.secondaryInk(), fontSize = 17.sp)
             }
             // Cancelled leftovers are not failures — they simply weren't reached.
-            if (cancelled && progress.cancelled > 0) {
+            if (cancelled && (progress.cancelled > 0 || progress.remaining > 0)) {
                 Text("The rest stay where they are.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
             }
             if (notCleaned > 0) {

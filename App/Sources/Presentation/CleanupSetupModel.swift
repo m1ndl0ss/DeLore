@@ -94,7 +94,12 @@ final class CleanupSetupModel {
         }
         do {
             isEvaluating = true
+            let started = Date()
             try await refreshChatSizes()
+            let elapsed = Date().timeIntervalSince(started)
+            if elapsed < 0.9 {
+                try? await Task.sleep(nanoseconds: UInt64((0.9 - elapsed) * 1_000_000_000))
+            }
             isEvaluating = false
 
             let request = CleanupRequest(scope: scope, filter: filter, limit: limit)
