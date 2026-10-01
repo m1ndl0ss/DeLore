@@ -189,7 +189,7 @@ fun reduceMotion(): Boolean {
 
 @Composable
 fun MeshBackground(modifier: Modifier = Modifier) {
-    GhostFibersBackground(modifier.fillMaxSize())
+    GhostFibersBackground(modifier)
 }
 
 @Composable
@@ -210,17 +210,14 @@ fun StampBox(
 
 @Composable
 fun Screen(content: @Composable ColumnScope.() -> Unit) {
-    Box(Modifier.fillMaxSize().background(Palette.backgroundDark)) {
-        MeshBackground(Modifier.fillMaxSize())
-        Column(
-            Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = Spacing.screen),
-            content = content,
-        )
-    }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = Spacing.screen),
+        content = content,
+    )
 }
 
 @Composable

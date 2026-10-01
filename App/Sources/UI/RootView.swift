@@ -104,6 +104,7 @@ private struct MainTabs: View {
         }
         .toolbarBackground(.hidden, for: .tabBar)
         .toolbarColorScheme(.dark, for: .tabBar)
+        .background { ClearHostingBackground() }
         .onAppear {
             let appearance = UITabBarAppearance()
             appearance.configureWithTransparentBackground()

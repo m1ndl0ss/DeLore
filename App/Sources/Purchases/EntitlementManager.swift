@@ -11,20 +11,30 @@ final class EntitlementManager {
     private(set) var isLoadingProducts = false
     private(set) var storeUnavailable = false
     private(set) var isPurchasing = false
+    private(set) var percentOff = 0
+    private(set) var appliedPromoCode: String?
 
     let freeLimit: Int
     private let service: PurchaseService
     private let ledger: PassLedger
+    private let promo: PromoVault
     private let analytics: Analytics
     /// Only touched on the main actor, plus `deinit` once no other reference exists.
     @ObservationIgnored private nonisolated(unsafe) var updatesTask: Task<Void, Never>?
 
-    init(service: PurchaseService, ledger: PassLedger, freeLimit: Int, analytics: Analytics) {
+    init(service: PurchaseService, ledger: PassLedger, freeLimit: Int, analytics: Analytics, promo: PromoVault? = nil) {
         self.service = service
         self.ledger = ledger
         self.freeLimit = freeLimit
         self.analytics = analytics
-        state = EntitlementState(cleanupPasses: ledger.passes, freeMessagesUsed: ledger.freeMessagesUsed)
+        self.promo = promo ?? PromoVault(store: ledger.store)
+        percentOff = self.promo.percentOff
+        appliedPromoCode = self.promo.appliedCode
+        state = EntitlementState(
+            isPro: self.promo.isComplimentary,
+            cleanupPasses: ledger.passes,
+            freeMessagesUsed: ledger.freeMessagesUsed
+        )
         updatesTask = Task { [weak self, service] in
             for await _ in service.transactionUpdates() {
                 await self?.refresh()
@@ -37,15 +47,31 @@ final class EntitlementManager {
     }
 
     var isPro: Bool { state.isPro }
+    var promoGuessesRemaining: Int { promo.remainingGuesses() }
+    var isPromoLocked: Bool { promo.isLocked() }
+
+    func redeemPromo(_ raw: String) -> PromoRedeemResult {
+        let result = promo.redeem(raw)
+        if case .applied(let offer) = result {
+            appliedPromoCode = promo.appliedCode
+            percentOff = promo.percentOff
+            if offer == .complimentary {
+                state.isPro = true
+            }
+        }
+        return result
+    }
 
     func refresh() async {
         let subscription = await service.subscriptionStatus()
         state = EntitlementState(
-            isPro: subscription.isActive,
+            isPro: subscription.isActive || promo.isComplimentary,
             proRenewsOrExpiresAt: subscription.renewsOrExpiresAt,
             cleanupPasses: ledger.passes,
             freeMessagesUsed: ledger.freeMessagesUsed
         )
+        percentOff = promo.percentOff
+        appliedPromoCode = promo.appliedCode
     }
 
     func loadProducts() async {

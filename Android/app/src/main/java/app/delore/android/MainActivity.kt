@@ -17,6 +17,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        window.setBackgroundDrawableResource(R.color.background_dark)
         val env = (application as DeLoreApplication).environment
         model = ViewModelProvider(this, AppViewModel.Factory(env))[AppViewModel::class.java]
         setContent { DeLoreRoot(model) }

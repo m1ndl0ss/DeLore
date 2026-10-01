@@ -35,9 +35,14 @@ enum class PurchaseOutcome { PURCHASED, PENDING, CANCELLED }
 class EntitlementManager(
     private val context: Context,
     private val ledger: PassLedger,
+    private val promo: PromoVault,
     val freeLimit: Int = BuildConfig.FREE_LIMIT,
 ) {
-    var state: EntitlementState = EntitlementState(cleanupPasses = ledger.passes, freeMessagesUsed = ledger.freeMessagesUsed)
+    var state: EntitlementState = EntitlementState(
+        isPro = promo.isComplimentary,
+        cleanupPasses = ledger.passes,
+        freeMessagesUsed = ledger.freeMessagesUsed,
+    )
         private set
     var products: List<StoreProduct> = fallbackProducts()
         private set
@@ -50,9 +55,21 @@ class EntitlementManager(
 
     val isPro: Boolean get() = state.isPro
     val remainingFree: Int get() = maxOf(0, freeLimit - state.freeMessagesUsed)
+    val percentOff: Int get() = promo.percentOff
+    val appliedPromoCode: String? get() = promo.appliedCode
+    val promoGuessesRemaining: Int get() = promo.remainingGuesses()
+    val isPromoLocked: Boolean get() = promo.isLocked()
 
     private var billing: BillingClient? = null
     private var details: Map<String, ProductDetails> = emptyMap()
+
+    fun redeemPromo(raw: String): PromoRedeemResult {
+        val result = promo.redeem(raw)
+        if (result is PromoRedeemResult.Applied && result.offer == PromoOffer.COMPLIMENTARY) {
+            state = state.copy(isPro = true)
+        }
+        return result
+    }
 
     fun allowance(requestedCount: Int, usesAdvancedFilters: Boolean) =
         app.delore.android.domain.CleanupAllowance.evaluate(requestedCount, usesAdvancedFilters, state, freeLimit)
@@ -71,7 +88,7 @@ class EntitlementManager(
     suspend fun refresh() {
         val subscription = querySubscription()
         state = EntitlementState(
-            isPro = subscription.first,
+            isPro = subscription.first || promo.isComplimentary,
             proRenewsOrExpiresAt = subscription.second,
             cleanupPasses = ledger.passes,
             freeMessagesUsed = ledger.freeMessagesUsed,
@@ -237,6 +254,6 @@ class EntitlementManager(
         }
         state = state.copy(isPro = purchase.products.any {
             it == BuildConfig.PRODUCT_PRO_MONTHLY || it == BuildConfig.PRODUCT_PRO_YEARLY
-        } || state.isPro, cleanupPasses = ledger.passes)
+        } || promo.isComplimentary || state.isPro, cleanupPasses = ledger.passes)
     }
 }

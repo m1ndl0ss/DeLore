@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import app.delore.android.billing.EntitlementManager
+import app.delore.android.billing.PromoVault
 import app.delore.android.domain.ConversationID
 import app.delore.android.domain.InboxReadProgress
 import app.delore.android.domain.LibraryOverview
@@ -37,7 +38,8 @@ class AppEnvironment(private val context: Context) {
     val secrets: SecretStore = EncryptedSecretStore(context)
     val sessionVault = SessionVault(secrets)
     val ledger = PassLedger(secrets)
-    val entitlements = EntitlementManager(context, ledger)
+    val promo = PromoVault(secrets)
+    val entitlements = EntitlementManager(context, ledger, promo)
     val library = LocalLibraryStore(File(context.filesDir, "library"))
     val jobStore: JobStore = runCatching {
         FileJobStore(File(context.filesDir, "jobs"))
@@ -134,7 +136,7 @@ class AppEnvironment(private val context: Context) {
     )
 
     fun eraseAllData() {
-        val eraserKeys = PassLedger.preservedKeys
+        val eraserKeys = PassLedger.preservedKeys + PromoVault.COMPLIMENTARY_KEY
         secrets.wipePreserving(eraserKeys)
         jobStore.wipe()
         library.wipe()

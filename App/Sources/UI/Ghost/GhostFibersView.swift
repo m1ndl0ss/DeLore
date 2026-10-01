@@ -2,6 +2,35 @@ import MetalKit
 import SwiftUI
 import UIKit
 
+final class GhostFibersMTKView: MTKView {
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if let window {
+            contentScaleFactor = window.screen.scale
+        }
+        isHidden = false
+        isOpaque = true
+        layer.isOpaque = true
+        syncDrawableSize()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        syncDrawableSize()
+    }
+
+    func syncDrawableSize() {
+        let scale = window?.screen.scale ?? max(contentScaleFactor, UIScreen.main.scale)
+        let width = bounds.width * scale
+        let height = bounds.height * scale
+        guard width >= 2, height >= 2 else { return }
+        let size = CGSize(width: width, height: height)
+        if abs(drawableSize.width - size.width) > 0.5 || abs(drawableSize.height - size.height) > 0.5 {
+            drawableSize = size
+        }
+    }
+}
+
 /// Native port of React Bits GhostFibers (ogl fullscreen fiber shader).
 struct GhostFibersView: UIViewRepresentable {
     var paused = false
@@ -9,17 +38,16 @@ struct GhostFibersView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> MTKView {
-        let view = MTKView()
-        view.device = MTLCreateSystemDefaultDevice()
+        let view = GhostFibersMTKView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.framebufferOnly = true
+        view.autoResizeDrawable = true
         view.isPaused = paused
         view.enableSetNeedsDisplay = paused
-        view.preferredFramesPerSecond = 30
-        view.clearColor = MTLClearColor(red: 0.063, green: 0.043, blue: 0.125, alpha: 0)
-        view.backgroundColor = .clear
-        view.isOpaque = false
-        view.layer.isOpaque = false
-        view.isHidden = true
+        view.preferredFramesPerSecond = 60
+        view.clearColor = MTLClearColor(red: 0.063, green: 0.043, blue: 0.125, alpha: 1)
+        view.isOpaque = true
+        view.layer.isOpaque = true
+        view.isHidden = false
         view.isUserInteractionEnabled = false
         view.delegate = context.coordinator
         context.coordinator.setup(view)
@@ -41,20 +69,13 @@ struct GhostFibersView: UIViewRepresentable {
         private var uniforms = Uniforms()
 
         func setup(_ view: MTKView) {
-            guard let device = view.device else {
-                view.isHidden = true
-                return
-            }
+            guard let device = view.device else { return }
             let library = (try? device.makeLibrary(source: Self.metalSource, options: nil))
                 ?? device.makeDefaultLibrary()
             guard let library,
                   let vertex = library.makeFunction(name: "ghost_fibers_vertex"),
                   let fragment = library.makeFunction(name: "ghost_fibers_fragment")
-            else {
-                view.isHidden = true
-                view.isOpaque = false
-                return
-            }
+            else { return }
             queue = device.makeCommandQueue()
             let desc = MTLRenderPipelineDescriptor()
             desc.vertexFunction = vertex
@@ -62,6 +83,10 @@ struct GhostFibersView: UIViewRepresentable {
             desc.colorAttachments[0].pixelFormat = view.colorPixelFormat
             pipeline = try? device.makeRenderPipelineState(descriptor: desc)
             uniforms = .deloreDefaults
+            view.isHidden = false
+            view.isOpaque = true
+            view.layer.isOpaque = true
+            (view as? GhostFibersMTKView)?.syncDrawableSize()
         }
 
         private static let metalSource = """
@@ -193,7 +218,8 @@ struct GhostFibersView: UIViewRepresentable {
         }
 
         func draw(in view: MTKView) {
-            guard view.drawableSize.width > 1, view.drawableSize.height > 1 else { return }
+            (view as? GhostFibersMTKView)?.syncDrawableSize()
+            guard view.drawableSize.width >= 2, view.drawableSize.height >= 2 else { return }
             guard let pipeline,
                   let queue,
                   let drawable = view.currentDrawable,
@@ -211,11 +237,6 @@ struct GhostFibersView: UIViewRepresentable {
             encoder?.endEncoding()
             command?.present(drawable)
             command?.commit()
-            if view.isHidden {
-                view.isHidden = false
-                view.isOpaque = true
-                view.layer.isOpaque = true
-            }
         }
     }
 }

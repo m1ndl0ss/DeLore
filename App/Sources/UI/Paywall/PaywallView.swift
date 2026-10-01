@@ -11,6 +11,8 @@ struct PaywallView: View {
     @State private var notice: LocalizedStringKey?
     @State private var glow = false
     @State private var legal: LegalDestination?
+    @State private var promoCode = ""
+    @State private var promoNotice: String?
 
     private var entitlements: EntitlementManager { model.entitlements }
     private var plans: [StoreProduct] {
@@ -37,6 +39,10 @@ struct PaywallView: View {
                     .font(Type.body(14))
                     .foregroundStyle(Palette.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if !entitlements.isPro {
+                    promoBox
+                }
 
                 plansBlock
 
@@ -147,15 +153,24 @@ struct PaywallView: View {
                 }
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(product.displayPrice)
-                    .font(Type.medium(yearly ? 34 : 24))
+                if entitlements.percentOff > 0 {
+                    Text(product.displayPrice)
+                        .font(Type.body(yearly ? 20 : 16))
+                        .foregroundStyle(Palette.secondaryInk)
+                        .strikethrough()
+                    Text(PromoVault.discountedPrice(product.displayPrice, percentOff: entitlements.percentOff))
+                        .font(Type.medium(yearly ? 34 : 24))
+                } else {
+                    Text(product.displayPrice)
+                        .font(Type.medium(yearly ? 34 : 24))
+                }
                 Text(yearly ? "/ year" : "/ month")
                     .font(Type.body(15))
                     .foregroundStyle(Palette.secondaryInk)
             }
             .foregroundStyle(Palette.ink)
             if yearly, let monthly = product.monthlyEquivalent {
-                Text("\(monthly) / mo")
+                Text("\(entitlements.percentOff > 0 ? PromoVault.discountedPrice(monthly, percentOff: entitlements.percentOff) : monthly) / mo")
                     .font(Type.body(14))
                     .foregroundStyle(Palette.accent)
             }
@@ -198,6 +213,55 @@ struct PaywallView: View {
         )
         .shadow(color: (yearly ? Palette.cta : Palette.accent).opacity(yearly ? 0.32 : 0.18), radius: yearly && glow ? 22 : 12, y: 8)
         .onTapGesture { selectedID = product.id }
+    }
+
+    private var promoBox: some View {
+        VStack(alignment: .leading, spacing: Spacing.s) {
+            HStack(spacing: Spacing.s) {
+                TextField("Promo code", text: $promoCode)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .onSubmit { redeemPromo() }
+                    .disabled(entitlements.isPromoLocked)
+                Button("Apply") { redeemPromo() }
+                    .font(Type.medium(15))
+                    .foregroundStyle(Palette.accent)
+                    .disabled(entitlements.isPromoLocked || promoCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: Radius.m, style: .continuous).fill(Palette.surface))
+            if entitlements.percentOff > 0, let code = entitlements.appliedPromoCode {
+                Text("\(entitlements.percentOff)% off with \(code)")
+                    .font(Type.body(13))
+                    .foregroundStyle(Palette.accent)
+            }
+            if let promoNotice {
+                Text(promoNotice)
+                    .font(Type.body(13))
+                    .foregroundStyle(Palette.secondaryInk)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func redeemPromo() {
+        switch entitlements.redeemPromo(promoCode) {
+        case .empty:
+            promoNotice = "Enter a code first."
+        case .locked:
+            promoNotice = "That's 3 tries for today. Come back tomorrow."
+        case .invalid(let remaining):
+            promoNotice = remaining == 0
+                ? "That's 3 tries for today. Come back tomorrow."
+                : "That code isn't valid. \(remaining) \(remaining == 1 ? "try" : "tries") left today."
+        case .applied(.complimentary):
+            promoCode = ""
+            promoNotice = nil
+        case .applied(.percentOff(let percent)):
+            promoCode = ""
+            promoNotice = "\(percent)% off applied."
+        }
     }
 
     private func purchase(_ product: StoreProduct) {

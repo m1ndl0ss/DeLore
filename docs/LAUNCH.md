@@ -64,6 +64,7 @@ Retract is a cleanup tool. It does not collect passwords, bypass Instagram secur
 - In-app FAQ (Support). Email fallback `contact@kandalintsev.com`.
 - In-app Terms of use (Settings, paywall). Does not open a browser.
 - In-app Privacy.
+- Paywall promo field. Campaign codes take 10% off listed prices. Three guesses per day.
 - Unsend via website GraphQL then same-origin i.instagram.com delete. See `docs/instagram-unsend.md`.
 
 ## Do not change for launch

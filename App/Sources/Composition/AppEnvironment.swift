@@ -188,7 +188,7 @@ final class AppEnvironment {
             secrets: secrets,
             jobs: jobStore,
             library: library,
-            preservedSecretKeys: PassLedger.preservedKeys
+            preservedSecretKeys: PassLedger.preservedKeys + [PromoVault.complimentaryKey]
         )
         try history.wipe()
         try eraser.eraseAll()

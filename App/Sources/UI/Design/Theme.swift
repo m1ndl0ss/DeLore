@@ -91,40 +91,75 @@ struct Wordmark: View {
     }
 }
 
-private struct FibersInstalledKey: EnvironmentKey {
+private struct GhostFibersInstalledKey: EnvironmentKey {
     static let defaultValue = false
 }
 
 extension EnvironmentValues {
-    var fibersInstalled: Bool {
-        get { self[FibersInstalledKey.self] }
-        set { self[FibersInstalledKey.self] = newValue }
+    var ghostFibersInstalled: Bool {
+        get { self[GhostFibersInstalledKey.self] }
+        set { self[GhostFibersInstalledKey.self] = newValue }
     }
 }
 
 struct ScreenBackground: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.fibersInstalled) private var already
+    @Environment(\.ghostFibersInstalled) private var installed
 
     func body(content: Content) -> some View {
-        if already {
+        if installed {
             content
         } else {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background {
-                    ZStack {
-                        Palette.background
-                        GhostFibersFallback(paused: reduceMotion)
-                        if !reduceMotion {
-                            GhostFibersView(paused: false)
-                        }
-                    }
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+                    GhostFibersView(paused: reduceMotion)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
-                .environment(\.fibersInstalled, true)
+                .environment(\.ghostFibersInstalled, true)
+        }
+    }
+}
+
+/// TabView's UIKit host is opaque by default and covers the root Metal view.
+struct ClearHostingBackground: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = ClearClimbView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+}
+
+private final class ClearClimbView: UIView {
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        clearAncestors()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        clearAncestors()
+    }
+
+    private func clearAncestors() {
+        var view: UIView? = superview
+        while let current = view {
+            current.backgroundColor = .clear
+            current.isOpaque = false
+            view = current.superview
+        }
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let controller = current as? UIViewController {
+                controller.view.backgroundColor = .clear
+                controller.view.isOpaque = false
+            }
+            responder = current.next
         }
     }
 }

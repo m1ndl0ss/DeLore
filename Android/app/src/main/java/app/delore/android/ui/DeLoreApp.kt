@@ -117,6 +117,14 @@ import app.delore.android.StatusCopy
 import app.delore.android.StatusCopyFactory
 import app.delore.android.SyncPauseKind
 import app.delore.android.TermsPrompt
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextDecoration
+import app.delore.android.billing.PromoCatalog
+import app.delore.android.billing.PromoOffer
+import app.delore.android.billing.PromoRedeemResult
 import app.delore.android.billing.PurchaseOutcome
 import app.delore.android.billing.StoreProduct
 import app.delore.android.domain.CleanupAllowanceDecision
@@ -156,14 +164,16 @@ fun DeLoreRoot(model: AppViewModel) {
             secondary = Palette.lilac,
         ),
     ) {
-        Box(Modifier.fillMaxSize().background(Palette.backgroundDark)) {
-            MeshBackground(Modifier.fillMaxSize())
-            InstagramBrowserHost(model.environment.webBrowser)
+        Box(Modifier.fillMaxSize()) {
             val covering = state.loginPurpose != null ||
                 state.termsPrompt != null ||
                 state.syncing ||
                 state.syncErrorTitle != null ||
                 (state.sessionPresented && state.progress != null)
+            if (state.route != Route.HOME || covering) {
+                MeshBackground(Modifier.matchParentSize())
+            }
+            InstagramBrowserHost(model.environment.webBrowser)
             when (state.route) {
                 Route.LAUNCHING -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Wordmark() }
                 Route.HOME -> if (!covering) MainTabs(model)
@@ -242,11 +252,14 @@ private fun MainTabs(model: AppViewModel) {
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            when (state.tab) {
-                MainTab.UNSENDING -> HomeScreen(model)
-                MainTab.ACTIVITY -> ActivityScreen(model)
-                MainTab.SETTINGS -> AccountScreen(model)
+        Box(Modifier.fillMaxSize()) {
+            MeshBackground(Modifier.matchParentSize())
+            Box(Modifier.fillMaxSize().padding(padding)) {
+                when (state.tab) {
+                    MainTab.UNSENDING -> HomeScreen(model)
+                    MainTab.ACTIVITY -> ActivityScreen(model)
+                    MainTab.SETTINGS -> AccountScreen(model)
+                }
             }
         }
     }
@@ -1136,7 +1149,7 @@ private fun CleanupSetupSheet(model: AppViewModel, overview: LibraryOverview, sc
     }
     if (showPaywall) {
         Box(Modifier.fillMaxSize().background(Palette.backgroundDark)) {
-            PaywallSheet(model)
+            PaywallSheet(model) { showPaywall = false }
         }
     }
     if (showDate) {
@@ -1269,12 +1282,12 @@ private fun UpgradeDock(remaining: Int, modifier: Modifier = Modifier, onUpgrade
 }
 
 @Composable
-private fun PaywallSheet(model: AppViewModel) {
-    PaywallContent(model, embedded = false)
+private fun PaywallSheet(model: AppViewModel, onClose: () -> Unit = { model.showSheet(null) }) {
+    PaywallContent(model, embedded = false, onClose = onClose)
 }
 
 @Composable
-private fun PaywallContent(model: AppViewModel, embedded: Boolean) {
+private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -> Unit = { model.showSheet(null) }) {
     val activity = LocalContext.current.findActivity()
     val scope = rememberCoroutineScope()
     val plans = model.entitlements.products
@@ -1283,6 +1296,11 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean) {
     var selected by remember { mutableStateOf(plans.firstOrNull { it.kind == StoreProduct.Kind.YEARLY }?.id) }
     var notice by remember { mutableStateOf<String?>(null) }
     var legal by remember { mutableStateOf<String?>(null) }
+    var promoCode by remember { mutableStateOf("") }
+    var promoNotice by remember { mutableStateOf<String?>(null) }
+    var percentOff by remember { mutableStateOf(model.entitlements.percentOff) }
+    var appliedCode by remember { mutableStateOf(model.entitlements.appliedPromoCode) }
+    var promoLocked by remember { mutableStateOf(model.entitlements.isPromoLocked) }
     val reduce = reduceMotion()
     val glowPulse by rememberInfiniteTransition(label = "planGlow").animateFloat(
         initialValue = 0.7f,
@@ -1308,10 +1326,36 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean) {
         selected = product.id
         scope.launch {
             when (model.entitlements.purchase(host, product)) {
-                PurchaseOutcome.PURCHASED -> model.showSheet(null)
+                PurchaseOutcome.PURCHASED -> onClose()
                 PurchaseOutcome.PENDING -> notice = "Waiting for approval."
                 PurchaseOutcome.CANCELLED -> Unit
                 null -> notice = "That didn't go through. You haven't been charged."
+            }
+        }
+    }
+    fun applyPromo() {
+        when (val result = model.entitlements.redeemPromo(promoCode)) {
+            PromoRedeemResult.Empty -> promoNotice = "Enter a code first."
+            PromoRedeemResult.Locked -> {
+                promoLocked = true
+                promoNotice = "That's 3 tries for today. Come back tomorrow."
+            }
+            is PromoRedeemResult.Invalid -> {
+                promoLocked = result.remaining == 0
+                promoNotice = if (result.remaining == 0) {
+                    "That's 3 tries for today. Come back tomorrow."
+                } else {
+                    "That code isn't valid. ${result.remaining} ${if (result.remaining == 1) "try" else "tries"} left today."
+                }
+            }
+            is PromoRedeemResult.Applied -> {
+                promoCode = ""
+                appliedCode = model.entitlements.appliedPromoCode
+                percentOff = model.entitlements.percentOff
+                when (result.offer) {
+                    PromoOffer.COMPLIMENTARY -> onClose()
+                    PromoOffer.PERCENT_OFF -> promoNotice = "${PromoCatalog.CAMPAIGN_PERCENT_OFF}% off applied."
+                }
             }
         }
     }
@@ -1337,6 +1381,51 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean) {
         )
         if (!model.entitlements.isPro) {
             Text(LegalCopy.NOT_RESPONSIBLE, color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 14.sp)
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+            ) {
+                OutlinedTextField(
+                    value = promoCode,
+                    onValueChange = { promoCode = it.uppercase() },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    enabled = !promoLocked,
+                    placeholder = { Text("Promo code", color = Palette.secondaryInk()) },
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Characters,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { applyPromo() }),
+                    shape = RoundedCornerShape(Radius.m),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Palette.ink(),
+                        unfocusedTextColor = Palette.ink(),
+                        disabledTextColor = Palette.secondaryInk(),
+                        focusedBorderColor = Palette.accent,
+                        unfocusedBorderColor = Palette.hairline(),
+                        cursorColor = Palette.accent,
+                        focusedContainerColor = Palette.surface(),
+                        unfocusedContainerColor = Palette.surface(),
+                        disabledContainerColor = Palette.surface(),
+                    ),
+                )
+                Text(
+                    "Apply",
+                    color = if (promoLocked || promoCode.isBlank()) Palette.tertiaryDark else Palette.accent,
+                    fontFamily = Type.sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    modifier = Modifier
+                        .clickable(enabled = !promoLocked && promoCode.isNotBlank()) { applyPromo() }
+                        .padding(horizontal = Spacing.s, vertical = Spacing.m),
+                )
+            }
+            if (percentOff > 0 && appliedCode != null) {
+                Text("$percentOff% off with $appliedCode", color = Palette.accent, fontFamily = Type.sans, fontSize = 13.sp)
+            }
+            promoNotice?.let { Text(it, color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 13.sp) }
         }
         when {
             model.entitlements.isLoadingProducts && plans.isEmpty() -> {
@@ -1357,6 +1446,7 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean) {
                             glow = glow,
                             purchasing = model.entitlements.isPurchasing,
                             pro = model.entitlements.isPro,
+                            percentOff = percentOff,
                             onSelect = { selected = product.id },
                             onBuy = { buy(product) },
                         )
@@ -1372,7 +1462,7 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean) {
                     notice = if (!ok) "Play Store isn’t reachable."
                     else if (!model.entitlements.isPro) "No Pro plan found."
                     else null
-                    if (ok && model.entitlements.isPro) model.showSheet(null)
+                    if (ok && model.entitlements.isPro) onClose()
                 }
             }
             QuietLink("Terms") { legal = "terms" }
@@ -1389,6 +1479,7 @@ private fun PlanCard(
     glow: Float,
     purchasing: Boolean,
     pro: Boolean,
+    percentOff: Int = 0,
     onSelect: () -> Unit,
     onBuy: () -> Unit,
 ) {
@@ -1444,13 +1535,32 @@ private fun PlanCard(
             }
         }
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                product.displayPrice,
-                color = Palette.ink(),
-                fontFamily = Type.sans,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = if (yearly) 34.sp else 24.sp,
-            )
+            if (percentOff > 0) {
+                Text(
+                    product.displayPrice,
+                    color = Palette.secondaryInk(),
+                    fontFamily = Type.sans,
+                    fontSize = if (yearly) 20.sp else 16.sp,
+                    textDecoration = TextDecoration.LineThrough,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    PromoCatalog.discountedPrice(product.displayPrice, percentOff),
+                    color = Palette.ink(),
+                    fontFamily = Type.sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = if (yearly) 34.sp else 24.sp,
+                )
+            } else {
+                Text(
+                    product.displayPrice,
+                    color = Palette.ink(),
+                    fontFamily = Type.sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = if (yearly) 34.sp else 24.sp,
+                )
+            }
             Spacer(Modifier.size(6.dp))
             Text(
                 if (yearly) "/ year" else "/ month",
@@ -1461,7 +1571,8 @@ private fun PlanCard(
             )
         }
         product.monthlyEquivalent?.takeIf { yearly }?.let { monthly ->
-            Text("$monthly / mo", color = Palette.accent, fontFamily = Type.sans, fontSize = 14.sp)
+            val shown = if (percentOff > 0) PromoCatalog.discountedPrice(monthly, percentOff) else monthly
+            Text("$shown / mo", color = Palette.accent, fontFamily = Type.sans, fontSize = 14.sp)
         }
         if (yearly) {
             PrimaryButton(

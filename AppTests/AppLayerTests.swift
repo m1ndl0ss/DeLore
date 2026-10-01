@@ -94,6 +94,16 @@ final class EntitlementManagerTests: XCTestCase {
         manager.recordFreeUsage(30)
         XCTAssertEqual(manager.remainingFree, 70)
     }
+
+    func testComplimentaryPromoUnlocksProWithoutStore() async {
+        let ledger = PassLedger(store: InMemorySecretStore())
+        let manager = EntitlementManager(service: MockPurchaseService(ledger: ledger), ledger: ledger, freeLimit: 100, analytics: .disabled)
+        XCTAssertFalse(manager.isPro)
+        XCTAssertEqual(manager.redeemPromo("kandal24"), .applied(.complimentary))
+        XCTAssertTrue(manager.isPro)
+        await manager.refresh()
+        XCTAssertTrue(manager.isPro, "store refresh must not strip complimentary Pro")
+    }
 }
 
 final class ConfigurationTests: XCTestCase {

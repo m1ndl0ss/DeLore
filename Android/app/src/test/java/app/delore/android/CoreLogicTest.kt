@@ -325,3 +325,74 @@ class InstagramPolicyTest {
         assertTrue(overview.cleanableConversations.isEmpty())
     }
 }
+
+private class MemorySecrets : app.delore.android.secrets.SecretStore {
+    private val values = mutableMapOf<String, String>()
+    override fun string(key: String): String? = values[key]
+    override fun data(key: String): ByteArray? = values[key]?.toByteArray(Charsets.UTF_8)
+    override fun set(value: String, key: String) { values[key] = value }
+    override fun set(value: ByteArray, key: String) { values[key] = String(value, Charsets.UTF_8) }
+    override fun remove(key: String) { values.remove(key) }
+    override fun wipePreserving(keys: Collection<String>) {
+        val keep = keys.mapNotNull { k -> values[k]?.let { k to it } }.toMap()
+        values.clear()
+        values.putAll(keep)
+    }
+}
+
+class PromoCodeTest {
+    @Test
+    fun complimentaryIsCaseInsensitive() {
+        assertEquals(app.delore.android.billing.PromoOffer.COMPLIMENTARY, app.delore.android.billing.PromoCatalog.offer("kandal24"))
+    }
+
+    @Test
+    fun campaignCodesAreTenPercentOff() {
+        assertEquals(
+            app.delore.android.billing.PromoOffer.PERCENT_OFF,
+            app.delore.android.billing.PromoCatalog.offer("REF10", setOf("REF10")),
+        )
+    }
+
+    @Test
+    fun discountedPriceKeepsCurrency() {
+        assertEquals("$53.99", app.delore.android.billing.PromoCatalog.discountedPrice("$59.99", 10))
+    }
+
+    @Test
+    fun threeFailedGuessesLockTheDay() {
+        val vault = app.delore.android.billing.PromoVault(MemorySecrets())
+        val now = 1_775_000_000_000L
+        assertTrue(vault.redeem("WRONG1", now) is app.delore.android.billing.PromoRedeemResult.Invalid)
+        vault.redeem("WRONG2", now)
+        vault.redeem("WRONG3", now)
+        assertEquals(app.delore.android.billing.PromoRedeemResult.Locked, vault.redeem("KANDAL24", now))
+    }
+
+    @Test
+    fun emptyGuessDoesNotCount() {
+        val vault = app.delore.android.billing.PromoVault(MemorySecrets())
+        assertEquals(app.delore.android.billing.PromoRedeemResult.Empty, vault.redeem("  "))
+        assertEquals(3, vault.remainingGuesses())
+    }
+
+    @Test
+    fun complimentaryPersists() {
+        val store = MemorySecrets()
+        val vault = app.delore.android.billing.PromoVault(store)
+        assertTrue(vault.redeem("KANDAL24") is app.delore.android.billing.PromoRedeemResult.Applied)
+        assertTrue(app.delore.android.billing.PromoVault(store).isComplimentary)
+    }
+
+    @Test
+    fun guessesResetNextDay() {
+        val vault = app.delore.android.billing.PromoVault(MemorySecrets())
+        val day1 = 1_775_000_000_000L
+        val day2 = day1 + 86_400_000L
+        vault.redeem("A", day1)
+        vault.redeem("B", day1)
+        vault.redeem("C", day1)
+        val result = vault.redeem("KANDAL24", day2)
+        assertTrue(result is app.delore.android.billing.PromoRedeemResult.Applied)
+    }
+}
