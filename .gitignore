@@ -24,6 +24,8 @@ Package.resolved
 *.cer
 *.env
 AuthKey_*.p8
+Config/Secrets.xcconfig
+workers/notify/.dev.vars
 
 # Android
 Android/.gradle/

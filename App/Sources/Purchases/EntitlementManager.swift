@@ -21,15 +21,27 @@ final class EntitlementManager {
     private let ledger: PassLedger
     private let promo: PromoVault
     private let analytics: Analytics
+    private let onSubscriptionPurchased: ((String, String?) -> Void)?
+    private let onComplimentaryUnlocked: ((String) -> Void)?
     /// Only touched on the main actor, plus `deinit` once no other reference exists.
     @ObservationIgnored private nonisolated(unsafe) var updatesTask: Task<Void, Never>?
 
-    init(service: PurchaseService, ledger: PassLedger, freeLimit: Int, analytics: Analytics, promo: PromoVault? = nil) {
+    init(
+        service: PurchaseService,
+        ledger: PassLedger,
+        freeLimit: Int,
+        analytics: Analytics,
+        promo: PromoVault? = nil,
+        onSubscriptionPurchased: ((String, String?) -> Void)? = nil,
+        onComplimentaryUnlocked: ((String) -> Void)? = nil
+    ) {
         self.service = service
         self.ledger = ledger
         self.freeLimit = freeLimit
         self.analytics = analytics
         self.promo = promo ?? PromoVault(store: ledger.store)
+        self.onSubscriptionPurchased = onSubscriptionPurchased
+        self.onComplimentaryUnlocked = onComplimentaryUnlocked
         percentOff = self.promo.percentOff
         appliedPromoCode = self.promo.appliedCode
         state = EntitlementState(
@@ -59,6 +71,7 @@ final class EntitlementManager {
             percentOff = promo.percentOff
             if offer == .complimentary {
                 state.isPro = true
+                onComplimentaryUnlocked?(promo.appliedCode ?? raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())
             }
         }
         return result
@@ -109,7 +122,10 @@ final class EntitlementManager {
             await refresh()
             if outcome == .purchased {
                 analytics.track(.purchaseCompleted(product: kind))
-                if product.kind != .oneTimeCleanup { analytics.track(.subscriptionStarted) }
+                if product.kind != .oneTimeCleanup {
+                    analytics.track(.subscriptionStarted)
+                    onSubscriptionPurchased?(target.id, appliedPromoCode)
+                }
             }
             return outcome
         } catch {

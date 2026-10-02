@@ -1,0 +1,3 @@
+// Optional local overrides for publisher notify. Copy from Secrets.xcconfig.example.
+// This file is gitignored.
+#include? "Secrets.xcconfig"

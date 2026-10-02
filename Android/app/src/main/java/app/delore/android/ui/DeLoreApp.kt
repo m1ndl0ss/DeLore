@@ -1013,7 +1013,7 @@ private fun SettingsSheet(model: AppViewModel) {
         QuietButton("Disconnect & delete my data", tint = Palette.danger()) { confirmErase = true }
         Text("Removes your chats, Instagram login, cleanup progress and everything else stored on this phone. Purchases stay with your Google account.", color = Palette.secondaryInk(), fontSize = 12.sp)
         Spacer(Modifier.height(Spacing.m))
-        Text("Retract ${BuildConfig.VERSION_NAME} · No analytics. Not affiliated with Instagram or Meta. We are not responsible for anything that happens to your Instagram account.", color = Palette.secondaryInk(), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        Text("Retract ${BuildConfig.VERSION_NAME} · We never read your chats. Not affiliated with Instagram or Meta. We are not responsible for anything that happens to your Instagram account.", color = Palette.secondaryInk(), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(Spacing.xl))
     }
     if (confirmErase) {

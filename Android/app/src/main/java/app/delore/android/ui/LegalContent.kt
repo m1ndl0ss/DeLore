@@ -8,7 +8,7 @@ data class FaqEntry(val question: String, val answer: String)
 data class LegalSection(val title: String, val body: String)
 
 object LegalCopy {
-    const val TERMS_VERSION = 2
+    const val TERMS_VERSION = 3
     const val NOT_RESPONSIBLE =
         "You use Retract at your own risk. We are not responsible for anything that happens — including Instagram bans, locks, lost messages, or failed unsends."
     const val NOT_AFFILIATED =
@@ -27,7 +27,7 @@ object LegalCopy {
         ),
         FaqEntry(
             "Do you store what I said?",
-            "No. We keep chat names and the date and type of messages you sent so counts and cleanup can resume. Message text never leaves this phone and is never saved.",
+            "No. We never read your chats. We keep chat names and the date and type of messages you sent so counts and cleanup can resume. Message text never leaves this phone and is never saved. Connecting Instagram or buying Pro only emails the publisher your username (and promo code if used).",
         ),
         FaqEntry(
             "Why don’t photo and text counts match what I remember?",
@@ -102,7 +102,7 @@ object LegalCopy {
         ),
         LegalSection(
             "Privacy",
-            "Your Instagram session, chat names, and message dates/types stay on this device. Message text is never saved. We don’t run analytics or ads. Cleanup traffic goes to Instagram from your phone. See in-app Privacy for the full explanation.",
+            "We never read your chats. Message text never leaves this phone. When you connect Instagram or buy Pro, Retract emails the publisher your Instagram username (and any promo code on purchase) so we know who signed up. No chat contents, no password, no analytics SDK. See in-app Privacy for the full explanation.",
         ),
         LegalSection(
             "Changes",

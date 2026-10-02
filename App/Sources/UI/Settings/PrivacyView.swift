@@ -5,11 +5,19 @@ struct PrivacyView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.l) {
+                Text("We never read your chats.")
+                    .font(.title(.headline))
+                    .foregroundStyle(Palette.ink)
+                Text("Message text never leaves this phone and is never sent to us.")
+                    .font(.title(.headline))
+                    .foregroundStyle(Palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 VStack(alignment: .leading, spacing: Spacing.m) {
                     PromiseRow(symbol: "iphone", title: "Your Instagram content is processed on your phone.")
-                    PromiseRow(symbol: "hand.raised.fill", title: "We don't sell or store your messages.")
+                    PromiseRow(symbol: "hand.raised.fill", title: "We don't sell your messages.")
                     PromiseRow(symbol: "eye.slash.fill", title: "We don't need your message content to provide the cleanup.")
-                    PromiseRow(symbol: "chart.bar.xaxis", title: "No analytics. No identifiers sent to us.")
+                    PromiseRow(symbol: "chart.bar.xaxis", title: "No analytics SDK. No ads.")
                 }
 
                 Card {
@@ -24,7 +32,7 @@ struct PrivacyView: View {
                 Card {
                     Text("What leaves this phone")
                         .font(.title(.headline))
-                    Text("Cleanup talks to Instagram from this phone, the same way you would unsend a message yourself. Nothing from your DMs is sent to a Retract server. We don't collect analytics, advertising IDs, or other identifiers. There's no tracking or ads. Purchases are handled by Apple.")
+                    Text("Cleanup talks to Instagram from this phone, the same way you would unsend a message yourself. Nothing from your DMs is sent to a Retract server. When you connect Instagram, and when you buy Pro, Retract emails the publisher your Instagram username (and any promo code on purchase) so we know who signed up. Purchases are handled by Apple.")
                         .font(.subheadline)
                         .foregroundStyle(Palette.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)

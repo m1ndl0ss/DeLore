@@ -217,17 +217,19 @@ fun PrivacySheet(onBack: (() -> Unit)? = null) {
     ) {
         onBack?.let { QuietButton("Back", onClick = it) }
         Text("Privacy", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
+        Text("We never read your chats.", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+        Text("Message text never leaves this phone and is never sent to us.", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
         PromiseRow(Icons.Filled.PhoneAndroid, "Your Instagram content is processed on your phone.")
-        PromiseRow(Icons.Filled.Lock, "We don't sell or store your messages.")
+        PromiseRow(Icons.Filled.Lock, "We don't sell your messages.")
         PromiseRow(Icons.Filled.Visibility, "We don't need your message content to provide the cleanup.")
-        PromiseRow(Icons.Filled.BarChart, "No analytics. No identifiers sent to us.")
+        PromiseRow(Icons.Filled.BarChart, "No analytics SDK. No ads.")
         Card {
             Text("What stays on this phone", color = Palette.ink(), fontWeight = FontWeight.Bold)
             Text("Your Instagram login for this app, your chat names, and the date and type of each message you sent. Never what the messages say. It's encrypted on this device and deleted when you tap Disconnect & delete my data.", color = Palette.secondaryInk())
         }
         Card {
             Text("What leaves this phone", color = Palette.ink(), fontWeight = FontWeight.Bold)
-            Text("Cleanup talks to Instagram from this phone, the same way you would unsend a message yourself. Nothing from your DMs is sent to a Retract server. We don't collect analytics, advertising IDs, or other identifiers. There's no tracking or ads. Purchases are handled by Google Play.", color = Palette.secondaryInk())
+            Text("Cleanup talks to Instagram from this phone, the same way you would unsend a message yourself. Nothing from your DMs is sent to a Retract server. When you connect Instagram, and when you buy Pro, Retract emails the publisher your Instagram username (and any promo code on purchase) so we know who signed up. Purchases are handled by Google Play.", color = Palette.secondaryInk())
         }
         Card {
             Text("Sample data", color = Palette.ink(), fontWeight = FontWeight.Bold)

@@ -76,7 +76,7 @@ struct SettingsView: View {
                 Section {
                     EmptyView()
                 } footer: {
-                    Text("Retract \(appVersion) · No analytics. Not affiliated with Instagram or Meta. We are not responsible for anything that happens to your Instagram account.")
+                    Text("Retract \(appVersion) · We never read your chats. Not affiliated with Instagram or Meta. We are not responsible for anything that happens to your Instagram account.")
                         .frame(maxWidth: .infinity)
                 }
             }

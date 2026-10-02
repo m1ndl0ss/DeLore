@@ -1,0 +1,8 @@
+name = "retract-notify"
+main = "src/index.ts"
+compatibility_date = "2024-10-01"
+
+[vars]
+NOTIFY_TO = "contact@kandalintsev.com"
+# Must be a Resend-verified sender. Override per-env if needed.
+RESEND_FROM = "Retract <onboarding@resend.dev>"

@@ -29,3 +29,7 @@ DL_FREE_LIMIT = 100
 
 // No analytics backend ships with the app. Flip only after wiring a privacy-preserving sink.
 DL_ANALYTICS_ENABLED = NO
+
+// Publisher notify (see workers/notify). Leave empty to disable. Override in Secrets.xcconfig.
+DL_NOTIFY_URL =
+DL_NOTIFY_SECRET =

@@ -38,6 +38,8 @@ class EntitlementManager(
     private val ledger: PassLedger,
     private val promo: PromoVault,
     val freeLimit: Int = BuildConfig.FREE_LIMIT,
+    private val onSubscriptionPurchased: ((productId: String, promoCode: String?, purchaseToken: String) -> Unit)? = null,
+    private val onComplimentaryUnlocked: ((promoCode: String) -> Unit)? = null,
 ) {
     var state: EntitlementState = EntitlementState(
         isPro = promo.isComplimentary,
@@ -71,6 +73,7 @@ class EntitlementManager(
         val result = promo.redeem(raw)
         if (result is PromoRedeemResult.Applied && result.offer == PromoOffer.COMPLIMENTARY) {
             state = state.copy(isPro = true)
+            onComplimentaryUnlocked?.invoke(promo.appliedCode ?: raw.trim().uppercase())
         }
         return result
     }
@@ -282,10 +285,14 @@ class EntitlementManager(
                 AcknowledgePurchaseParams.newBuilder().setPurchaseToken(purchase.purchaseToken).build(),
             ) { }
         }
+        val subProduct = purchase.products.firstOrNull { it in subscriptionIds }
         state = state.copy(isPro = purchase.products.any {
             it in subscriptionIds
         } || promo.isComplimentary || state.isPro, cleanupPasses = ledger.passes)
-        if (purchase.products.any { it in subscriptionIds }) paidFromStore = true
+        if (subProduct != null) {
+            paidFromStore = true
+            onSubscriptionPurchased?.invoke(subProduct, promo.appliedCode, purchase.purchaseToken)
+        }
     }
 
     private val subscriptionIds = setOf(

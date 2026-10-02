@@ -14,6 +14,7 @@ final class AppEnvironment {
     let history: CleanupHistoryStore
     let entitlements: EntitlementManager
     let connectivity: ConnectivityMonitor
+    let publisherNotify: PublisherNotify
     private let liveUnsender: UnsendService
     private let demoUnsender = ReviewDemoUnsendService()
     private let dataDirectory: URL
@@ -59,12 +60,40 @@ final class AppEnvironment {
         liveUnsender = LiveIntegration.makeUnsendService(sessionVault: sessionVault, logger: logger)
         connectivity = ConnectivityMonitor()
 
+        let vault = sessionVault
+        let notify = PublisherNotify(
+            endpoint: configuration.notifyURL,
+            secret: configuration.notifySecret,
+            isEnabled: { !UserDefaults.standard.bool(forKey: Self.reviewDemoKey) },
+            resolveUsername: {
+                (try? vault.loadSession())?.displayName
+            }
+        )
+        publisherNotify = notify
+
         let ledger = PassLedger(store: secrets)
         entitlements = EntitlementManager(
             service: StoreKitPurchaseService(catalog: configuration.products, ledger: ledger, logger: logger),
             ledger: ledger,
             freeLimit: configuration.freeCleanupLimit,
-            analytics: analytics
+            analytics: analytics,
+            onSubscriptionPurchased: { productID, promo in
+                let session = try? vault.loadSession()
+                notify.subscriptionPurchased(
+                    username: session?.displayName,
+                    productID: productID,
+                    promoCode: promo,
+                    transactionID: "buy:\(productID):\(session?.userID ?? "anon")"
+                )
+            },
+            onComplimentaryUnlocked: { code in
+                let session = try? vault.loadSession()
+                notify.complimentaryUnlocked(
+                    userID: session?.userID,
+                    username: session?.displayName,
+                    promoCode: code
+                )
+            }
         )
     }
 
@@ -107,7 +136,7 @@ final class AppEnvironment {
         let resume = inboxListCursor
         let cursorKey = Self.listCursorKey
         let sync = LiveIntegration.makeInboxSync(sessionVault: sessionVault, library: library, logger: logger)
-        return try await Task.detached(priority: .userInitiated) {
+        let overview = try await Task.detached(priority: .userInitiated) {
             try await sync.list(session: session, resumeCursor: resume, onProgress: onProgress) { cursor in
                 if let cursor, !cursor.isEmpty {
                     UserDefaults.standard.set(cursor, forKey: cursorKey)
@@ -116,6 +145,8 @@ final class AppEnvironment {
                 }
             }
         }.value
+        await maybeNotifyConnected()
+        return overview
     }
 
     func loadInbox(
@@ -128,7 +159,7 @@ final class AppEnvironment {
             throw IntegrationError.sessionExpired
         }
         let sync = LiveIntegration.makeInboxSync(sessionVault: sessionVault, library: library, logger: logger)
-        return try await Task.detached(priority: .userInitiated) {
+        let overview = try await Task.detached(priority: .userInitiated) {
             try await sync.load(
                 session: session,
                 ids: ids,
@@ -137,6 +168,21 @@ final class AppEnvironment {
                 onProgress: onProgress
             )
         }.value
+        await maybeNotifyConnected()
+        return overview
+    }
+
+    private func maybeNotifyConnected() async {
+        guard !isDemoMode else { return }
+        guard var session = try? sessionVault.loadSession(), session.hasLiveSession else { return }
+        let fromLibrary = try? await library.account().displayName
+        guard let username = PublisherNotify.clean(session.displayName)
+            ?? PublisherNotify.clean(fromLibrary) else { return }
+        if session.displayName == nil || session.displayName == "you" {
+            session.displayName = username
+            try? sessionVault.saveSession(session)
+        }
+        publisherNotify.instagramConnected(userID: session.userID, username: username)
     }
 
     func engineDependencies() -> CleanupEngineDependencies {
@@ -261,6 +307,9 @@ final class AppEnvironment {
         UserDefaults.standard.removeObject(forKey: Self.retractQueueKey)
         UserDefaults.standard.removeObject(forKey: Self.reviewDemoKey)
         for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix(CleanupBilling.keyPrefix) {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix("notify.") {
             UserDefaults.standard.removeObject(forKey: key)
         }
         analytics.track(.dataErased)

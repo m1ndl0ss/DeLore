@@ -17,6 +17,7 @@ import app.delore.android.instagram.InstagramWebSession
 import app.delore.android.instagram.InstagramWebUnsendService
 import app.delore.android.instagram.InstagramWebViewGateway
 import app.delore.android.instagram.defaultOkHttp
+import app.delore.android.notify.PublisherNotify
 import app.delore.android.persist.CleanupHistoryStore
 import app.delore.android.persist.FileCleanupHistoryStore
 import app.delore.android.persist.FileJobStore
@@ -41,7 +42,6 @@ class AppEnvironment(private val context: Context) {
     val sessionVault = SessionVault(secrets)
     val ledger = PassLedger(secrets)
     val promo = PromoVault(secrets)
-    val entitlements = EntitlementManager(context, ledger, promo)
     val library = LocalLibraryStore(File(context.filesDir, "library"))
     val jobStore: JobStore = runCatching {
         FileJobStore(File(context.filesDir, "jobs"))
@@ -50,6 +50,31 @@ class AppEnvironment(private val context: Context) {
         FileCleanupHistoryStore(File(context.filesDir, "history"))
     }.getOrElse { InMemoryCleanupHistoryStore() }
     val prefs: SharedPreferences = context.getSharedPreferences("retract", Context.MODE_PRIVATE)
+    val publisherNotify = PublisherNotify(
+        prefs = prefs,
+        isEnabled = { !isDemoMode },
+        resolveUsername = { loadSession()?.displayName },
+    )
+    val entitlements = EntitlementManager(
+        context,
+        ledger,
+        promo,
+        onSubscriptionPurchased = { productId, promoCode, token ->
+            publisherNotify.subscriptionPurchased(
+                username = loadSession()?.displayName,
+                productId = productId,
+                promoCode = promoCode,
+                purchaseToken = token,
+            )
+        },
+        onComplimentaryUnlocked = { code ->
+            publisherNotify.complimentaryUnlocked(
+                userId = loadSession()?.userID,
+                username = loadSession()?.displayName,
+                promoCode = code,
+            )
+        },
+    )
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     val inboxWork = InboxWorkStore(prefs, json)
     val webBrowser = InstagramWebViewGateway()
@@ -126,9 +151,11 @@ class AppEnvironment(private val context: Context) {
         val session = loadSession()?.takeIf { it.hasLiveSession } ?: throw app.delore.android.domain.IntegrationError.SessionExpired
         val resume = inboxListCursor
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            InstagramInboxSync(http, library).list(session, resume, onProgress) { cursor ->
+            val overview = InstagramInboxSync(http, library).list(session, resume, onProgress) { cursor ->
                 inboxListCursor = cursor
             }
+            maybeNotifyConnected()
+            overview
         }
     }
 
@@ -140,8 +167,23 @@ class AppEnvironment(private val context: Context) {
     ): LibraryOverview {
         val session = loadSession()?.takeIf { it.hasLiveSession } ?: throw app.delore.android.domain.IntegrationError.SessionExpired
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            InstagramInboxSync(http, library).load(session, ids, titles, forceRefresh, onProgress)
+            val overview = InstagramInboxSync(http, library).load(session, ids, titles, forceRefresh, onProgress)
+            maybeNotifyConnected()
+            overview
         }
+    }
+
+    private suspend fun maybeNotifyConnected() {
+        if (isDemoMode) return
+        val session = loadSession()?.takeIf { it.hasLiveSession } ?: return
+        val fromLibrary = runCatching { library.account().displayName }.getOrNull()
+        val username = PublisherNotify.clean(session.displayName)
+            ?: PublisherNotify.clean(fromLibrary)
+            ?: return
+        if (session.displayName.isNullOrBlank() || session.displayName == "you") {
+            saveSession(session.copy(displayName = username))
+        }
+        publisherNotify.instagramConnected(session.userID, username)
     }
 
     suspend fun loadOverview(): LibraryOverview {
@@ -173,6 +215,9 @@ class AppEnvironment(private val context: Context) {
             .remove(RETRACT_QUEUE_KEY)
             .remove(DEMO_KEY)
             .apply()
+        val clearNotify = prefs.edit()
+        prefs.all.keys.filter { it.startsWith("notify.") }.forEach { clearNotify.remove(it) }
+        clearNotify.apply()
         webBrowser.destroy()
     }
 

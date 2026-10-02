@@ -81,5 +81,9 @@
 	<string>$(DL_FREE_LIMIT)</string>
 	<key>DLAnalyticsEnabled</key>
 	<string>$(DL_ANALYTICS_ENABLED)</string>
+	<key>DLNotifyURL</key>
+	<string>$(DL_NOTIFY_URL)</string>
+	<key>DLNotifySecret</key>
+	<string>$(DL_NOTIFY_SECRET)</string>
 </dict>
 </plist>

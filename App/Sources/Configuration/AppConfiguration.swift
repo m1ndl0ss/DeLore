@@ -16,6 +16,9 @@ struct AppConfiguration {
     let freeCleanupLimit: Int
     let analyticsEnabled: Bool
     let advancedFilters: Bool
+    /// Publisher notify endpoint. Empty disables.
+    let notifyURL: String
+    let notifySecret: String
 
     /// Pacing for destructive requests. Tune here; the engine reads every limit from it.
     let ratePolicy: RatePolicy = .conservative
@@ -44,7 +47,9 @@ struct AppConfiguration {
             ),
             freeCleanupLimit: string("DLFreeCleanupLimit").flatMap(Int.init) ?? 100,
             analyticsEnabled: string("DLAnalyticsEnabled")?.uppercased() == "YES",
-            advancedFilters: true
+            advancedFilters: true,
+            notifyURL: string("DLNotifyURL") ?? "",
+            notifySecret: string("DLNotifySecret") ?? ""
         )
     }
 }
