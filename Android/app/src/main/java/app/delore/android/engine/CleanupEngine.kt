@@ -105,6 +105,9 @@ class CleanupEngine private constructor(
     }
 
     companion object {
+        /** After Instagram goes quiet (consecutive failures), wait this long then resume automatically. */
+        const val AUTO_RETRY_AFTER_FAILURES_MS = 3L * 60L * 1000L
+
         fun loadActive(dependencies: CleanupEngineDependencies): CleanupEngine? {
             val persisted = dependencies.store.loadActiveJob() ?: return null
             return CleanupEngine(persisted, dependencies)
@@ -126,9 +129,12 @@ class CleanupEngine private constructor(
                     if (status.reason.requiresUserAction && !userResolvedIssue) {
                         throw CleanupEngineError.NeedsUserAction(status.reason)
                     }
-                    val until = job.resumeNotBefore
-                    if (until != null && until > deps.clock.nowMillis()) {
-                        throw CleanupEngineError.CoolingDown(until)
+                    // Rate-limit cool-downs must be honored; quiet-period can be skipped by Try again.
+                    if (status.reason == PauseReason.RATE_LIMITED) {
+                        val until = job.resumeNotBefore
+                        if (until != null && until > deps.clock.nowMillis()) {
+                            throw CleanupEngineError.CoolingDown(until)
+                        }
                     }
                 }
                 JobStatus.Ready -> Unit
@@ -180,6 +186,7 @@ class CleanupEngine private constructor(
         // Let in-flight NonCancellable unsends finish and land in the ledger.
         running?.join()
         return mutex.withLock {
+            // Only abandon items still mid-flight — never overwrite a COMPLETED success.
             for (index in items.indices) {
                 if (items[index].state == CleanupItemState.PROCESSING) {
                     setState(index, CleanupItemState.CANCELLED)
@@ -310,14 +317,18 @@ class CleanupEngine private constructor(
         }
         withContext(NonCancellable) {
             mutex.withLock {
-                if (items[index].state != CleanupItemState.PROCESSING) return@withLock
                 result.fold(
                     onSuccess = { outcome ->
                         when (outcome) {
-                            UnsendOutcome.UNSENT, UnsendOutcome.ALREADY_GONE -> markCompleted(index)
+                            // Already applied on Instagram — record even if cancel raced us.
+                            UnsendOutcome.UNSENT, UnsendOutcome.ALREADY_GONE -> forceCompleted(index)
                             UnsendOutcome.NOT_OWNED -> {
                                 consecutiveFailures = 0
-                                transition(index, CleanupItemState.SKIPPED)
+                                if (items[index].state == CleanupItemState.PROCESSING ||
+                                    items[index].state == CleanupItemState.CANCELLED
+                                ) {
+                                    transition(index, CleanupItemState.SKIPPED)
+                                }
                             }
                         }
                     },
@@ -362,6 +373,14 @@ class CleanupEngine private constructor(
     }
 
     private fun markCompleted(index: Int) {
+        forceCompleted(index)
+    }
+
+    /** Record an unsend that already hit Instagram, even if cancel flipped the item first. */
+    private fun forceCompleted(index: Int) {
+        val state = items[index].state
+        if (state == CleanupItemState.COMPLETED) return
+        if (state != CleanupItemState.PROCESSING && state != CleanupItemState.CANCELLED) return
         consecutiveFailures = 0
         throttler.recordSuccess()
         items[index] = items[index].copy(nextAttemptAt = null)
@@ -430,9 +449,21 @@ class CleanupEngine private constructor(
                 return
             }
             is IntegrationError.UnexpectedResponse -> {
-                consecutiveFailures = 0
-                items[index] = items[index].copy(needsReconcile = false, nextAttemptAt = null)
-                transition(index, CleanupItemState.FAILED)
+                // Systemic IG refusals used to mark FAILED and keep walking the queue —
+                // progress looked healthy for hours while nothing unsent. Pause after a streak.
+                refundAttempt()
+                consecutiveFailures += 1
+                if (items[index].attempts >= deps.policy.maxAttemptsPerItem) {
+                    items[index] = items[index].copy(nextAttemptAt = null)
+                    transition(index, CleanupItemState.FAILED)
+                } else {
+                    val delay = Backoff.delay(maxOf(1, items[index].attempts + 1), deps.policy, deps.random)
+                    items[index] = items[index].copy(nextAttemptAt = now + (delay * 1000).toLong())
+                    transition(index, CleanupItemState.RETRY_WAIT)
+                }
+                if (consecutiveFailures >= deps.policy.maxConsecutiveFailures) {
+                    stopLocked(PauseReason.REPEATED_FAILURES, deps.clock.nowMillis() + AUTO_RETRY_AFTER_FAILURES_MS)
+                }
                 return
             }
             is IntegrationError.TransportFailure -> {
@@ -456,7 +487,7 @@ class CleanupEngine private constructor(
             transition(index, CleanupItemState.RETRY_WAIT)
         }
         if (consecutiveFailures >= deps.policy.maxConsecutiveFailures) {
-            stopLocked(PauseReason.REPEATED_FAILURES)
+            stopLocked(PauseReason.REPEATED_FAILURES, deps.clock.nowMillis() + AUTO_RETRY_AFTER_FAILURES_MS)
         }
     }
 

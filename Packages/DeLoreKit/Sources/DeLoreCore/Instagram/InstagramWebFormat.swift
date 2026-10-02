@@ -171,8 +171,11 @@ enum InstagramWebFormat {
             )
             isSystem = InstagramItemKind.isSystem(type)
             sentByViewer = try container.decodeIfPresent(Bool.self, forKey: .isSentByViewer)
-            let message = try container.decodeIfPresent(FlexibleID.self, forKey: .messageID)?.rawValue
-            webMessageID = message?.hasPrefix("mid.") == true ? message : nil
+            val message = try container.decodeIfPresent(FlexibleID.self, forKey: .messageID)?.rawValue
+            let client = try container.decodeIfPresent(FlexibleID.self, forKey: .clientContext)?.rawValue
+            // Prefer an explicit mid.$…; some payloads only expose it under nested blobs — Decoder
+            // can't walk those, so top-level fields are the reliable path for Codable.
+            webMessageID = [message, client].compactMap { $0 }.first { $0.hasPrefix("mid.") }
         }
 
         /// Direct timestamps are microseconds when they're 16+ digits.
@@ -255,7 +258,7 @@ enum InstagramWebFormat {
 
     static func quoteOversizedNumericIDs(_ body: Data) -> Data {
         guard var text = String(data: body, encoding: .utf8) else { return body }
-        let pattern = "\"(item_id|thread_id|thread_v2_id|user_id|pk|client_context|id)\"\\s*:\\s*(\\d{16,})"
+        let pattern = "\"(item_id|thread_id|thread_v2_id|user_id|pk|client_context|message_id|id)\"\\s*:\\s*(\\d{16,})"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return body }
         let range = NSRange(text.startIndex..., in: text)
         text = regex.stringByReplacingMatches(in: text, range: range, withTemplate: "\"$1\":\"$2\"")

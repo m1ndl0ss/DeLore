@@ -31,6 +31,7 @@ final class CleanupSetupModel {
 
     private(set) var isPreparing = false
     private(set) var isEvaluating = false
+    private(set) var evaluateProgress = InboxReadProgress()
     private(set) var prepared: PreparedCleanup?
     private(set) var failed = false
     private(set) var overview: LibraryOverview
@@ -72,7 +73,10 @@ final class CleanupSetupModel {
     var usesAdvancedFilters: Bool { filter.isAdvanced }
 
     var canContinue: Bool {
-        !(scopeKind == .chosen && chosen.isEmpty) && estimatedCount > 0
+        switch scopeKind {
+        case .everything: return !overview.conversations.isEmpty
+        case .chosen: return !chosen.isEmpty
+        }
     }
 
     /// Upper bound from summaries; the exact number comes from `prepare()`.
@@ -93,14 +97,7 @@ final class CleanupSetupModel {
             isPreparing = false
         }
         do {
-            isEvaluating = true
-            let started = Date()
             try await refreshChatSizes()
-            let elapsed = Date().timeIntervalSince(started)
-            if elapsed < 0.9 {
-                try? await Task.sleep(nanoseconds: UInt64((0.9 - elapsed) * 1_000_000_000))
-            }
-            isEvaluating = false
 
             let request = CleanupRequest(scope: scope, filter: filter, limit: limit)
             let source = env.messageSource
@@ -120,15 +117,45 @@ final class CleanupSetupModel {
         }
     }
 
-    /// Re-reads target chats from Instagram so leftover counts match reality after a cancel.
+    /// Loads chats that haven't been sized yet. Results stay on device (`messagesLoaded`) so reopen skips Instagram.
     private func refreshChatSizes() async throws {
-        let targets = QueueBuilder.targetConversations(for: scope, in: overview.conversations)
-        guard !targets.isEmpty else { return }
-        if env.hasLiveSession {
-            let ids = targets.map(\.id)
-            let titles = Dictionary(uniqueKeysWithValues: targets.map { ($0.id.rawValue, $0.title) })
-            _ = try await env.loadInbox(ids: ids, titles: titles, forceRefresh: true)
+        let targets = QueueBuilder.conversationsInScope(for: scope, in: overview.conversations)
+        let pending = targets.filter { !$0.messagesLoaded }
+        guard !pending.isEmpty else {
+            overview = try await env.loadOverview()
+            return
         }
+        isEvaluating = true
+        let titles = pending.map(\.title)
+        evaluateProgress = InboxReadProgress(
+            chatsFound: pending.count,
+            chatsRead: 0,
+            chatsTotal: pending.count,
+            currentTitle: pending.first?.title,
+            foundTitles: titles
+        )
+        if env.hasLiveSession {
+            let ids = pending.map(\.id)
+            let titleMap = Dictionary(uniqueKeysWithValues: pending.map { ($0.id.rawValue, $0.title) })
+            _ = try await env.loadInbox(ids: ids, titles: titleMap, forceRefresh: false) { progress in
+                Task { @MainActor in
+                    self.evaluateProgress = progress
+                }
+            }
+        } else {
+            for (index, chat) in pending.enumerated() {
+                try await Task.sleep(nanoseconds: 90_000_000)
+                evaluateProgress = InboxReadProgress(
+                    chatsFound: pending.count,
+                    chatsRead: index + 1,
+                    chatsTotal: pending.count,
+                    sendsFound: chat.sentByOwner,
+                    currentTitle: chat.title,
+                    foundTitles: titles
+                )
+            }
+        }
+        isEvaluating = false
         overview = try await env.loadOverview()
     }
 

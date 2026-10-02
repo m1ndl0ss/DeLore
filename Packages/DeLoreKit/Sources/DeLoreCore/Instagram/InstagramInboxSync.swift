@@ -253,8 +253,16 @@ public struct InstagramInboxSync: Sendable {
                     continue
                 }
                 if authoredByOwner {
+                    // GraphQL Unsend needs mid.$… when Instagram provides it; numeric item_id alone
+                    // often only hits the REST delete path, which Instagram rejects with 1404006.
+                    let messageID: String
+                    if let mid = item.webMessageID, mid.hasPrefix("mid.") {
+                        messageID = mid
+                    } else {
+                        messageID = item.itemID
+                    }
                     ownerMessages.append(DiscoveredMessage(
-                        ref: MessageRef(conversationID: conversationID, messageID: item.itemID),
+                        ref: MessageRef(conversationID: conversationID, messageID: messageID),
                         authorID: ParticipantID("ig:" + ownerID),
                         sentAt: item.sentAt,
                         kind: item.kind

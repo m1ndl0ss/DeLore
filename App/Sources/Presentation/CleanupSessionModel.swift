@@ -17,6 +17,7 @@ final class CleanupSessionModel: Identifiable {
     private let entitlements: EntitlementManager
     /// Only touched on the main actor, plus `deinit` once no other reference exists.
     @ObservationIgnored private nonisolated(unsafe) var observation: Task<Void, Never>?
+    @ObservationIgnored private var autoResumeTask: Task<Void, Never>?
     var onActivityChanged: (() -> Void)?
     var onCleaned: ((Set<String>) -> Void)?
     private var lastCompleted = -1
@@ -28,18 +29,30 @@ final class CleanupSessionModel: Identifiable {
         id = initial.jobID
         progress = initial
         observe()
+        scheduleAutoResumeIfNeeded(initial)
     }
 
     deinit {
         observation?.cancel()
+        autoResumeTask?.cancel()
     }
 
     var copy: CleanupStatusCopy {
-        CleanupStatusCopy.make(for: progress.status, coolingDownUntil: progress.resumeNotBefore)
+        CleanupStatusCopy.make(
+            for: progress.status,
+            coolingDownUntil: progress.resumeNotBefore ?? tryAgainAt,
+            processed: progress.processed
+        )
     }
 
     var isFinished: Bool { progress.status.isFinished }
     var isRunning: Bool { progress.status == .running }
+    /// Waiting on Instagram cool-down / quiet period before we resume ourselves.
+    var isWaitingForAutoRetry: Bool {
+        guard case let .paused(reason) = progress.status, reason.schedulesAutoRetry else { return false }
+        guard let until = progress.resumeNotBefore ?? tryAgainAt else { return true }
+        return until > Date()
+    }
 
     // MARK: Actions
 
@@ -121,12 +134,29 @@ final class CleanupSessionModel: Identifiable {
             lastCompleted = update.completed
             onActivityChanged?()
         }
+        scheduleAutoResumeIfNeeded(update)
         if update.status.isFinished { handleFinish() }
+    }
+
+    private func scheduleAutoResumeIfNeeded(_ update: CleanupProgress) {
+        autoResumeTask?.cancel()
+        guard case let .paused(reason) = update.status, reason.schedulesAutoRetry else { return }
+        let until = update.resumeNotBefore
+            ?? Date().addingTimeInterval(CleanupEngine.autoRetryAfterFailures)
+        autoResumeTask = Task { [weak self] in
+            let delay = max(0, until.timeIntervalSinceNow)
+            if delay > 0 {
+                try? await Task.sleep(for: .seconds(delay))
+            }
+            guard !Task.isCancelled else { return }
+            await self?.resume()
+        }
     }
 
     private func handleFinish() {
         guard !finishHandled else { return }
         finishHandled = true
+        autoResumeTask?.cancel()
         if CleanupBilling.billing(for: id) == .free {
             entitlements.recordFreeUsage(progress.completed)
         }

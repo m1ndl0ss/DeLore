@@ -139,6 +139,14 @@ public enum PauseReason: String, Codable, Sendable, Hashable {
             return false
         }
     }
+
+    /// Engine schedules an automatic resume (after `resumeNotBefore`) for these pauses.
+    public var schedulesAutoRetry: Bool {
+        switch self {
+        case .rateLimited, .repeatedFailures: return true
+        default: return false
+        }
+    }
 }
 
 public enum JobStatus: Hashable, Codable, Sendable {

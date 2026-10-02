@@ -18,7 +18,9 @@ struct CleanupSetupView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.l) {
-                    Text("Messages you sent \(setup.estimatedCount.formatted())")
+                    Text(setup.estimatedCount > 0
+                         ? "Messages you sent \(setup.estimatedCount.formatted())"
+                         : "We'll count what you sent")
                         .font(Type.medium(28))
                         .foregroundStyle(Palette.ink)
                         .accessibilityAddTraits(.isHeader)
@@ -47,22 +49,22 @@ struct CleanupSetupView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 Button {
-                    Task { await setup.prepare() }
+                    Task { await startCleaning() }
                 } label: {
                     if setup.isPreparing {
                         ProgressView().tint(Palette.onVolt)
                     } else {
-                        Text("Continue")
+                        Text("Start cleaning")
                     }
                 }
                 .buttonStyle(.primary)
                 .disabled(!setup.canContinue || setup.isPreparing)
-                .accessibilityIdentifier("review")
+                .accessibilityIdentifier("startCleaning")
                 .padding(.horizontal, Spacing.screen)
                 .padding(.vertical, Spacing.s)
                 .background(Palette.background.opacity(0.96))
             }
-            .navigationDestination(isPresented: preparedBinding) {
+            .navigationDestination(isPresented: needsConfirmBinding) {
                 ConfirmCleanupView(setup: setup)
             }
             .sheet(isPresented: $showingChats) {
@@ -84,13 +86,37 @@ struct CleanupSetupView: View {
         }
         .overlay {
             if setup.isEvaluating {
-                EvaluatingChatSizeOverlay()
+                EvaluatingChatSizeOverlay(progress: setup.evaluateProgress)
             }
         }
     }
 
-    private var preparedBinding: Binding<Bool> {
-        Binding(get: { setup.prepared != nil }, set: { if !$0 { setup.discardPrepared() } })
+    private var needsConfirmBinding: Binding<Bool> {
+        Binding(
+            get: {
+                guard let prepared = setup.prepared, prepared.count > 0 else { return setup.prepared != nil }
+                if case .allowed = model.entitlements.allowance(
+                    requestedCount: prepared.count,
+                    usesAdvancedFilters: setup.usesAdvancedFilters
+                ) {
+                    return false
+                }
+                return true
+            },
+            set: { if !$0 { setup.discardPrepared() } }
+        )
+    }
+
+    private func startCleaning() async {
+        await setup.prepare()
+        await model.reloadOverview()
+        guard let prepared = setup.prepared else { return }
+        let decision = model.entitlements.allowance(
+            requestedCount: prepared.count,
+            usesAdvancedFilters: setup.usesAdvancedFilters
+        )
+        guard prepared.count > 0, case .allowed = decision else { return }
+        await model.startCleanup(PreparedCleanup(job: prepared.job, decision: decision))
     }
 
     private var failedBinding: Binding<Bool> {
@@ -252,38 +278,118 @@ private struct CleanupDateCalendar: View {
 }
 
 private struct EvaluatingChatSizeOverlay: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulse = false
+    let progress: InboxReadProgress
+
+    private var headline: String {
+        if progress.isComplete { return "All set" }
+        if let name = progress.displayChat { return "Checking \(name)" }
+        return "Evaluating chat size"
+    }
+
+    private var titles: [String] { progress.foundTitles }
+
+    private var caption: String {
+        if titles.isEmpty { return "Names land here as we check them" }
+        return "Checking · \(titles.count)"
+    }
 
     var body: some View {
-        ZStack {
-            Palette.background.ignoresSafeArea()
-            VStack(spacing: Spacing.m) {
-                Circle()
-                    .stroke(Palette.accent.opacity(0.35), lineWidth: 3)
-                    .frame(width: 56, height: 56)
-                    .overlay(
-                        Circle()
-                            .trim(from: 0, to: 0.28)
-                            .stroke(Palette.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                            .rotationEffect(.degrees(pulse ? 360 : 0))
-                    )
-                Text("Evaluating chat size")
-                    .font(Type.medium(18))
-                    .foregroundStyle(Palette.ink)
-                Text("Checking what's still there…")
-                    .font(Type.body(14))
-                    .foregroundStyle(Palette.secondaryInk)
+        VStack(spacing: Spacing.m) {
+            HStack {
+                Wordmark()
+                Spacer()
             }
-            .opacity(pulse || reduceMotion ? 1 : 0.85)
+            VStack(spacing: Spacing.s) {
+                Text(headline)
+                    .font(Type.medium(20))
+                    .foregroundStyle(Palette.ink)
+                    .multilineTextAlignment(.center)
+                Text(progress.detail)
+                    .font(Type.medium(15))
+                    .foregroundStyle(Palette.accent)
+                    .contentTransition(.numericText())
+                    .animation(.snappy, value: progress.sendsFound + progress.chatsRead)
+                LoreProgressBar(fraction: progress.fraction)
+                    .frame(maxWidth: 280)
+            }
+            VStack(alignment: .leading, spacing: Spacing.s) {
+                Text(caption)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Palette.secondaryInk)
+                if !titles.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(titles.suffix(4).enumerated()), id: \.offset) { index, name in
+                            let visible = Array(titles.suffix(4))
+                            EvaluatePersonRow(name: name, newest: index == visible.count - 1)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+
+            Spacer(minLength: Spacing.m)
+            Text("We're sizing each chat so unsending stays efficient — only what's still there, nothing wasted.")
+                .font(Type.body(15))
+                .foregroundStyle(Palette.secondaryInk)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .padding(.horizontal, Spacing.m)
+
+            Text("This happens on your phone. You can exit — don't close Retract.")
+                .font(.subheadline)
+                .foregroundStyle(Palette.secondaryInk)
+                .multilineTextAlignment(.center)
         }
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) { pulse = true }
-        }
-        .accessibilityElement(children: .combine)
+        .padding(.horizontal, Spacing.screen)
+        .padding(.vertical, Spacing.m)
+        .screenBackground()
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Evaluating chat size")
     }
+}
+
+private struct EvaluatePersonRow: View {
+    let name: String
+    let newest: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(personInitial(name))
+                .font(Type.medium(14))
+                .foregroundStyle(Palette.accent)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(Palette.accent.opacity(0.22)))
+                .accessibilityHidden(true)
+            Text(name)
+                .font(Type.medium(16))
+                .foregroundStyle(Palette.ink)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if newest {
+                Text("new")
+                    .font(Type.medium(11))
+                    .foregroundStyle(Palette.accent)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(newest ? Palette.surfaceElevated : Palette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(newest ? Palette.accent.opacity(0.7) : Color.clear, lineWidth: 1)
+        )
+        .scaleEffect(newest ? 1.015 : 1)
+        .animation(.spring(duration: 0.28), value: newest)
+    }
+}
+
+private func personInitial(_ name: String) -> String {
+    let cleaned = name.trimmingCharacters(in: CharacterSet(charactersIn: "@ ").union(.whitespaces))
+    guard let first = cleaned.first else { return "?" }
+    return String(first).uppercased()
 }
 
 private struct ChatPicker: View {

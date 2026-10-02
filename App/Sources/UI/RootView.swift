@@ -36,7 +36,7 @@ struct RootView: View {
             if let session = model.session {
                 CleanupRunView(session: session)
                     .environment(model)
-                    .presentationBackground(Palette.background)
+                    .presentationBackground(.clear)
             }
         }
         .fullScreenCover(item: $model.termsPrompt) { prompt in

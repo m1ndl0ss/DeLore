@@ -9,22 +9,11 @@ struct ChooseChatsView: View {
     @State private var query = ""
 
     private var chats: [ConversationSummary] {
-        let sorted = overview.conversations
-            .filter { !$0.messagesLoaded || $0.isCleanable }
-            .sorted {
-                if $0.messagesLoaded != $1.messagesLoaded { return !$0.messagesLoaded && $1.messagesLoaded }
-                return $0.sentByOwner > $1.sentByOwner
-            }
+        let sorted = overview.conversations.sorted {
+            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
         guard !query.isEmpty else { return sorted }
         return sorted.filter { $0.title.localizedCaseInsensitiveContains(query) }
-    }
-
-    private var unreadSelected: Int {
-        overview.conversations.filter { selection.contains($0.id) && !$0.messagesLoaded }.count
-    }
-
-    private var selectedCount: Int {
-        overview.conversations.filter { selection.contains($0.id) && $0.messagesLoaded }.reduce(0) { $0 + $1.sentByOwner }
     }
 
     var body: some View {
@@ -61,10 +50,8 @@ struct ChooseChatsView: View {
                 } label: {
                     if selection.isEmpty {
                         Text("Pick at least one chat")
-                    } else if unreadSelected > 0 {
-                        Text(unreadSelected == 1 ? "Read 1 chat" : "Read \(unreadSelected) chats")
                     } else {
-                        Text("Continue with ^[\(selectedCount) message](inflect: true)")
+                        Text(selection.count == 1 ? "Retract with 1 person" : "Retract with \(selection.count) people")
                     }
                 }
                 .buttonStyle(.primary)
@@ -125,7 +112,7 @@ struct ChatRow: View {
     }
 
     private var subtitle: String {
-        if !chat.messagesLoaded { return "Name only · tap to load" }
+        if !chat.messagesLoaded { return "We'll count what you sent next" }
         if chat.sentByOwner == 0 { return "Nothing from you" }
         return chat.sentByOwner == 1 ? "1 message from you" : "\(chat.sentByOwner) messages from you"
     }

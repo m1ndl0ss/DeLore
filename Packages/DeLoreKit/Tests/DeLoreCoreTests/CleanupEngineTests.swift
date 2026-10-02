@@ -412,15 +412,33 @@ final class CleanupEngineTests: XCTestCase {
         XCTAssertTrue(PauseReason.verificationRequired.requiresUserAction)
     }
 
-    func testUnexpectedResponseFailsThatItemAndContinues() async throws {
+    func testUnexpectedResponseRetriesInsteadOfBurningTheQueue() async throws {
         let harness = EngineHarness()
         try await harness.buildJob()
         harness.fake.scriptFault(.unexpected(code: 418), onUnsendCall: 1)
         let engine = try await harness.makeEngine()
         let progress = try await harness.runToStop(engine)
+        // One bad reply should not permanently fail that item — we retry and finish.
         XCTAssertEqual(progress.status, .completed)
-        XCTAssertEqual(progress.failed, 1)
-        XCTAssertEqual(progress.completed, progress.total - 1)
+        XCTAssertEqual(progress.failed, 0)
+        XCTAssertEqual(progress.completed, progress.total)
+        XCTAssertGreaterThan(harness.fake.unsendCalls, progress.total)
+    }
+
+    func testPersistentUnexpectedResponsesPauseInsteadOfFakeProgress() async throws {
+        let harness = EngineHarness()
+        try await harness.buildJob()
+        harness.fake.setPersistentFault(.unexpected(code: 403))
+        let engine = try await harness.makeEngine()
+        let progress = try await harness.runToStop(engine)
+        XCTAssertEqual(progress.status, .paused(.repeatedFailures))
+        XCTAssertNotNil(progress.resumeNotBefore)
+        XCTAssertEqual(progress.completed, 0)
+        XCTAssertLessThan(
+            harness.fake.unsendCalls,
+            harness.policy.maxConsecutiveFailures * 3,
+            "must not walk thousands of items while Instagram is refusing everything"
+        )
     }
 
     func testUnavailableIntegrationPausesWithoutNetwork() async throws {
@@ -492,6 +510,8 @@ final class CleanupEngineTests: XCTestCase {
         let progress = try await harness.runToStop(engine)
 
         XCTAssertEqual(progress.status, .paused(.repeatedFailures))
+        let resumeAt = try XCTUnwrap(progress.resumeNotBefore)
+        XCTAssertEqual(resumeAt.timeIntervalSince(harness.clock.now), CleanupEngine.autoRetryAfterFailures, accuracy: 0.5)
         XCTAssertLessThanOrEqual(harness.fake.unsendCalls + harness.fake.presenceCalls, harness.policy.maxConsecutiveFailures * 2)
     }
 

@@ -12,7 +12,7 @@ struct CleanupStatusCopy: Equatable {
     let tone: Tone
     let action: Action
 
-    static func make(for status: JobStatus, coolingDownUntil: Date?, now: Date = Date()) -> CleanupStatusCopy {
+    static func make(for status: JobStatus, coolingDownUntil: Date?, now: Date = Date(), processed: Int = -1) -> CleanupStatusCopy {
         switch status {
         case .ready, .running:
             if let until = coolingDownUntil, until > now {
@@ -23,7 +23,10 @@ struct CleanupStatusCopy: Equatable {
                     action: .pause
                 )
             }
-            return CleanupStatusCopy(headline: String(localized: "Cleaning your digital past…"), message: nil, tone: .normal, action: .pause)
+            let hint: String? = processed == 0
+                ? String(localized: "The first unsend can take a minute — we're lining your messages up with Instagram's chat history. After that, it usually picks up.")
+                : nil
+            return CleanupStatusCopy(headline: String(localized: "Cleaning your digital past…"), message: hint, tone: .normal, action: .pause)
         case .completed:
             return CleanupStatusCopy(headline: String(localized: "Fresh start ✨"), message: nil, tone: .normal, action: .none)
         case .cancelled:
@@ -42,13 +45,13 @@ struct CleanupStatusCopy: Equatable {
         case .interrupted:
             return CleanupStatusCopy(headline: String(localized: "Pick up where you left off"), message: String(localized: "We'll continue automatically. Tap Resume if we're waiting — we won't unsend the same message twice."), tone: .normal, action: .resume)
         case .rateLimited:
-            return CleanupStatusCopy(headline: String(localized: "Instagram asked us to wait"), message: String(localized: "We've paused because Instagram asked us to wait. Try again later."), tone: .caution, action: .tryAgain)
+            return CleanupStatusCopy(headline: String(localized: "Instagram asked us to wait"), message: String(localized: "We've paused because Instagram asked us to wait. We'll try again automatically."), tone: .caution, action: .tryAgain)
         case .sessionExpired:
             return CleanupStatusCopy(headline: String(localized: "Instagram signed you out"), message: String(localized: "Reconnect your account, then come back to continue. Nothing else was touched."), tone: .caution, action: .reconnect)
         case .verificationRequired:
             return CleanupStatusCopy(headline: String(localized: "Instagram is asking you to verify your account."), message: String(localized: "Open Instagram and follow its steps, then come back here. Retract isn't responsible for what Instagram does."), tone: .caution, action: .resumeAfterVerifying)
         case .repeatedFailures:
-            return CleanupStatusCopy(headline: String(localized: "Instagram isn't cooperating"), message: String(localized: "Instagram isn't responding the way it should right now. Try again later. Retract isn't responsible for what happens to your account."), tone: .caution, action: .tryAgain)
+            return CleanupStatusCopy(headline: String(localized: "Instagram isn't cooperating"), message: String(localized: "Instagram stopped responding. We'll try again in about 3 minutes — you can leave Retract open in the background."), tone: .caution, action: .tryAgain)
         case .offline:
             return CleanupStatusCopy(headline: String(localized: "You're offline"), message: String(localized: "We'll carry on as soon as you're back online."), tone: .caution, action: .tryAgain)
         case .unexpectedResponse:

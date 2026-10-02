@@ -7,6 +7,7 @@ import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -481,21 +483,21 @@ fun QuietLink(title: String, enabled: Boolean = true, onClick: () -> Unit) {
 @Composable
 fun LoreProgressBar(fraction: Double) {
     val reduce = reduceMotion()
-    val fill = remember { Animatable(fraction.toFloat().coerceIn(0f, 1f)) }
-    LaunchedEffect(fraction) {
-        fill.animateTo(fraction.toFloat().coerceIn(0f, 1f), tween(420, easing = EaseOut))
-    }
-    val clock = rememberInfiniteTransition(label = "progress-shimmer")
-    val shimmerPulse by clock.animateFloat(
+    val target = fraction.toFloat().coerceIn(0f, 1f)
+    val fill by animateFloatAsState(
+        targetValue = target,
+        animationSpec = tween(360, easing = EaseOut),
+        label = "progressFill",
+    )
+    val sheen by rememberInfiniteTransition(label = "progress-sheen").animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1400, easing = LinearEasing),
+            animation = tween(1600, easing = LinearEasing),
             repeatMode = RepeatMode.Restart,
         ),
-        label = "shimmer",
+        label = "sheen",
     )
-    val shimmer = if (reduce) 0f else shimmerPulse
     Box(
         Modifier
             .fillMaxWidth()
@@ -505,16 +507,30 @@ fun LoreProgressBar(fraction: Double) {
     ) {
         Box(
             Modifier
-                .fillMaxWidth(fill.value.coerceAtLeast(0.02f))
+                .fillMaxWidth(fill)
                 .height(Metrics.progress)
-                .background(
-                    Brush.horizontalGradient(
-                        0f to Palette.accent,
-                        (shimmer * 0.85f).coerceIn(0f, 1f) to Palette.accent.copy(alpha = 0.55f),
-                        1f to Palette.accent,
-                    ),
-                ),
-        )
+                .clip(RoundedCornerShape(50))
+                .background(Palette.accent),
+        ) {
+            if (!reduce && fill > 0.02f) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(0.28f)
+                        .graphicsLayer {
+                            // Soft highlight that only sweeps inside the filled bar —
+                            // never moves color stops on the fill itself.
+                            translationX = (size.width * 3.2f) * (sheen - 0.15f)
+                            alpha = 0.22f
+                        }
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(Color.Transparent, Color.White, Color.Transparent),
+                            ),
+                        ),
+                )
+            }
+        }
     }
 }
 

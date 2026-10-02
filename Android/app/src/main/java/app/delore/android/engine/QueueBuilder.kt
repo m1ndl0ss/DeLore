@@ -6,6 +6,7 @@ import app.delore.android.domain.CleanupJob
 import app.delore.android.domain.CleanupRequest
 import app.delore.android.domain.CleanupScope
 import app.delore.android.domain.ConversationSummary
+import app.delore.android.domain.DiscoveredMessage
 import app.delore.android.domain.MessageSource
 import app.delore.android.persist.JobStore
 
@@ -33,26 +34,15 @@ class QueueBuilder(
         val targets = targetConversations(request.scope, conversations)
         var job = CleanupJob(createdAt = nowMillis, ownerID = account.ownerID, request = request)
         store.createJob(job)
-        val buffer = ArrayList<CleanupItem>(batchSize)
+        val candidates = ArrayList<DiscoveredMessage>()
         val seen = HashSet<String>()
-        var count = 0
-        var peak = 0
         var notOwned = 0
         var duplicates = 0
         var alreadyCleaned = 0
         val limit = request.limit ?: Int.MAX_VALUE
-        var stop = false
 
-        suspend fun flush() {
-            if (buffer.isEmpty()) return
-            store.appendItems(buffer.toList())
-            buffer.clear()
-        }
-
-        conversationLoop@ for (conversation in targets) {
-            if (stop) break
+        for (conversation in targets) {
             source.forEachPage(conversation.id, pageSize) { page ->
-                if (stop) return@forEachPage
                 for (message in page) {
                     if (message.authorID != account.ownerID) {
                         notOwned += 1
@@ -69,32 +59,51 @@ class QueueBuilder(
                         duplicates += 1
                         continue
                     }
-                    buffer.add(
-                        CleanupItem(
-                            index = count,
-                            ref = message.ref,
-                            authorID = message.authorID,
-                            sentAtMillis = message.sentAtMillis,
-                            kind = message.kind,
-                        ),
-                    )
-                    count += 1
-                    peak = maxOf(peak, buffer.size)
-                    if (buffer.size >= batchSize) flush()
-                    if (count >= limit) {
-                        stop = true
-                        return@forEachPage
-                    }
+                    candidates.add(message)
                 }
             }
         }
+
+        // Most recent first — people usually want the latest slip-ups gone before old history.
+        candidates.sortByDescending { it.sentAtMillis }
+        val selected = if (candidates.size > limit) candidates.take(limit) else candidates
+
+        val buffer = ArrayList<CleanupItem>(batchSize)
+        var peak = 0
+        suspend fun flush() {
+            if (buffer.isEmpty()) return
+            store.appendItems(buffer.toList())
+            buffer.clear()
+        }
+        selected.forEachIndexed { index, message ->
+            buffer.add(
+                CleanupItem(
+                    index = index,
+                    ref = message.ref,
+                    authorID = message.authorID,
+                    sentAtMillis = message.sentAtMillis,
+                    kind = message.kind,
+                ),
+            )
+            peak = maxOf(peak, buffer.size)
+            if (buffer.size >= batchSize) flush()
+        }
         flush()
-        job = job.copy(itemCount = count)
+        job = job.copy(itemCount = selected.size)
         store.updateJob(job)
         return QueueBuildReport(job, peak, notOwned, duplicates, alreadyCleaned)
     }
 
     companion object {
+        /** Scope membership only — used before chats are evaluated (messages may not be loaded yet). */
+        fun conversationsInScope(scope: CleanupScope, conversations: List<ConversationSummary>): List<ConversationSummary> {
+            val selected = when (scope) {
+                CleanupScope.Everything -> conversations.filter { !it.ownershipAmbiguous }
+                is CleanupScope.Conversations -> conversations.filter { it.id in scope.ids && !it.ownershipAmbiguous }
+            }
+            return selected.sortedBy { it.id }
+        }
+
         fun targetConversations(scope: CleanupScope, conversations: List<ConversationSummary>): List<ConversationSummary> {
             val cleanable = conversations.filter { it.isCleanable }
             val selected = when (scope) {

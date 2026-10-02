@@ -35,9 +35,9 @@ data class RatePolicy(
 
     companion object {
         val conservative = RatePolicy(
-            minimumDelay = 2.0,
-            maximumJitter = 0.4,
-            burstLimit = 30,
+            minimumDelay = 1.25,
+            maximumJitter = 0.3,
+            burstLimit = 40,
             burstWindow = 60.0,
             hourlyLimit = 1_800,
             backoffBase = 15.0,

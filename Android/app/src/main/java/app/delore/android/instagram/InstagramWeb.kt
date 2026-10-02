@@ -474,6 +474,7 @@ object InstagramWebFormat {
         val webMessageID = listOf("message_id", "client_context", "item_iid")
             .map { flexibleId(obj, it) }
             .firstOrNull { it.startsWith("mid.") }
+            ?: findMid(obj)
         return ThreadItem(
             itemID = flexibleId(obj, "item_id").ifEmpty { flexibleId(obj, "client_context") },
             authorID = flexibleIdOrNull(obj, "user_id"),
@@ -483,6 +484,26 @@ object InstagramWebFormat {
             sentByViewer = if (obj.has("is_sent_by_viewer")) obj.optBoolean("is_sent_by_viewer") else null,
             webMessageID = webMessageID,
         )
+    }
+
+    /** Walk nested JSON for a `mid.$…` string Instagram sometimes nests under media/xma blobs. */
+    private fun findMid(value: Any?, depth: Int = 0): String? {
+        if (depth > 4 || value == null || value == JSONObject.NULL) return null
+        when (value) {
+            is String -> if (value.startsWith("mid.")) return value
+            is JSONObject -> {
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    findMid(value.opt(keys.next()), depth + 1)?.let { return it }
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until value.length()) {
+                    findMid(value.opt(i), depth + 1)?.let { return it }
+                }
+            }
+        }
+        return null
     }
 
     private fun dateFrom(raw: Long): Long = when {
@@ -508,7 +529,7 @@ object InstagramWebFormat {
     }
 
     private val OVERSIZED_NUMERIC_ID =
-        Regex("\"(item_id|thread_id|thread_v2_id|user_id|pk|client_context|id)\"\\s*:\\s*(\\d{16,})")
+        Regex("\"(item_id|thread_id|thread_v2_id|user_id|pk|client_context|message_id|id)\"\\s*:\\s*(\\d{16,})")
 
     private fun flexibleIdOrNull(obj: JSONObject, key: String): String? {
         val value = flexibleId(obj, key)

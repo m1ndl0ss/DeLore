@@ -20,6 +20,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -50,6 +51,7 @@ class InstagramWorkController(private val app: Application, private val env: App
 
     private var inboxJob: Job? = null
     private var observeJob: Job? = null
+    private var autoResumeJob: Job? = null
     private var finishHandled = false
     private var currentJobId: String? = null
     private var completedTick = 0L
@@ -259,13 +261,30 @@ class InstagramWorkController(private val app: Application, private val env: App
             JobStatus.Ready -> true
             is JobStatus.Paused -> when (status.reason) {
                 PauseReason.INTERRUPTED, PauseReason.APP_IN_BACKGROUND -> true
+                PauseReason.RATE_LIMITED, PauseReason.REPEATED_FAILURES -> true
                 else -> false
             }
             else -> false
         }
         if (!should) return
-        if (resumeNotBefore != null && resumeNotBefore > System.currentTimeMillis()) return
+        if (resumeNotBefore != null && resumeNotBefore > System.currentTimeMillis()) {
+            scheduleAutoResume(loaded, resumeNotBefore)
+            return
+        }
         runCatching { loaded.start() }
+    }
+
+    private fun scheduleAutoResume(loaded: CleanupEngine, atMillis: Long?) {
+        autoResumeJob?.cancel()
+        val until = atMillis
+            ?: (System.currentTimeMillis() + CleanupEngine.AUTO_RETRY_AFTER_FAILURES_MS)
+        autoResumeJob = scope.launch {
+            val wait = (until - System.currentTimeMillis()).coerceAtLeast(0L)
+            if (wait > 0L) delay(wait)
+            if (engine !== loaded) return@launch
+            runCatching { loaded.start() }
+        }
+        keepAlive("Waiting to retry with Instagram…")
     }
 
     private fun observe(loaded: CleanupEngine) {
@@ -273,9 +292,24 @@ class InstagramWorkController(private val app: Application, private val env: App
         observeJob = scope.launch {
             loaded.updates.collect { update ->
                 _cleanup.value = update
-                keepAlive(notificationText(null, update))
-                if (update.status.isFinished) handleFinish(update)
-                if (update.status != JobStatus.Running) stopIfIdle()
+                when {
+                    update.status.isFinished -> {
+                        autoResumeJob?.cancel()
+                        handleFinish(update)
+                    }
+                    update.status == JobStatus.Running -> {
+                        autoResumeJob?.cancel()
+                        keepAlive(notificationText(null, update))
+                    }
+                    update.status is JobStatus.Paused &&
+                        update.status.pauseReason?.schedulesAutoRetry == true -> {
+                        scheduleAutoResume(loaded, update.resumeNotBefore)
+                    }
+                    else -> {
+                        autoResumeJob?.cancel()
+                        stopIfIdle()
+                    }
+                }
             }
         }
     }
@@ -318,14 +352,16 @@ class InstagramWorkController(private val app: Application, private val env: App
     }
 
     private fun keepAlive(text: String) {
+        val waitingRetry = autoResumeJob?.isActive == true
         val runningCleanup = _cleanup.value?.status == JobStatus.Running
-        if (!runningCleanup && inboxJob?.isActive != true && !_inbox.value.active) return
+        if (!runningCleanup && !waitingRetry && inboxJob?.isActive != true && !_inbox.value.active) return
         CleanupForegroundService.start(app, text)
     }
 
     private fun stopIfIdle() {
+        val waitingRetry = autoResumeJob?.isActive == true
         val cleanupRunning = _cleanup.value?.status == JobStatus.Running
-        if (!cleanupRunning && inboxJob?.isActive != true && !_inbox.value.active) {
+        if (!cleanupRunning && !waitingRetry && inboxJob?.isActive != true && !_inbox.value.active) {
             CleanupForegroundService.stop(app)
         }
     }

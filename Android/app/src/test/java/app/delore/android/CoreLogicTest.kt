@@ -119,6 +119,30 @@ class FilterAndQueueTest {
         )
         assertEquals(10, count)
     }
+
+    @Test
+    fun conversationsInScopeIncludesUnloadedChats() {
+        val unloaded = ConversationSummary(
+            id = ConversationID("u"),
+            title = "Unloaded",
+            sentByOwner = 0,
+            receivedFromOthers = 0,
+            messagesLoaded = false,
+        )
+        val loaded = ConversationSummary(
+            id = ConversationID("l"),
+            title = "Loaded",
+            sentByOwner = 4,
+            receivedFromOthers = 1,
+            messagesLoaded = true,
+        )
+        val scoped = QueueBuilder.conversationsInScope(
+            CleanupScope.Conversations(setOf(unloaded.id, loaded.id)),
+            listOf(unloaded, loaded),
+        )
+        assertEquals(listOf(loaded.id, unloaded.id).sortedBy { it.rawValue }, scoped.map { it.id }.sortedBy { it.rawValue })
+        assertTrue(QueueBuilder.targetConversations(CleanupScope.Conversations(setOf(unloaded.id)), listOf(unloaded)).isEmpty())
+    }
 }
 
 class InstagramPolicyTest {

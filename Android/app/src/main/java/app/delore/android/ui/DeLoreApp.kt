@@ -137,6 +137,7 @@ import app.delore.android.domain.CleanupAllowanceDecision
 import app.delore.android.domain.CleanupScope
 import app.delore.android.domain.ConversationID
 import app.delore.android.domain.ConversationSummary
+import app.delore.android.domain.InboxReadProgress
 import app.delore.android.domain.LibraryOverview
 import app.delore.android.domain.MessageKind
 import app.delore.android.domain.JobStatus
@@ -174,7 +175,9 @@ fun DeLoreRoot(model: AppViewModel) {
                 (state.sessionPresented && state.progress != null) ||
                 state.sheet is Sheet.Setup
             when {
-                state.sessionPresented && state.progress != null || state.sheet is Sheet.Setup ->
+                state.sessionPresented && state.progress != null ->
+                    MeshBackground(Modifier.matchParentSize())
+                state.sheet is Sheet.Setup ->
                     Box(Modifier.fillMaxSize().background(Palette.backgroundDark))
                 state.route != Route.HOME || covering ->
                     MeshBackground(Modifier.matchParentSize())
@@ -748,15 +751,10 @@ private fun HomeScreen(model: AppViewModel) {
         val all = overview?.conversations.orEmpty().sortedBy { it.title.lowercase() }
         if (query.isBlank()) all else all.filter { it.title.contains(query.trim(), ignoreCase = true) }
     }
-    val selectedPeople = overview?.conversations.orEmpty().filter { it.id in selection }
-    val unreadSelected = selectedPeople.count { !it.messagesLoaded }
-    val cleanableSelected = selectedPeople.count { it.isCleanable }
-    val canAct = selection.isNotEmpty() && (unreadSelected > 0 || cleanableSelected > 0)
+    val canAct = selection.isNotEmpty()
     val actionLabel = when {
         selection.isEmpty() -> "Pick people to retract with"
-        unreadSelected > 0 -> "Read ${inflect(unreadSelected, "chat")}"
-        cleanableSelected > 0 -> "Retract with ${inflect(selection.size, "person", "people")}"
-        else -> "Nothing to retract there"
+        else -> "Retract with ${inflect(selection.size, "person", "people")}"
     }
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -1064,15 +1062,10 @@ private fun KindLine(title: String, count: Int) {
 @Composable
 private fun ChooseChatsSheet(model: AppViewModel, overview: LibraryOverview) {
     var selection by remember { mutableStateOf(setOf<ConversationID>()) }
-    val chats = overview.conversations
-        .filter { !it.messagesLoaded || it.isCleanable }
-        .sortedByDescending { if (it.messagesLoaded) it.sentByOwner else Int.MAX_VALUE - 1 }
-    val unreadSelected = chats.count { it.id in selection && !it.messagesLoaded }
-    val loadedSelected = chats.filter { it.id in selection && it.messagesLoaded }.sumOf { it.sentByOwner }
+    val chats = overview.conversations.sortedBy { it.title.lowercase() }
     val buttonLabel = when {
         selection.isEmpty() -> "Pick at least one chat"
-        unreadSelected > 0 -> "Read ${inflect(unreadSelected, "chat")}"
-        else -> "Continue with ${inflect(loadedSelected, "message")}"
+        else -> "Retract with ${inflect(selection.size, "person", "people")}"
     }
     Column(Modifier.fillMaxSize().padding(Spacing.screen)) {
         Text("Choose chats", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
@@ -1227,7 +1220,7 @@ private fun ChatRow(chat: ConversationSummary, selected: Boolean, onClick: () ->
             Text(chat.title, color = Palette.ink(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 when {
-                    !chat.messagesLoaded -> "Name only · tap to load"
+                    !chat.messagesLoaded -> "We'll count what you sent next"
                     chat.sentByOwner == 0 -> "Nothing from you"
                     else -> "${inflect(chat.sentByOwner, "message")} from you"
                 },
@@ -1262,7 +1255,11 @@ private fun CleanupSetupScreen(model: AppViewModel, overview: LibraryOverview, s
         Text("Clean up", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
         Spacer(Modifier.height(Spacing.l))
         Text(
-            "Messages you sent ${NumberFormat.getIntegerInstance().format(setup.estimatedCount)}",
+            if (setup.estimatedCount > 0) {
+                "Messages you sent ${NumberFormat.getIntegerInstance().format(setup.estimatedCount)}"
+            } else {
+                "We'll count what you sent"
+            },
             color = Palette.ink(),
             fontFamily = Type.sans,
             fontWeight = FontWeight.SemiBold,
@@ -1325,20 +1322,33 @@ private fun CleanupSetupScreen(model: AppViewModel, overview: LibraryOverview, s
             )
         }
         Spacer(Modifier.height(Spacing.l))
-        PrimaryButton(if (setup.isPreparing) "Working…" else "Continue", enabled = setup.canContinue && !setup.isPreparing) {
+        PrimaryButton(if (setup.isPreparing) "Working…" else "Start cleaning", enabled = setup.canContinue && !setup.isPreparing) {
             scopeHandle.launch {
                 setup.prepare()
+                model.reloadOverview()
+                val prepared = setup.prepared
+                if (prepared != null && prepared.count > 0) {
+                    val decision = model.entitlements.allowance(prepared.count, setup.usesAdvancedFilters)
+                    if (decision is CleanupAllowanceDecision.Allowed) {
+                        model.startCleanup(PreparedCleanup(prepared.job, decision))
+                        return@launch
+                    }
+                }
                 bump()
             }
         }
         if (setup.failed) {
             Text("We couldn't get your messages ready. Try again.", color = Palette.danger())
         }
-        setup.prepared?.let { ConfirmBlock(model, setup, it) { bump() } }
+        setup.prepared?.let { prepared ->
+            val decision = model.entitlements.allowance(prepared.count, setup.usesAdvancedFilters)
+            val showGate = prepared.count == 0 || decision !is CleanupAllowanceDecision.Allowed
+            if (showGate) ConfirmBlock(model, setup, prepared) { bump() }
+        }
         Spacer(Modifier.height(Spacing.xl))
     }
     if (setup.isEvaluating) {
-        EvaluatingChatSizeOverlay()
+        EvaluatingChatSizeOverlay(setup.evaluateProgress)
     }
     if (showPaywall) {
         Box(Modifier.fillMaxSize().background(Palette.backgroundDark)) {
@@ -1422,29 +1432,94 @@ private fun CleanupDateCalendar(
 }
 
 @Composable
-private fun EvaluatingChatSizeOverlay() {
-    val reduce = reduceMotion()
-    val spin by rememberInfiniteTransition(label = "evaluate").animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Restart),
-        label = "evaluateSpin",
-    )
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Palette.backgroundDark),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
-            CircularProgressIndicator(
-                color = Palette.accent,
-                modifier = Modifier
-                    .size(48.dp)
-                    .graphicsLayer { rotationZ = if (reduce) 0f else spin },
+private fun EvaluatingChatSizeOverlay(progress: InboxReadProgress) {
+    val titles = progress.foundTitles
+    val headline = when {
+        progress.isComplete -> "All set"
+        progress.displayChat != null -> "Checking ${progress.displayChat}"
+        else -> "Evaluating chat size"
+    }
+    Box(Modifier.fillMaxSize()) {
+        MeshBackground(Modifier.matchParentSize())
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(Spacing.screen),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Wordmark()
+                Spacer(Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(Spacing.s))
+            Appear {
+                Text(
+                    headline,
+                    color = Palette.ink(),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 20.sp,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            Appear(80) {
+                Text(
+                    progress.detail,
+                    color = Palette.accent,
+                    fontFamily = Type.sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                )
+            }
+            Spacer(Modifier.height(Spacing.s))
+            LoreProgressBar(progress.fraction)
+            Spacer(Modifier.height(Spacing.m))
+            Text(
+                when {
+                    titles.isEmpty() -> "Names land here as we check them"
+                    else -> "Checking · ${titles.size}"
+                },
+                color = Palette.secondaryInk(),
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                modifier = Modifier.fillMaxWidth(),
             )
-            Text("Evaluating chat size", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-            Text("Checking what's still there…", color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 14.sp)
+            Spacer(Modifier.height(Spacing.s))
+            if (titles.isNotEmpty()) {
+                Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    titles.takeLast(4).forEachIndexed { index, name ->
+                        val visible = titles.takeLast(4)
+                        FoundPersonRow(name = name, newest = index == visible.lastIndex)
+                    }
+                }
+            }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.m),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "We're sizing each chat so unsending stays efficient — only what's still there, nothing wasted.",
+                    color = Palette.secondaryInk(),
+                    fontFamily = Type.sans,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 22.sp,
+                )
+            }
+            Text(
+                "This happens on your phone. You can exit — don't close Retract.",
+                color = Palette.secondaryInk(),
+                textAlign = TextAlign.Center,
+                fontSize = 13.sp,
+            )
         }
     }
 }
@@ -1503,6 +1578,12 @@ private fun ConfirmBlock(model: AppViewModel, setup: CleanupSetupState, prepared
         Text(StatusCopyFactory.timeRemaining(it), color = Palette.secondaryInk(), fontSize = 17.sp)
     }
     Spacer(Modifier.height(Spacing.s))
+    Text(
+        "The first unsend can take a minute — we're lining your messages up with Instagram's chat history. After that, it usually picks up.",
+        color = Palette.secondaryInk(),
+        fontSize = 15.sp,
+    )
+    Spacer(Modifier.height(Spacing.s))
     Text("This can't be undone. You can leave — don't close Retract.", color = Palette.secondaryInk(), fontSize = 15.sp)
     Spacer(Modifier.height(Spacing.m))
     when (decision) {
@@ -1514,7 +1595,14 @@ private fun ConfirmBlock(model: AppViewModel, setup: CleanupSetupState, prepared
                     SecondaryButton("Clean ${decision.remainingFree} for free") {
                         scope.launch {
                             setup.prepare(decision.remainingFree)
-                            bump()
+                            model.reloadOverview()
+                            val prepared = setup.prepared ?: return@launch
+                            val next = model.entitlements.allowance(prepared.count, setup.usesAdvancedFilters)
+                            if (next is CleanupAllowanceDecision.Allowed) {
+                                model.startCleanup(PreparedCleanup(prepared.job, next))
+                            } else {
+                                bump()
+                            }
                         }
                     }
                 }
@@ -1977,13 +2065,17 @@ private fun CleanupRunScreen(model: AppViewModel) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Palette.backgroundDark)
             .clickable(indication = null, interactionSource = consumeClicks) {},
     ) {
+        MeshBackground(Modifier.matchParentSize())
         if (progress.status.isFinished) {
             CleanupDoneScreen(model, progress)
         } else {
-            val copy = StatusCopyFactory.make(progress.status, progress.resumeNotBefore ?: state.tryAgainAt)
+            val copy = StatusCopyFactory.make(
+                progress.status,
+                progress.resumeNotBefore ?: state.tryAgainAt,
+                processed = progress.processed,
+            )
             Column(
                 Modifier
                     .fillMaxSize()
@@ -2032,7 +2124,7 @@ private fun CleanupRunScreen(model: AppViewModel) {
                     }
                     StatusCopy.Action.NONE -> Unit
                 }
-                QuietButton("Cancel cleanup", tint = Palette.danger()) { confirmCancel = true }
+                QuietButton("Stop cleaning", tint = Palette.danger()) { confirmCancel = true }
                 Spacer(Modifier.height(Spacing.m))
             }
             if (confirmCancel) {
@@ -2056,11 +2148,12 @@ private fun CleanupRunScreen(model: AppViewModel) {
 @Composable
 private fun CleanupDoneScreen(model: AppViewModel, progress: app.delore.android.domain.CleanupProgress) {
     val cancelled = progress.status == JobStatus.Cancelled
-    val notCleaned = progress.failed + progress.skipped
+    val failed = progress.failed
+    val notCleaned = failed + progress.skipped
+    val allFailed = !cancelled && progress.completed == 0 && notCleaned > 0
     Column(
         Modifier
             .fillMaxSize()
-            .background(Palette.backgroundDark)
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(horizontal = Spacing.screen),
@@ -2074,25 +2167,68 @@ private fun CleanupDoneScreen(model: AppViewModel, progress: app.delore.android.
             Box(
                 Modifier
                     .size(64.dp)
-                    .background(Palette.accent, CircleShape),
+                    .background(if (cancelled || allFailed) Palette.surface() else Palette.accent, CircleShape)
+                    .border(1.dp, Palette.accent.copy(alpha = 0.35f), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(if (cancelled) Icons.Filled.Warning else Icons.Filled.Check, null, tint = Palette.onAccent, modifier = Modifier.size(28.dp))
+                Icon(
+                    when {
+                        cancelled || allFailed -> Icons.Filled.Warning
+                        else -> Icons.Filled.Check
+                    },
+                    null,
+                    tint = if (cancelled || allFailed) Palette.ink() else Palette.onAccent,
+                    modifier = Modifier.size(28.dp),
+                )
             }
             Spacer(Modifier.height(Spacing.l))
-            Text(if (cancelled) "Stopped" else "Done", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, textAlign = TextAlign.Center)
-            when {
-                progress.completed > 0 ->
+            Text(
+                when {
+                    cancelled -> "Stopped"
+                    allFailed -> "Couldn't unsend"
+                    else -> "Done"
+                },
+                color = Palette.ink(),
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 28.sp,
+                textAlign = TextAlign.Center,
+            )
+            if (cancelled) {
+                Text(
+                    "Already unsent stays unsent — Instagram can't undo that.",
+                    color = Palette.secondaryInk(),
+                    textAlign = TextAlign.Center,
+                    fontSize = 15.sp,
+                )
+                Spacer(Modifier.height(Spacing.s))
+                if (progress.completed > 0) {
+                    Text("${inflect(progress.completed, "message")} cleaned.", color = Palette.ink(), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                } else {
+                    Text("Nothing unsent yet.", color = Palette.secondaryInk(), fontSize = 17.sp)
+                }
+                if (progress.cancelled > 0) {
+                    Text("Left the rest alone.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
+                }
+                if (failed > 0) {
+                    Text("${inflect(failed, "message")} hit an error before we stopped.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
+                }
+            } else if (allFailed) {
+                Text(
+                    "Instagram refused these unsends. Nothing was removed. Try again in a few minutes — we'll pause ourselves instead of spinning for hours.",
+                    color = Palette.secondaryInk(),
+                    textAlign = TextAlign.Center,
+                    fontSize = 15.sp,
+                )
+                Spacer(Modifier.height(Spacing.s))
+                Text("${inflect(notCleaned, "message")} still there.", color = Palette.ink(), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            } else {
+                if (progress.completed > 0) {
                     Text("${inflect(progress.completed, "message")} cleaned.", color = Palette.secondaryInk(), fontSize = 17.sp)
-                cancelled ->
-                    Text("Nothing cleaned yet.", color = Palette.secondaryInk(), fontSize = 17.sp)
-            }
-            // Cancelled leftovers are not failures — they simply weren't reached.
-            if (cancelled && (progress.cancelled > 0 || progress.remaining > 0)) {
-                Text("The rest stay where they are.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
-            }
-            if (notCleaned > 0) {
-                Text("${inflect(notCleaned, "message")} couldn't be unsent.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
+                }
+                if (notCleaned > 0) {
+                    Text("${inflect(notCleaned, "message")} couldn't be unsent.", color = Palette.secondaryInk(), textAlign = TextAlign.Center)
+                }
             }
         }
         Spacer(Modifier.weight(1f))

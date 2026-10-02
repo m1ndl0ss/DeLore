@@ -272,13 +272,47 @@ class InstagramWebUnsendService(
     private val client: InstagramAPIClient,
     private val ownerID: () -> String?,
     private val presencePageLimit: Int = 8,
+    /** Hard cap so a pathological thread can't page forever. ~20 items/page → ~4000 msgs. */
+    private val resolvePageLimit: Int = 200,
+    private val resolvePageSize: Int = 50,
 ) : UnsendService {
+    /** thread|item_id → mid.$… resolved while paging a thread. */
+    private val midCache = HashMap<String, String>()
+    /** thread|mid.$… → numeric item_id for REST fallback. */
+    private val itemCache = HashMap<String, String>()
+    /**
+     * Per-thread resume cursor. Queue is newest-owned first, but Instagram pages from the
+     * absolute tip — which can be hundreds of *their* messages after your last send. Resume
+     * so each later owned message doesn't re-walk the same tip.
+     */
+    private val scanCursor = HashMap<String, String?>()
+    private val scanOldestMillis = HashMap<String, Long>()
+    /** thread|storedId marked gone when resolve paged past sentAt with no match. */
+    private val goneHints = HashSet<String>()
+
     override suspend fun unsend(target: CleanupTarget): UnsendOutcome {
         if (!isOwned(target)) return UnsendOutcome.NOT_OWNED
         val owner = ownerID()?.takeIf { it.isNotEmpty() } ?: throw IntegrationError.SessionExpired
-        val itemId = target.ref.messageID
-        val mid = itemId.takeIf { it.startsWith("mid.") }
+        val stored = target.ref.messageID
         var last: IntegrationError? = null
+
+        val resolved = when {
+            stored.startsWith("mid.") -> {
+                val item = itemCache["${target.ref.conversationID.rawValue}|$stored"]
+                stored to item
+            }
+            else -> resolveIds(target)?.let { it.first to it.second }
+        }
+        val mid = resolved?.first
+        if (resolved == null && !stored.startsWith("mid.")) {
+            // Paged past this send with no matching live item — already unsent or id drift.
+            // Do not hit REST: numeric delete returns 1404006 and parks the WebView on
+            // i.instagram.com, which breaks the next GraphQL calls.
+            if (goneHints.remove("${target.ref.conversationID.rawValue}|$stored")) {
+                Log.i("Retract", "IG unsend already gone (resolve past sentAt)")
+                return UnsendOutcome.ALREADY_GONE
+            }
+        }
         if (!mid.isNullOrBlank()) {
             try {
                 val response = client.send(graphqlUnsend(target, owner, mid))
@@ -293,19 +327,25 @@ class InstagramWebUnsendService(
                 Log.w("Retract", "IG unsend skip graphql transport")
             }
         }
-        val restId = itemId.takeIf { it.isNotBlank() && !it.startsWith("mid.") } ?: itemId
-        for (request in restUnsendAttempts(target, restId)) {
-            try {
-                val response = client.send(request)
-                val outcome = InstagramDeleteParse.outcome(response)
-                Log.i("Retract", "IG unsend ok ${request.host}${request.path} empty=${request.emptyBody}")
-                return outcome
-            } catch (error: IntegrationError.UnexpectedResponse) {
-                last = error
-                Log.w("Retract", "IG unsend skip ${request.host}${request.path} code=${error.code}")
-            } catch (error: IntegrationError.TransportFailure) {
-                last = error
-                Log.w("Retract", "IG unsend skip ${request.host}${request.path} transport")
+
+        // REST only when GraphQL had a mid and still failed — never as the only path for
+        // numeric library ids (always 1404006 on this web session).
+        val restId = resolved?.second?.takeUnless { it.startsWith("mid.") }
+            ?: stored.takeUnless { it.startsWith("mid.") }
+        if (restId != null && !mid.isNullOrBlank()) {
+            for (request in restUnsendAttempts(target, restId)) {
+                try {
+                    val response = client.send(request)
+                    val outcome = InstagramDeleteParse.outcome(response)
+                    Log.i("Retract", "IG unsend ok ${request.host}${request.path} empty=${request.emptyBody}")
+                    return outcome
+                } catch (error: IntegrationError.UnexpectedResponse) {
+                    last = error
+                    Log.w("Retract", "IG unsend skip ${request.host}${request.path} code=${error.code}")
+                } catch (error: IntegrationError.TransportFailure) {
+                    last = error
+                    Log.w("Retract", "IG unsend skip ${request.host}${request.path} transport")
+                }
             }
         }
         throw last ?: IntegrationError.Unavailable
@@ -313,11 +353,15 @@ class InstagramWebUnsendService(
 
     override suspend fun presence(of: CleanupTarget): MessagePresence {
         if (!isOwned(of)) return MessagePresence.NOT_OWNED
+        val thread = of.ref.conversationID.rawValue
+        // Prefer ids already learned while resolving / unsending.
+        midCache["$thread|${of.ref.messageID}"]?.let { return MessagePresence.PRESENT }
         var cursor: String? = null
         repeat(maxOf(1, presencePageLimit)) {
-            val page = fetchThread(of.ref.conversationID.rawValue, cursor)
-            val item = page.items.firstOrNull { it.itemID == of.ref.messageID }
+            val page = fetchThread(thread, cursor)
+            val item = page.items.firstOrNull { matches(of.ref.messageID, it) }
             if (item != null) {
+                rememberItem(thread, item)
                 if (item.isSystem) return MessagePresence.GONE
                 if (item.sentByViewer == false) return MessagePresence.NOT_OWNED
                 val owner = ownerID()
@@ -331,6 +375,88 @@ class InstagramWebUnsendService(
         }
         // Oldest sends sit far past the newest pages. Unknown is "still there" so we retry unsend.
         return MessagePresence.PRESENT
+    }
+
+    private fun matches(stored: String, item: ThreadItem): Boolean =
+        item.itemID == stored || item.webMessageID == stored
+
+    private fun rememberItem(thread: String, item: ThreadItem) {
+        val mid = item.webMessageID?.takeIf { it.startsWith("mid.") } ?: return
+        midCache["$thread|${item.itemID}"] = mid
+        itemCache["$thread|$mid"] = item.itemID
+        midCache["$thread|$mid"] = mid
+    }
+
+    /** Returns (mid, numericItemId) when found in the live thread. */
+    private suspend fun resolveIds(target: CleanupTarget): Pair<String, String>? {
+        val thread = target.ref.conversationID.rawValue
+        val stored = target.ref.messageID
+        val goneKey = "$thread|$stored"
+        if (goneKey in goneHints) return null
+        midCache["$thread|$stored"]?.let { mid ->
+            val item = itemCache["$thread|$mid"] ?: stored.takeUnless { it.startsWith("mid.") }
+            if (item != null) return mid to item
+        }
+
+        // Resume from the deepest page already walked — unless that cursor is already older
+        // than this target (we overshot on a prior miss/retry). Then restart from the tip.
+        val knownOldest = scanOldestMillis[thread]
+        var cursor = scanCursor[thread]
+        if (knownOldest != null && target.sentAtMillis > knownOldest + 5_000L) {
+            Log.i("Retract", "IG resolve restart tip (cursor past target)")
+            cursor = null
+        }
+
+        var pages = 0
+        var midHits = 0
+        val pageBudget = maxOf(1, resolvePageLimit)
+        while (pages < pageBudget) {
+            val page = client.fetchDirectThread(thread, cursor, resolvePageSize)
+            pages += 1
+            var pageOldest = Long.MAX_VALUE
+            for (item in page.items) {
+                if (item.sentAtMillis > 0) pageOldest = minOf(pageOldest, item.sentAtMillis)
+                rememberItem(thread, item)
+                if (item.webMessageID?.startsWith("mid.") == true) midHits += 1
+                if (!matches(stored, item)) continue
+                val mid = item.webMessageID?.takeIf { it.startsWith("mid.") }
+                if (mid != null) {
+                    Log.i("Retract", "IG resolve hit pages=$pages midHits=$midHits")
+                    return mid to item.itemID
+                }
+                Log.w(
+                    "Retract",
+                    "IG resolve target without mid pages=$pages midHits=$midHits item=${item.itemID.take(24)}",
+                )
+                return null
+            }
+            if (pageOldest != Long.MAX_VALUE) {
+                val prior = scanOldestMillis[thread]
+                scanOldestMillis[thread] = if (prior == null) pageOldest else minOf(prior, pageOldest)
+            }
+            if (!page.hasOlder || page.oldestCursor == null) {
+                scanCursor[thread] = null
+                goneHints.add(goneKey)
+                break
+            }
+            cursor = page.oldestCursor
+            scanCursor[thread] = cursor
+            // Past the target's send time with no match → already gone (or id drift).
+            if (pageOldest != Long.MAX_VALUE && pageOldest < target.sentAtMillis - 1_000) {
+                Log.w(
+                    "Retract",
+                    "IG resolve past sentAt pages=$pages midHits=$midHits stored=${stored.take(24)}",
+                )
+                goneHints.add(goneKey)
+                break
+            }
+        }
+        Log.w(
+            "Retract",
+            "IG resolve miss stored=${stored.take(24)} pages=$pages midHits=$midHits " +
+                "scannedOldest=${scanOldestMillis[thread]} targetSent=${target.sentAtMillis}",
+        )
+        return null
     }
 
     private fun isOwned(target: CleanupTarget): Boolean {
@@ -621,6 +747,7 @@ class InstagramInboxSync(
         var hasOlder = true
         val seen = HashSet<String>()
         var lastCursor: String? = null
+        var midStored = 0
         while (hasOlder) {
             val page = client.fetchDirectThread(threadID, cursor, pageSize)
             for (item in page.items) {
@@ -632,9 +759,14 @@ class InstagramInboxSync(
                     else -> continue
                 }
                 if (authoredByOwner) {
+                    // GraphQL Unsend needs mid.$… when Instagram provides it; numeric item_id alone
+                    // often only hits the REST delete path, which Instagram is rejecting with 1404006.
+                    val messageID = item.webMessageID?.takeIf { it.startsWith("mid.") }
+                        ?: item.itemID
+                    if (messageID.startsWith("mid.")) midStored += 1
                     ownerMessages.add(
                         DiscoveredMessage(
-                            ref = MessageRef(conversationID, item.itemID),
+                            ref = MessageRef(conversationID, messageID),
                             authorID = ParticipantID("ig:$ownerID"),
                             sentAtMillis = item.sentAtMillis,
                             kind = item.kind,
@@ -650,6 +782,10 @@ class InstagramInboxSync(
             lastCursor = cursor
             onPartial?.invoke(ownerMessages.size)
         }
+        Log.i(
+            "Retract",
+            "IG load thread=$threadID owned=${ownerMessages.size} mid=$midStored numeric=${ownerMessages.size - midStored} received=$received",
+        )
         ownerMessages.sortWith(compareBy({ it.sentAtMillis }, { it.ref.messageID }))
         val byKind = mutableMapOf<MessageKind, Int>()
         for (message in ownerMessages) byKind[message.kind] = (byKind[message.kind] ?: 0) + 1

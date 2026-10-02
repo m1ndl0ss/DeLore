@@ -197,16 +197,31 @@ struct LoreProgressBar: View {
 
     var body: some View {
         GeometryReader { proxy in
-            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 24.0, paused: reduceMotion)) { timeline in
-                let shimmer = reduceMotion ? 0.0 : abs(sin(timeline.date.timeIntervalSinceReferenceDate * 1.6))
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Palette.surfaceElevated)
-                    Capsule()
-                        .fill(Palette.accent.opacity(0.75 + 0.25 * shimmer))
-                        .frame(width: max(Metrics.progress, proxy.size.width * min(1, max(0, fraction))))
-                        .animation(.easeOut(duration: 0.3), value: fraction)
-                }
+            let clamped = min(1, max(0, fraction))
+            let width = proxy.size.width * clamped
+            ZStack(alignment: .leading) {
+                Capsule().fill(Palette.surfaceElevated)
+                Capsule()
+                    .fill(Palette.accent)
+                    .frame(width: max(0, width))
+                    .overlay {
+                        if !reduceMotion, width > 8 {
+                            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { timeline in
+                                let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
+                                LinearGradient(
+                                    colors: [.clear, Color.white.opacity(0.22), .clear],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                                .frame(width: max(24, width * 0.28))
+                                .offset(x: (width + 40) * phase - 40)
+                                .mask(Capsule())
+                            }
+                        }
+                    }
+                    .clipShape(Capsule())
             }
+            .animation(.easeOut(duration: 0.35), value: clamped)
         }
         .frame(height: Metrics.progress)
         .accessibilityElement()

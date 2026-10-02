@@ -142,7 +142,7 @@ final class ConfigurationTests: XCTestCase {
 
     func testProductionPacingIsConservative() {
         let policy = AppConfiguration.load().ratePolicy
-        XCTAssertGreaterThanOrEqual(policy.minimumDelay, 2)
+        XCTAssertGreaterThanOrEqual(policy.minimumDelay, 1.2)
         XCTAssertLessThanOrEqual(policy.hourlyLimit, 1_800)
         XCTAssertLessThanOrEqual(policy.maxAttemptsPerItem, 3)
     }

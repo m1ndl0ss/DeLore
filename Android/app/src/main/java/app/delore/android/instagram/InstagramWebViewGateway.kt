@@ -204,7 +204,13 @@ class InstagramWebViewGateway {
             val url = view.url.orEmpty()
             val onApi = InstagramLoginPolicy.isApiSurface(url)
             val onWeb = InstagramLoginPolicy.isWebSurface(url)
-            pageReady && if (mutatingApi) onApi else (onApi || onWeb)
+            // www GraphQL/inbox must not run from i.instagram.com — fetch to www fails
+            // ("Failed to fetch") after a REST delete navigates the WebView there.
+            pageReady && when {
+                mutatingApi -> onApi
+                wantApiHost -> onApi
+                else -> onWeb
+            }
         }
         if (!alreadyReady) {
             val wait = CompletableDeferred<Unit>()

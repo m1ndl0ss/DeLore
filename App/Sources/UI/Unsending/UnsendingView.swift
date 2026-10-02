@@ -225,26 +225,13 @@ struct UnsendingView: View {
         if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
     }
 
-    private func unreadCount(_ overview: LibraryOverview) -> Int {
-        overview.conversations.filter { selection.contains($0.id) && !$0.messagesLoaded }.count
-    }
-
-    private func cleanableCount(_ overview: LibraryOverview) -> Int {
-        overview.conversations.filter { selection.contains($0.id) && $0.isCleanable }.count
-    }
-
     private func canAct(_ overview: LibraryOverview) -> Bool {
-        !selection.isEmpty && (unreadCount(overview) > 0 || cleanableCount(overview) > 0)
+        !selection.isEmpty
     }
 
     private func actionLabel(for overview: LibraryOverview) -> String {
         if selection.isEmpty { return "Pick people to retract with" }
-        let unread = unreadCount(overview)
-        if unread > 0 { return unread == 1 ? "Read 1 chat" : "Read \(unread) chats" }
-        if cleanableCount(overview) > 0 {
-            return selection.count == 1 ? "Retract with 1 person" : "Retract with \(selection.count) people"
-        }
-        return "Nothing to retract there"
+        return selection.count == 1 ? "Retract with 1 person" : "Retract with \(selection.count) people"
     }
 
     private var expiredSession: some View {

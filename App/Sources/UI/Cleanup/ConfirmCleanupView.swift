@@ -36,6 +36,11 @@ struct ConfirmCleanupView: View {
                                 .foregroundStyle(Palette.secondaryInk)
                         }
 
+                        Text("The first unsend can take a minute — we're lining your messages up with Instagram's chat history. After that, it usually picks up.")
+                            .font(Type.body(15))
+                            .foregroundStyle(Palette.secondaryInk)
+                            .fixedSize(horizontal: false, vertical: true)
+
                         Text("This can't be undone. You can leave — don't close Retract.")
                             .font(Type.body(15))
                             .foregroundStyle(Palette.secondaryInk)
@@ -105,7 +110,17 @@ struct ConfirmCleanupView: View {
                     .accessibilityIdentifier("unlockEverything")
                 if remaining > 0 {
                     Button {
-                        Task { await setup.prepare(limit: remaining) }
+                        Task {
+                            await setup.prepare(limit: remaining)
+                            await model.reloadOverview()
+                            guard let prepared = setup.prepared else { return }
+                            let next = model.entitlements.allowance(
+                                requestedCount: prepared.count,
+                                usesAdvancedFilters: setup.usesAdvancedFilters
+                            )
+                            guard case .allowed = next else { return }
+                            await model.startCleanup(PreparedCleanup(job: prepared.job, decision: next))
+                        }
                     } label: {
                         Text("Clean \(remaining) for free")
                     }

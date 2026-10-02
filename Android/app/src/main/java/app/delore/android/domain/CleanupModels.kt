@@ -88,6 +88,10 @@ enum class PauseReason {
 
     val requiresUserAction: Boolean
         get() = this == SESSION_EXPIRED || this == VERIFICATION_REQUIRED || this == INTEGRATION_UNAVAILABLE
+
+    /** Engine schedules an automatic resume (after resumeNotBefore) for these pauses. */
+    val schedulesAutoRetry: Boolean
+        get() = this == RATE_LIMITED || this == REPEATED_FAILURES
 }
 
 @Serializable

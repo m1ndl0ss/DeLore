@@ -11,7 +11,7 @@ public struct QueueBuildReport: Sendable {
 }
 
 /// Streams messages from a source, keeps only those the account owner sent, and writes
-/// them to the store in bounded batches.
+/// them to the store in bounded batches — newest first so recent slips go before old history.
 public struct QueueBuilder: Sendable {
     private let source: MessageSource
     private let store: JobStore
@@ -38,27 +38,17 @@ public struct QueueBuilder: Sendable {
         var job = CleanupJob(createdAt: now, ownerID: account.ownerID, request: request)
         try store.createJob(job)
 
-        var buffer: [CleanupItem] = []
-        buffer.reserveCapacity(batchSize)
+        var candidates: [DiscoveredMessage] = []
         var seen = Set<String>()
-        var count = 0
-        var peak = 0
         var notOwned = 0
         var duplicates = 0
         var alreadyCleaned = 0
         let limit = request.limit ?? Int.max
 
-        func flush() throws {
-            guard !buffer.isEmpty else { return }
-            try store.appendItems(buffer)
-            buffer.removeAll(keepingCapacity: true)
-        }
-
-        conversationLoop: for conversation in targets {
+        for conversation in targets {
             for try await page in source.messagePages(in: conversation.id, pageSize: pageSize) {
                 try Task.checkCancellation()
                 for message in page {
-                    // Ownership is the one rule that must never be relaxed.
                     guard message.authorID == account.ownerID else {
                         notOwned += 1
                         continue
@@ -74,27 +64,43 @@ public struct QueueBuilder: Sendable {
                         duplicates += 1
                         continue
                     }
-                    buffer.append(CleanupItem(
-                        index: count,
-                        ref: message.ref,
-                        authorID: message.authorID,
-                        sentAt: message.sentAt,
-                        kind: message.kind
-                    ))
-                    count += 1
-                    peak = max(peak, buffer.count)
-                    if buffer.count >= batchSize {
-                        try flush()
-                        onProgress?(count)
-                    }
-                    if count >= limit { break conversationLoop }
+                    candidates.append(message)
                 }
             }
         }
-        try flush()
-        onProgress?(count)
 
-        job.itemCount = count
+        // Most recent first — latest messages unsend before older ones.
+        candidates.sort { $0.sentAt > $1.sentAt }
+        let selected = Array(candidates.prefix(limit))
+
+        var buffer: [CleanupItem] = []
+        buffer.reserveCapacity(min(batchSize, selected.count))
+        var peak = 0
+
+        func flush() throws {
+            guard !buffer.isEmpty else { return }
+            try store.appendItems(buffer)
+            buffer.removeAll(keepingCapacity: true)
+        }
+
+        for (index, message) in selected.enumerated() {
+            buffer.append(CleanupItem(
+                index: index,
+                ref: message.ref,
+                authorID: message.authorID,
+                sentAt: message.sentAt,
+                kind: message.kind
+            ))
+            peak = max(peak, buffer.count)
+            if buffer.count >= batchSize {
+                try flush()
+                onProgress?(index + 1)
+            }
+        }
+        try flush()
+        onProgress?(selected.count)
+
+        job.itemCount = selected.count
         try store.updateJob(job)
         return QueueBuildReport(
             job: job,
@@ -105,7 +111,19 @@ public struct QueueBuilder: Sendable {
         )
     }
 
-    /// Conversations the request covers, excluding any where ownership is ambiguous.
+    /// Scope membership only — used before chats are evaluated (messages may not be loaded yet).
+    public static func conversationsInScope(for scope: CleanupScope, in conversations: [ConversationSummary]) -> [ConversationSummary] {
+        let selected: [ConversationSummary]
+        switch scope {
+        case .everything:
+            selected = conversations.filter { !$0.ownershipAmbiguous }
+        case let .conversations(ids):
+            selected = conversations.filter { ids.contains($0.id) && !$0.ownershipAmbiguous }
+        }
+        return selected.sorted { $0.id < $1.id }
+    }
+
+    /// Conversations the request covers that already have loaded, cleanable owner messages.
     public static func targetConversations(for scope: CleanupScope, in conversations: [ConversationSummary]) -> [ConversationSummary] {
         let cleanable = conversations.filter(\.isCleanable)
         let selected: [ConversationSummary]

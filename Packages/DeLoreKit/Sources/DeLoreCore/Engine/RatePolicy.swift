@@ -77,11 +77,11 @@ public struct RatePolicy: Hashable, Codable, Sendable {
         self.maxConsecutiveFailures = maxConsecutiveFailures
     }
 
-    /// Production default: about one unsend every two seconds. 429s still back off.
+    /// Production default: about one unsend every ~1.4s (gap + light jitter). 429s still back off.
     public static let conservative = RatePolicy(
-        minimumDelay: 2,
-        maximumJitter: 0.4,
-        burstLimit: 30,
+        minimumDelay: 1.25,
+        maximumJitter: 0.3,
+        burstLimit: 40,
         burstWindow: 60,
         hourlyLimit: 1_800,
         backoffBase: 15,

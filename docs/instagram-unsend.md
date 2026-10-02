@@ -83,8 +83,19 @@ generic HTML 404 is **not** counted as unsent.
 ## Engine behavior
 
 - Session expired, checkpoint, and rate-limit **pause** the job.
-- A single unexpected Instagram response **fails that item and continues**.
-  The whole run is not aborted.
+- A streak of unexpected Instagram refusals (e.g. HTTP 403 / `1404006`) **pauses**
+  after consecutive failures and auto-retries later — we do not walk the whole queue
+  marking every item failed while the progress bar looks healthy.
+- Prefer storing GraphQL `mid.$…` ids when Instagram provides them; resolve from the
+  live thread when a job only has numeric `item_id`s.
+- Resolve must page past the other person's newer messages to reach your older sends
+  (queue is newest-*owned* first; IG pages from the absolute tip). Resume a per-thread
+  cursor so each item does not re-walk the tip; stop once the page is older than the
+  target's `sentAt`. If the item is missing there, treat it as already gone — do **not**
+  fall through to REST (1404006) or the WebView will stick on `i.instagram.com` and
+  GraphQL will `Failed to fetch`.
+- Android WebView: www requests require the www surface (not `i.`); REST delete still
+  navigates to `i.` only when GraphQL already had a mid and failed.
 - Pacing is `RatePolicy.conservative` (gaps, hourly cap, backoff). Keep the app open.
 
 ## What we will not do

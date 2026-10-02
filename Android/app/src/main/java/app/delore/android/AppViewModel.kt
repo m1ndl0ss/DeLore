@@ -240,16 +240,9 @@ class AppViewModel(
 
     fun retractWith(ids: Set<ConversationID>) {
         if (ids.isEmpty()) return
-        env.saveRetractQueue(ids)
-        val unread = _state.value.overview?.conversations.orEmpty().filter { chat ->
-            chat.id.rawValue in ids.map { it.rawValue }.toSet() && !chat.messagesLoaded
-        }
-        if (unread.isEmpty()) {
-            env.saveRetractQueue(emptySet())
-            openSetup(CleanupScope.Conversations(ids))
-            return
-        }
-        beginInboxSync(force = true, loadIds = unread.map { it.id })
+        env.saveRetractQueue(emptySet())
+        // List was names-only. Evaluate chat sizes in cleanup setup, then unsend.
+        openSetup(CleanupScope.Conversations(ids))
     }
 
     fun dismissSync() {
@@ -553,6 +546,7 @@ class CleanupSetupState(
     var kinds: Set<MessageKind> by mutableStateOf(filterableKinds.toSet())
     var isPreparing: Boolean by mutableStateOf(false)
     var isEvaluating: Boolean by mutableStateOf(false)
+    var evaluateProgress: InboxReadProgress by mutableStateOf(InboxReadProgress())
     var prepared: PreparedCleanup? by mutableStateOf(null)
     var failed: Boolean by mutableStateOf(false)
 
@@ -581,20 +575,17 @@ class CleanupSetupState(
     val estimatedCount: Int
         get() = QueueBuilder.estimatedCount(CleanupRequest(scope, filter), overview.conversations)
     val canContinue: Boolean
-        get() = !(scopeKind == ScopeKind.CHOSEN && chosen.isEmpty()) && estimatedCount > 0
+        get() = when (scopeKind) {
+            ScopeKind.EVERYTHING -> overview.conversations.isNotEmpty()
+            ScopeKind.CHOSEN -> chosen.isNotEmpty()
+        }
 
     suspend fun prepare(limit: Int? = null) {
         if (isPreparing) return
         isPreparing = true
         failed = false
         try {
-            isEvaluating = true
-            val started = System.currentTimeMillis()
             refreshChatSizes()
-            // Keep the evaluating screen up long enough to actually read.
-            val elapsed = System.currentTimeMillis() - started
-            if (elapsed < 900) delay(900 - elapsed)
-            isEvaluating = false
             val request = CleanupRequest(scope, filter, limit)
             val account = env.library.account()
             val report = QueueBuilder(env.library, env.jobStore).build(
@@ -613,15 +604,44 @@ class CleanupSetupState(
         }
     }
 
+    /** Loads chats that haven't been sized yet. Results stay on device so reopen skips Instagram. */
     private suspend fun refreshChatSizes() {
-        val targets = QueueBuilder.targetConversations(scope, overview.conversations)
-        if (targets.isEmpty()) return
+        val targets = QueueBuilder.conversationsInScope(scope, overview.conversations)
+        val pending = targets.filter { !it.messagesLoaded }
+        if (pending.isEmpty()) {
+            overview = env.loadOverview()
+            return
+        }
+        isEvaluating = true
+        val titles = pending.map { it.title }
+        evaluateProgress = InboxReadProgress(
+            chatsFound = pending.size,
+            chatsRead = 0,
+            chatsTotal = pending.size,
+            currentTitle = pending.firstOrNull()?.title,
+            foundTitles = titles,
+        )
         if (env.hasLiveSession) {
-            val titles = targets.associate { it.id.rawValue to it.title }
-            runCatching {
-                env.loadInbox(targets.map { it.id }, titles, forceRefresh = true, onProgress = null)
+            val titleMap = pending.associate { it.id.rawValue to it.title }
+            env.loadInbox(pending.map { it.id }, titleMap, forceRefresh = false) { progress ->
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    evaluateProgress = progress
+                }
+            }
+        } else {
+            pending.forEachIndexed { index, chat ->
+                delay(90)
+                evaluateProgress = InboxReadProgress(
+                    chatsFound = pending.size,
+                    chatsRead = index + 1,
+                    chatsTotal = pending.size,
+                    sendsFound = chat.sentByOwner,
+                    currentTitle = chat.title,
+                    foundTitles = titles,
+                )
             }
         }
+        isEvaluating = false
         overview = env.loadOverview()
     }
 
@@ -633,7 +653,15 @@ class CleanupSetupState(
 }
 
 object StatusCopyFactory {
-    fun make(status: JobStatus, coolingDownUntil: Long?, now: Long = System.currentTimeMillis()): StatusCopy {
+    const val FIRST_UNSEND_HINT =
+        "The first unsend can take a minute — we're lining your messages up with Instagram's chat history. After that, it usually picks up."
+
+    fun make(
+        status: JobStatus,
+        coolingDownUntil: Long?,
+        now: Long = System.currentTimeMillis(),
+        processed: Int = -1,
+    ): StatusCopy {
         when (status) {
             JobStatus.Ready, JobStatus.Running -> {
                 if (coolingDownUntil != null && coolingDownUntil > now) {
@@ -644,7 +672,8 @@ object StatusCopyFactory {
                         StatusCopy.Action.PAUSE,
                     )
                 }
-                return StatusCopy("Cleaning your digital past…", null, false, StatusCopy.Action.PAUSE)
+                val hint = if (processed == 0) FIRST_UNSEND_HINT else null
+                return StatusCopy("Cleaning your digital past…", hint, false, StatusCopy.Action.PAUSE)
             }
             JobStatus.Completed -> return StatusCopy("Fresh start ✨", null, false, StatusCopy.Action.NONE)
             JobStatus.Cancelled -> return StatusCopy("Cleanup stopped", "Anything already unsent stays unsent.", false, StatusCopy.Action.NONE)
@@ -660,13 +689,13 @@ object StatusCopyFactory {
         app.delore.android.domain.PauseReason.INTERRUPTED ->
             StatusCopy("Pick up where you left off", "We'll continue automatically. Tap Resume if we're waiting — we won't unsend the same message twice.", false, StatusCopy.Action.RESUME)
         app.delore.android.domain.PauseReason.RATE_LIMITED ->
-            StatusCopy("Instagram asked us to wait", "We've paused because Instagram asked us to wait. Try again later.", true, StatusCopy.Action.TRY_AGAIN)
+            StatusCopy("Instagram asked us to wait", "We've paused because Instagram asked us to wait. We'll try again automatically.", true, StatusCopy.Action.TRY_AGAIN)
         app.delore.android.domain.PauseReason.SESSION_EXPIRED ->
             StatusCopy("Instagram signed you out", "Reconnect your account, then come back to continue. Nothing else was touched.", true, StatusCopy.Action.RECONNECT)
         app.delore.android.domain.PauseReason.VERIFICATION_REQUIRED ->
             StatusCopy("Instagram is asking you to verify your account.", "Open Instagram and follow its steps, then come back here. Retract isn't responsible for what Instagram does.", true, StatusCopy.Action.RESUME_AFTER_VERIFYING)
         app.delore.android.domain.PauseReason.REPEATED_FAILURES ->
-            StatusCopy("Instagram isn't cooperating", "Instagram isn't responding the way it should right now. Try again later. Retract isn't responsible for what happens to your account.", true, StatusCopy.Action.TRY_AGAIN)
+            StatusCopy("Instagram isn't cooperating", "Instagram stopped responding. We'll try again in about 3 minutes — you can leave Retract open in the background.", true, StatusCopy.Action.TRY_AGAIN)
         app.delore.android.domain.PauseReason.OFFLINE ->
             StatusCopy("You're offline", "We'll carry on as soon as you're back online.", true, StatusCopy.Action.TRY_AGAIN)
         app.delore.android.domain.PauseReason.UNEXPECTED_RESPONSE ->

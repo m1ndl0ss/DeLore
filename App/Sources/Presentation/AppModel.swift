@@ -160,6 +160,7 @@ final class AppModel {
 
     private var hasBackgroundWork: Bool {
         if session?.isRunning == true { return true }
+        if session?.isWaitingForAutoRetry == true { return true }
         if case .running = inboxSyncModel?.phase { return true }
         return false
     }
@@ -291,17 +292,10 @@ final class AppModel {
 
     func retractWith(_ ids: Set<ConversationID>) {
         guard !ids.isEmpty else { return }
-        pendingRetractIDs = ids
-        env.saveRetractQueue(ids)
-        let wanted = Set(ids.map(\.rawValue))
-        let unread = (overview?.conversations ?? []).filter { wanted.contains($0.id.rawValue) && !$0.messagesLoaded }
-        if unread.isEmpty {
-            pendingRetractIDs = []
-            env.saveRetractQueue([])
-            openSetup(.conversations(ids))
-            return
-        }
-        beginInboxSync(force: true, job: .load(unread.map(\.id)))
+        pendingRetractIDs = []
+        env.saveRetractQueue([])
+        // List was names-only. Evaluate chat sizes in cleanup setup, then unsend.
+        openSetup(.conversations(ids))
     }
 
     func dismissSync() {

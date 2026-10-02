@@ -43,6 +43,9 @@ public struct CleanupEngineDependencies: Sendable {
 /// after each request, reconciles anything in doubt, and stops on anything that looks like
 /// the platform asking us to back off.
 public actor CleanupEngine {
+    /// After Instagram goes quiet (consecutive failures), wait this long then resume automatically.
+    public static let autoRetryAfterFailures: TimeInterval = 3 * 60
+
     private let deps: CleanupEngineDependencies
     private let logger: AppLogger
     private var job: CleanupJob
@@ -130,7 +133,8 @@ public actor CleanupEngine {
             if reason.requiresUserAction && !userResolvedIssue {
                 throw CleanupEngineError.needsUserAction(reason)
             }
-            if let until = job.resumeNotBefore, until > deps.clock.now {
+            // Rate-limit cool-downs must be honored; quiet-period (repeatedFailures) can be skipped by Try again.
+            if reason == .rateLimited, let until = job.resumeNotBefore, until > deps.clock.now {
                 throw CleanupEngineError.coolingDown(until: until)
             }
             wasReady = false
@@ -362,14 +366,15 @@ public actor CleanupEngine {
         let unsender = deps.unsender
         // Unstructured so pausing can't cancel a request mid-flight and leave its outcome unknown.
         let result = await Task { try await unsender.unsend(target) }.result
-        guard items[index].state == .processing else { return }
-
         switch result {
         case .success(.unsent), .success(.alreadyGone):
-            markCompleted(index)
+            // Already applied on Instagram — record even if cancel raced us.
+            forceCompleted(index)
         case .success(.notOwned):
             consecutiveFailures = 0
-            transition(index, to: .skipped)
+            if items[index].state == .processing || items[index].state == .cancelled {
+                transition(index, to: .skipped)
+            }
         case let .failure(error):
             handleFailure(index, error: error, destructive: true)
         }
@@ -401,6 +406,14 @@ public actor CleanupEngine {
     }
 
     private func markCompleted(_ index: Int) {
+        forceCompleted(index)
+    }
+
+    /// Record an unsend that already hit Instagram, even if cancel flipped the item first.
+    private func forceCompleted(_ index: Int) {
+        let state = items[index].state
+        guard state != .completed else { return }
+        guard state == .processing || state == .cancelled else { return }
         consecutiveFailures = 0
         throttler.recordSuccess()
         items[index].nextAttemptAt = nil
@@ -477,9 +490,25 @@ public actor CleanupEngine {
             return
 
         case .unexpectedResponse:
-            items[index].needsReconcile = false
-            items[index].nextAttemptAt = nil
-            transition(index, to: .failed)
+            // Systemic IG refusals (e.g. 403 / 1404006) used to mark FAILED and keep walking the
+            // whole queue — progress looked healthy for hours while nothing unsent. Treat like a
+            // soft failure: retry, then pause after a streak so the user isn't left staring at a bar.
+            refundAttempt()
+            consecutiveFailures += 1
+            if items[index].attempts >= deps.policy.maxAttemptsPerItem {
+                items[index].nextAttemptAt = nil
+                transition(index, to: .failed)
+            } else {
+                let delay = Backoff.delay(forAttempt: max(1, items[index].attempts + 1), policy: deps.policy, random: deps.random)
+                items[index].nextAttemptAt = now.addingTimeInterval(delay)
+                transition(index, to: .retryWait)
+            }
+            if consecutiveFailures >= deps.policy.maxConsecutiveFailures {
+                stop(
+                    .repeatedFailures,
+                    resumeNotBefore: deps.clock.now.addingTimeInterval(Self.autoRetryAfterFailures)
+                )
+            }
             return
 
         case let .transportFailure(mayHaveBeenApplied):
@@ -502,7 +531,10 @@ public actor CleanupEngine {
         }
 
         if consecutiveFailures >= deps.policy.maxConsecutiveFailures {
-            stop(.repeatedFailures)
+            stop(
+                .repeatedFailures,
+                resumeNotBefore: deps.clock.now.addingTimeInterval(Self.autoRetryAfterFailures)
+            )
         }
     }
 

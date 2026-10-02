@@ -19,7 +19,7 @@ struct CleanupRunView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Palette.background.ignoresSafeArea())
+        .screenBackground()
         .animation(.easeInOut, value: session.isFinished)
         .interactiveDismissDisabled(session.isRunning)
     }
@@ -99,7 +99,7 @@ struct CleanupRunView: View {
 
                 primaryAction(copy.action)
 
-                Button("Cancel cleanup", role: .destructive) { confirmingCancel = true }
+                Button("Stop cleaning", role: .destructive) { confirmingCancel = true }
                     .buttonStyle(TextButtonStyle(tint: Palette.danger))
                     .frame(maxWidth: .infinity)
                     .accessibilityIdentifier("cancelCleanup")
@@ -180,6 +180,7 @@ struct CleanupDoneView: View {
     private var progress: CleanupProgress { session.progress }
     private var wasCancelled: Bool { progress.status == .cancelled }
     private var notCleaned: Int { progress.failed + progress.skipped }
+    private var allFailed: Bool { !wasCancelled && progress.completed == 0 && notCleaned > 0 }
 
     var body: some View {
         VStack(spacing: Spacing.l) {
@@ -201,45 +202,70 @@ struct CleanupDoneView: View {
 
             Spacer()
 
-            Image(systemName: wasCancelled ? "stop.fill" : "checkmark")
+            Image(systemName: wasCancelled || allFailed ? "exclamationmark.triangle.fill" : "checkmark")
                 .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(Palette.onAccent)
+                .foregroundStyle(wasCancelled || allFailed ? Palette.ink : Palette.onAccent)
                 .frame(width: 64, height: 64)
-                .background(Circle().fill(Palette.accent))
+                .background(Circle().fill(wasCancelled || allFailed ? Palette.surface : Palette.accent))
+                .overlay(Circle().strokeBorder(Palette.accent.opacity(0.35), lineWidth: 1))
                 .scaleEffect(appeared ? 1 : 0.92)
                 .opacity(appeared ? 1 : 0)
                 .accessibilityHidden(true)
 
             VStack(spacing: Spacing.s) {
-                Text(wasCancelled ? "Stopped" : "Done")
+                Text(wasCancelled ? "Stopped" : (allFailed ? "Couldn't unsend" : "Done"))
                     .font(Type.medium(28))
                     .foregroundStyle(Palette.ink)
                     .multilineTextAlignment(.center)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("doneHeadline")
 
-                if progress.completed > 0 {
-                    Text("^[\(progress.completed) message](inflect: true) cleaned.")
-                        .font(Type.body(17))
-                        .foregroundStyle(Palette.secondaryInk)
-                } else if wasCancelled {
-                    Text("Nothing cleaned yet.")
-                        .font(Type.body(17))
-                        .foregroundStyle(Palette.secondaryInk)
-                }
-
-                // Cancelled leftovers are not failures — they simply weren't reached.
-                if wasCancelled, progress.cancelled > 0 {
-                    Text("The rest stay where they are.")
+                if wasCancelled {
+                    Text("Already unsent stays unsent — Instagram can't undo that.")
                         .font(Type.body(15))
                         .foregroundStyle(Palette.secondaryInk)
                         .multilineTextAlignment(.center)
-                }
-                if notCleaned > 0 {
-                    Text("^[\(notCleaned) message](inflect: true) couldn't be unsent.")
+                    if progress.completed > 0 {
+                        Text("^[\(progress.completed) message](inflect: true) cleaned.")
+                            .font(Type.medium(17))
+                            .foregroundStyle(Palette.ink)
+                    } else {
+                        Text("Nothing unsent yet.")
+                            .font(Type.body(17))
+                            .foregroundStyle(Palette.secondaryInk)
+                    }
+                    if progress.cancelled > 0 {
+                        Text("Left the rest alone.")
+                            .font(Type.body(15))
+                            .foregroundStyle(Palette.secondaryInk)
+                            .multilineTextAlignment(.center)
+                    }
+                    if progress.failed > 0 {
+                        Text("^[\(progress.failed) message](inflect: true) hit an error before we stopped.")
+                            .font(Type.body(15))
+                            .foregroundStyle(Palette.secondaryInk)
+                            .multilineTextAlignment(.center)
+                    }
+                } else if allFailed {
+                    Text("Instagram refused these unsends. Nothing was removed. Try again in a few minutes — we'll pause ourselves instead of spinning for hours.")
                         .font(Type.body(15))
                         .foregroundStyle(Palette.secondaryInk)
                         .multilineTextAlignment(.center)
+                    Text("^[\(notCleaned) message](inflect: true) still there.")
+                        .font(Type.medium(17))
+                        .foregroundStyle(Palette.ink)
+                } else {
+                    if progress.completed > 0 {
+                        Text("^[\(progress.completed) message](inflect: true) cleaned.")
+                            .font(Type.body(17))
+                            .foregroundStyle(Palette.secondaryInk)
+                    }
+                    if notCleaned > 0 {
+                        Text("^[\(notCleaned) message](inflect: true) couldn't be unsent.")
+                            .font(Type.body(15))
+                            .foregroundStyle(Palette.secondaryInk)
+                            .multilineTextAlignment(.center)
+                    }
                 }
             }
 
@@ -253,7 +279,7 @@ struct CleanupDoneView: View {
         }
         .padding(.horizontal, Spacing.screen)
         .padding(.bottom, Spacing.m)
-        .sensoryFeedback(.success, trigger: appeared)
+        .sensoryFeedback(allFailed || wasCancelled ? .warning : .success, trigger: appeared)
         .onAppear {
             withAnimation(reduceMotion ? .none : .spring(response: 0.5, dampingFraction: 0.6)) { appeared = true }
         }
