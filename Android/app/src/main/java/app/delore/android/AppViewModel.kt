@@ -72,6 +72,8 @@ data class UiState(
     val loginPurpose: LoginPurpose? = null,
     val termsPrompt: TermsPrompt? = null,
     val isDemoMode: Boolean = false,
+    /** Observed in Compose — do not read env.hasLiveSession from UI directly. */
+    val hasLiveSession: Boolean = false,
     val syncing: Boolean = false,
     val inboxRead: InboxReadProgress = InboxReadProgress(),
     val syncErrorTitle: String? = null,
@@ -145,7 +147,7 @@ class AppViewModel(
         val splash = launch { delay(700) }
         env.entitlements.refresh()
         env.dropStaleFullInbox()
-        _state.update { it.copy(isDemoMode = env.isDemoMode) }
+        syncSessionFlags()
         if (env.hasLibrary) {
             reloadOverview()
         } else {
@@ -160,6 +162,15 @@ class AppViewModel(
         env.inboxHoldOffUntilMillis = 0L
         _state.update { it.copy(route = Route.HOME) }
         maybeShowTermsNotice()
+    }
+
+    private fun syncSessionFlags() {
+        _state.update {
+            it.copy(
+                isDemoMode = env.isDemoMode,
+                hasLiveSession = env.hasLiveSession,
+            )
+        }
     }
 
     fun beginLogin(purpose: LoginPurpose = LoginPurpose.CONNECT) {
@@ -209,7 +220,7 @@ class AppViewModel(
 
     fun handleLogin(session: InstagramWebSession, purpose: LoginPurpose) {
         env.saveSession(session)
-        _state.update { it.copy(loginPurpose = null, isDemoMode = env.isDemoMode) }
+        _state.update { it.copy(loginPurpose = null, isDemoMode = env.isDemoMode, hasLiveSession = true) }
         val shouldSync = when (purpose) {
             LoginPurpose.CONNECT, LoginPurpose.REFRESH -> true
             LoginPurpose.RECONNECT -> !env.hasLibrary
@@ -297,6 +308,7 @@ class AppViewModel(
     }
 
     fun selectTab(tab: MainTab) {
+        syncSessionFlags()
         _state.update { it.copy(tab = tab) }
         if (tab == MainTab.ACTIVITY) reloadHistory()
     }
@@ -312,7 +324,7 @@ class AppViewModel(
         env.enterReviewDemo()
         viewModelScope.launch {
             reloadOverview()
-            _state.update { it.copy(isDemoMode = true) }
+            _state.update { it.copy(isDemoMode = true, hasLiveSession = false) }
         }
     }
 
@@ -399,7 +411,9 @@ class AppViewModel(
         work.releaseEngine()
         env.eraseAllData()
         didPromptDeletionLogin = false
-        _state.update { UiState(route = Route.HOME, tab = MainTab.SETTINGS, isDemoMode = false) }
+        _state.update {
+            UiState(route = Route.HOME, tab = MainTab.SETTINGS, isDemoMode = false, hasLiveSession = false)
+        }
     }
 
     fun logOutInstagram() = viewModelScope.launch {
@@ -415,6 +429,8 @@ class AppViewModel(
                 progress = null,
                 sheet = null,
                 isDemoMode = false,
+                hasLiveSession = false,
+                overview = null,
             )
         }
     }

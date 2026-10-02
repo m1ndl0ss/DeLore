@@ -13,41 +13,44 @@ struct SettingsTabView: View {
                     .font(Type.medium(26))
                     .foregroundStyle(Palette.ink)
 
-                VStack(alignment: .leading, spacing: Spacing.m) {
-                    HStack(spacing: Spacing.m) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Instagram")
-                                .font(Type.medium(17))
-                                .foregroundStyle(Palette.ink)
-                            Text(
-                                model.env.hasLiveSession
-                                    ? "Connected · stays on this phone"
-                                    : (model.isDemoMode ? "Sample inbox · not a real account" : "Not connected")
-                            )
-                                .font(Type.body(14))
-                                .foregroundStyle(model.env.hasLiveSession || model.isDemoMode ? Palette.accent : Palette.secondaryInk)
-                        }
-                        Spacer()
-                        if !model.env.hasLiveSession, !model.isDemoMode {
-                            Button {
-                                model.beginLogin(.connect)
-                            } label: {
-                                Text("Connect")
-                                    .font(Type.medium(15))
-                                    .foregroundStyle(Palette.onAccent)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 8)
-                                    .background(Capsule().fill(Palette.accent))
-                            }
-                            .buttonStyle(.plain)
-                        }
+                HStack(spacing: Spacing.m) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Instagram")
+                            .font(Type.medium(17))
+                            .foregroundStyle(Palette.ink)
+                        Text(
+                            model.env.hasLiveSession
+                                ? "Connected · stays on this phone"
+                                : (model.isDemoMode ? "Sample inbox · not a real account" : "Not connected")
+                        )
+                            .font(Type.body(14))
+                            .foregroundStyle(model.env.hasLiveSession || model.isDemoMode ? Palette.accent : Palette.secondaryInk)
                     }
+                    Spacer()
                     if model.env.hasLiveSession || model.isDemoMode {
-                        Button("Log out", role: .destructive) {
+                        Button {
                             Task { await model.logOutInstagram() }
+                        } label: {
+                            Text("Log out")
+                                .font(Type.medium(15))
+                                .foregroundStyle(Palette.danger)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Capsule().fill(Palette.danger.opacity(0.14)))
                         }
-                        .font(Type.medium(16))
-                        .foregroundStyle(Palette.danger)
+                        .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            model.beginLogin(.connect)
+                        } label: {
+                            Text("Connect")
+                                .font(Type.medium(15))
+                                .foregroundStyle(Palette.onAccent)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Capsule().fill(Palette.accent))
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(Metrics.cardInset)

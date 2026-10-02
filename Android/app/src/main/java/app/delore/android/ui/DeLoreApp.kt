@@ -335,23 +335,32 @@ private fun AccountScreen(model: AppViewModel) {
                 .clip(RoundedCornerShape(Radius.m))
                 .background(Palette.surface())
                 .padding(Metrics.cardInset),
-            verticalArrangement = Arrangement.spacedBy(Spacing.m),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Instagram", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                     Text(
                         when {
-                            model.hasLiveSession -> "Connected · stays on this phone"
+                            state.hasLiveSession -> "Connected · stays on this phone"
                             state.isDemoMode -> "Sample inbox · not a real account"
                             else -> "Not connected"
                         },
-                        color = if (model.hasLiveSession || state.isDemoMode) Palette.accent else Palette.secondaryInk(),
+                        color = if (state.hasLiveSession || state.isDemoMode) Palette.accent else Palette.secondaryInk(),
                         fontFamily = Type.sans,
                         fontSize = 14.sp,
                     )
                 }
-                if (!model.hasLiveSession && !state.isDemoMode) {
+                if (state.hasLiveSession || state.isDemoMode) {
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Palette.danger().copy(alpha = 0.14f))
+                            .clickable { model.logOutInstagram() }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
+                        Text("Log out", color = Palette.danger(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    }
+                } else {
                     Box(
                         Modifier
                             .clip(RoundedCornerShape(50))
@@ -362,9 +371,6 @@ private fun AccountScreen(model: AppViewModel) {
                         Text("Connect", color = Palette.onAccent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                     }
                 }
-            }
-            if (model.hasLiveSession || state.isDemoMode) {
-                QuietButton("Log out", tint = Palette.danger()) { model.logOutInstagram() }
             }
         }
         Column(Modifier.clip(RoundedCornerShape(Radius.m)).background(Palette.surface())) {
@@ -1003,7 +1009,7 @@ private fun SettingsSheet(model: AppViewModel) {
         Spacer(Modifier.height(Spacing.l))
         Text("Instagram", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
         when {
-            model.hasLiveSession -> {
+            state.hasLiveSession -> {
                 Text("Connected · stays on this phone", color = Palette.secondaryInk(), fontSize = 14.sp)
                 QuietButton("Log out", tint = Palette.danger()) {
                     model.logOutInstagram()
