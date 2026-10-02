@@ -48,6 +48,24 @@ struct PrivacyView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                Card {
+                    Text("Children")
+                        .font(.title(.headline))
+                    Text("Retract is not directed at children under 13. We do not knowingly collect personal information from children under 13.")
+                        .font(.subheadline)
+                        .foregroundStyle(Palette.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Card {
+                    Text("Your choices")
+                        .font(.title(.headline))
+                    Text("Disconnect & delete my data clears local Instagram session and library data on this phone. Uninstall also removes local data. Manage or cancel subscriptions in Settings → Apple ID → Subscriptions — deleting the app does not cancel billing by itself.")
+                        .font(.subheadline)
+                        .foregroundStyle(Palette.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 Text("Retract isn't affiliated with, endorsed by, or connected to Instagram or Meta.")
                     .font(.footnote)
                     .foregroundStyle(Palette.secondaryInk)

@@ -253,8 +253,7 @@ public struct InstagramInboxSync: Sendable {
                     continue
                 }
                 if authoredByOwner {
-                    // GraphQL Unsend needs mid.$… when Instagram provides it; numeric item_id alone
-                    // often only hits the REST delete path, which Instagram rejects with 1404006.
+                    // Prefer mid.$… so Unsend can GraphQL without a live-thread resolve.
                     let messageID: String
                     if let mid = item.webMessageID, mid.hasPrefix("mid.") {
                         messageID = mid

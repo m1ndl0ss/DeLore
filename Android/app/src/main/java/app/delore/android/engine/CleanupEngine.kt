@@ -449,9 +449,8 @@ class CleanupEngine private constructor(
                 return
             }
             is IntegrationError.UnexpectedResponse -> {
-                // Systemic IG refusals used to mark FAILED and keep walking the queue —
-                // progress looked healthy for hours while nothing unsent. Pause after a streak.
-                refundAttempt()
+                // Don't refund: a real IG refusal should burn attempts so we fail the item
+                // after maxAttempts instead of retrying forever until only consecutiveFailures pauses.
                 consecutiveFailures += 1
                 if (items[index].attempts >= deps.policy.maxAttemptsPerItem) {
                     items[index] = items[index].copy(nextAttemptAt = null)

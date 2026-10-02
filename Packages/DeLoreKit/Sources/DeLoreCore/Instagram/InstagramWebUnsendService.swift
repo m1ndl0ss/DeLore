@@ -1,17 +1,11 @@
 import Foundation
 
-/// Unsends via Instagram's website session — the same Unsend action the user can perform
-/// in Instagram's own web inbox.
-///
-/// Order that works today:
-/// 1. GraphQL `direct_unsend_message` on www with a `mid.$…` id (stored, or resolved from the thread).
-/// 2. Empty-body POST to `i.instagram.com/.../items/{numeric_id}/delete/` only if GraphQL had a mid
-///    and still failed. Numeric-only REST returns 1404006 on the web session and (on Android)
-///    parks the WebView on i.instagram.com, breaking later GraphQL calls.
+/// Unsends via Instagram's website session — GraphQL `direct_unsend_message` with a `mid.$…` id.
+/// Numeric REST delete returns 1404006 on the web session and is not used.
 ///
 /// Resolve walks the live thread for `mid.$…` when the library only has numeric `item_id`.
-/// Instagram pages from the absolute tip, which can be hundreds of the other person's messages
-/// after your last send — so resolve resumes a per-thread cursor instead of re-reading the tip.
+/// Instagram pages from the absolute tip (often hundreds of the other person's newer messages),
+/// so resolve resumes a per-thread cursor instead of re-reading the tip every time.
 public struct InstagramWebUnsendService: UnsendService {
     private let client: InstagramAPIClient
     private let ownerID: @Sendable () throws -> String?
@@ -37,66 +31,30 @@ public struct InstagramWebUnsendService: UnsendService {
     public func unsend(_ target: CleanupTarget) async throws -> UnsendOutcome {
         guard try isOwned(target) else { return .notOwned }
         guard let owner = try ownerID(), !owner.isEmpty else { throw IntegrationError.sessionExpired }
-        var last: IntegrationError?
         let stored = target.ref.messageID
         let thread = target.ref.conversationID.rawValue
 
-        let resolved: (mid: String, itemID: String)?
+        let mid: String?
         if stored.hasPrefix("mid.") {
-            if let item = await midCache.itemID(thread: thread, mid: stored) {
-                resolved = (stored, item)
-            } else {
-                resolved = (stored, stored)
-            }
+            mid = stored
         } else {
-            resolved = try await resolveIds(target)
+            mid = try await resolveIds(target)?.mid
         }
 
-        if resolved == nil, !stored.hasPrefix("mid."),
-           await midCache.consumeGone(thread: thread, stored: stored) {
-            return .alreadyGone
-        }
-
-        if let mid = resolved?.mid, !mid.isEmpty {
-            do {
-                let response = try await client.send(graphqlUnsend(target, owner: owner, messageID: mid))
-                return try InstagramDeleteParse.outcome(from: response)
-            } catch let error as IntegrationError {
-                switch error {
-                case .unexpectedResponse, .transportFailure:
-                    last = error
-                default:
-                    throw error
-                }
+        guard let mid, !mid.isEmpty else {
+            if await midCache.consumeGone(thread: thread, stored: stored) {
+                return .alreadyGone
             }
+            throw IntegrationError.unavailable
         }
 
-        // REST only after GraphQL had a mid and failed — never for numeric-only library ids.
-        if let mid = resolved?.mid, mid.hasPrefix("mid."),
-           let restID = resolved?.itemID, !restID.hasPrefix("mid.") {
-            for request in restUnsendAttempts(target, itemID: restID) {
-                do {
-                    let response = try await client.send(request)
-                    return try InstagramDeleteParse.outcome(from: response)
-                } catch let error as IntegrationError {
-                    switch error {
-                    case .unexpectedResponse, .transportFailure:
-                        last = error
-                    default:
-                        throw error
-                    }
-                }
-            }
-        }
-        throw last ?? IntegrationError.unavailable
+        let response = try await client.send(graphqlUnsend(target, owner: owner, messageID: mid))
+        return try InstagramDeleteParse.outcome(from: response)
     }
 
     public func presence(of target: CleanupTarget) async throws -> MessagePresence {
         guard try isOwned(target) else { return .notOwned }
         let thread = target.ref.conversationID.rawValue
-        if await midCache.has(thread: thread, stored: target.ref.messageID) {
-            return .present
-        }
         var cursor: String?
         for _ in 0..<presencePageLimit {
             let page = try await fetchInstagramThread(client: client, id: thread, cursor: cursor)
@@ -142,10 +100,11 @@ public struct InstagramWebUnsendService: UnsendService {
         if let oldest = await midCache.oldest(thread: thread),
            target.sentAt > oldest.addingTimeInterval(5) {
             cursor = nil
+            await midCache.setScanCursor(thread: thread, cursor: nil)
         }
         var pages = 0
-        var midHits = 0
         while pages < resolvePageLimit {
+            let pageStart = cursor
             let page = try await fetchInstagramThread(
                 client: client,
                 id: thread,
@@ -160,13 +119,13 @@ public struct InstagramWebUnsendService: UnsendService {
                     pageOldest = item.sentAt
                 }
                 if let mid = item.webMessageID, mid.hasPrefix("mid.") {
-                    midHits += 1
                     await midCache.remember(thread: thread, itemID: item.itemID, mid: mid)
                 }
                 guard matches(stored, item: item) else { continue }
                 if let mid = item.webMessageID, mid.hasPrefix("mid.") {
                     return (mid, item.itemID)
                 }
+                await midCache.markGone(thread: thread, stored: stored)
                 return nil
             }
             if let pageOldest {
@@ -177,32 +136,18 @@ public struct InstagramWebUnsendService: UnsendService {
                 await midCache.markGone(thread: thread, stored: stored)
                 break
             }
-            cursor = next
-            await midCache.setScanCursor(thread: thread, cursor: cursor)
             if let pageOldest, pageOldest < target.sentAt.addingTimeInterval(-1) {
+                await midCache.setScanCursor(thread: thread, cursor: pageStart)
                 await midCache.markGone(thread: thread, stored: stored)
                 break
             }
+            cursor = next
+            await midCache.setScanCursor(thread: thread, cursor: cursor)
+            if pages < resolvePageLimit {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
         }
-        _ = midHits
         return nil
-    }
-
-    private func deletePath(thread: String, item: String) -> String {
-        "/api/v1/direct_v2/threads/\(encode(thread))/items/\(encode(item))/delete/"
-    }
-
-    private func restUnsendAttempts(_ target: CleanupTarget, itemID: String) -> [InstagramAPIRequest] {
-        [
-            InstagramAPIRequest(
-                method: .post,
-                path: deletePath(thread: target.ref.conversationID.rawValue, item: itemID),
-                body: Sensitive(Data()),
-                host: InstagramWebConstants.apiHost,
-                isIdempotent: false,
-                destructive: true
-            ),
-        ]
     }
 
     private func graphqlUnsend(_ target: CleanupTarget, owner: String, messageID: String) -> InstagramAPIRequest {
@@ -229,10 +174,6 @@ public struct InstagramWebUnsendService: UnsendService {
             isIdempotent: false,
             destructive: true
         )
-    }
-
-    private func encode(_ value: String) -> String {
-        value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
     }
 }
 
@@ -261,14 +202,6 @@ private actor MidCache {
             return (mid, stored)
         }
         return nil
-    }
-
-    func itemID(thread: String, mid: String) -> String? {
-        itemByMid["\(thread)|\(mid)"]
-    }
-
-    func has(thread: String, stored: String) -> Bool {
-        lookup(thread: thread, stored: stored) != nil
     }
 
     func scanCursor(thread: String) -> String? {

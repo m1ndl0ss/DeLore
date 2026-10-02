@@ -258,14 +258,14 @@ fun defaultOkHttp(): OkHttpClient = OkHttpClient.Builder()
     .build()
 
 /**
- * Unsend path that actually works against Instagram's website session:
- * 1. GraphQL `direct_unsend_message` on www.instagram.com with Relay-only headers
- *    (`fb_dtsg` from `require('DTSGInitialData')`). Extra Instagram API headers
- *    (`X-Requested-With`, `ig-u-ds-user-id`, `X-IG-WWW-Claim`) make Meta's ajax
- *    layer return "Log in to continue" even with a real token.
- * 2. Fallback: empty-body POST to
- *    `i.instagram.com/api/v1/direct_v2/threads/{thread}/items/{item}/delete/`
- *    from the same-origin WebView (www delete is a 404 SPA; cross-origin fetch is CORS).
+ * Unsend path that works against Instagram's website session:
+ * GraphQL `direct_unsend_message` on www.instagram.com with Relay-only headers
+ * (`fb_dtsg` from `require('DTSGInitialData')`). Extra Instagram API headers
+ * (`X-Requested-With`, `ig-u-ds-user-id`, `X-IG-WWW-Claim`) make Meta's ajax
+ * layer return "Log in to continue" even with a real token.
+ *
+ * Do not fall back to REST `…/items/{id}/delete/` — it returns 1404006 on the
+ * web session and poisons the WebView onto i.instagram.com so GraphQL fails.
  * Desktop Chrome UA only — never a spoofed Instagram app identity.
  */
 class InstagramWebUnsendService(
@@ -278,7 +278,7 @@ class InstagramWebUnsendService(
 ) : UnsendService {
     /** thread|item_id → mid.$… resolved while paging a thread. */
     private val midCache = HashMap<String, String>()
-    /** thread|mid.$… → numeric item_id for REST fallback. */
+    /** thread|mid.$… → numeric item_id (presence / cache). */
     private val itemCache = HashMap<String, String>()
     /**
      * Per-thread resume cursor. Queue is newest-owned first, but Instagram pages from the
@@ -294,68 +294,42 @@ class InstagramWebUnsendService(
         if (!isOwned(target)) return UnsendOutcome.NOT_OWNED
         val owner = ownerID()?.takeIf { it.isNotEmpty() } ?: throw IntegrationError.SessionExpired
         val stored = target.ref.messageID
-        var last: IntegrationError? = null
+        val goneKey = "${target.ref.conversationID.rawValue}|$stored"
 
-        val resolved = when {
-            stored.startsWith("mid.") -> {
-                val item = itemCache["${target.ref.conversationID.rawValue}|$stored"]
-                stored to item
-            }
-            else -> resolveIds(target)?.let { it.first to it.second }
+        val mid = when {
+            stored.startsWith("mid.") -> stored
+            else -> resolveIds(target)?.first
         }
-        val mid = resolved?.first
-        if (resolved == null && !stored.startsWith("mid.")) {
-            // Paged past this send with no matching live item — already unsent or id drift.
-            // Do not hit REST: numeric delete returns 1404006 and parks the WebView on
-            // i.instagram.com, which breaks the next GraphQL calls.
-            if (goneHints.remove("${target.ref.conversationID.rawValue}|$stored")) {
-                Log.i("Retract", "IG unsend already gone (resolve past sentAt)")
+        if (mid.isNullOrBlank()) {
+            // No live mid. If resolve paged past sentAt / matched without mid, treat as gone.
+            // Never hit REST (1404006 + i-origin poison).
+            if (goneHints.remove(goneKey)) {
+                Log.i("Retract", "IG unsend already gone (no mid)")
                 return UnsendOutcome.ALREADY_GONE
             }
-        }
-        if (!mid.isNullOrBlank()) {
-            try {
-                val response = client.send(graphqlUnsend(target, owner, mid))
-                val outcome = InstagramDeleteParse.outcome(response)
-                Log.i("Retract", "IG unsend ok graphql mid")
-                return outcome
-            } catch (error: IntegrationError.UnexpectedResponse) {
-                last = error
-                Log.w("Retract", "IG unsend skip graphql code=${error.code}")
-            } catch (error: IntegrationError.TransportFailure) {
-                last = error
-                Log.w("Retract", "IG unsend skip graphql transport")
-            }
+            throw IntegrationError.Unavailable
         }
 
-        // REST only when GraphQL had a mid and still failed — never as the only path for
-        // numeric library ids (always 1404006 on this web session).
-        val restId = resolved?.second?.takeUnless { it.startsWith("mid.") }
-            ?: stored.takeUnless { it.startsWith("mid.") }
-        if (restId != null && !mid.isNullOrBlank()) {
-            for (request in restUnsendAttempts(target, restId)) {
-                try {
-                    val response = client.send(request)
-                    val outcome = InstagramDeleteParse.outcome(response)
-                    Log.i("Retract", "IG unsend ok ${request.host}${request.path} empty=${request.emptyBody}")
-                    return outcome
-                } catch (error: IntegrationError.UnexpectedResponse) {
-                    last = error
-                    Log.w("Retract", "IG unsend skip ${request.host}${request.path} code=${error.code}")
-                } catch (error: IntegrationError.TransportFailure) {
-                    last = error
-                    Log.w("Retract", "IG unsend skip ${request.host}${request.path} transport")
-                }
-            }
+        return try {
+            val response = client.send(graphqlUnsend(target, owner, mid))
+            val outcome = InstagramDeleteParse.outcome(response)
+            Log.i("Retract", "IG unsend ok graphql mid")
+            // Drop presence short-circuit so a later presence check re-reads the live thread.
+            midCache.remove(goneKey)
+            midCache.remove("${target.ref.conversationID.rawValue}|$mid")
+            outcome
+        } catch (error: IntegrationError.UnexpectedResponse) {
+            Log.w("Retract", "IG unsend skip graphql code=${error.code}")
+            throw error
+        } catch (error: IntegrationError.TransportFailure) {
+            Log.w("Retract", "IG unsend skip graphql transport")
+            throw error
         }
-        throw last ?: IntegrationError.Unavailable
     }
 
     override suspend fun presence(of: CleanupTarget): MessagePresence {
         if (!isOwned(of)) return MessagePresence.NOT_OWNED
         val thread = of.ref.conversationID.rawValue
-        // Prefer ids already learned while resolving / unsending.
-        midCache["$thread|${of.ref.messageID}"]?.let { return MessagePresence.PRESENT }
         var cursor: String? = null
         repeat(maxOf(1, presencePageLimit)) {
             val page = fetchThread(thread, cursor)
@@ -398,19 +372,20 @@ class InstagramWebUnsendService(
             if (item != null) return mid to item
         }
 
-        // Resume from the deepest page already walked — unless that cursor is already older
-        // than this target (we overshot on a prior miss/retry). Then restart from the tip.
+        // Resume from deepest page — unless cursor is already older than this target (overshoot).
         val knownOldest = scanOldestMillis[thread]
         var cursor = scanCursor[thread]
         if (knownOldest != null && target.sentAtMillis > knownOldest + 5_000L) {
             Log.i("Retract", "IG resolve restart tip (cursor past target)")
             cursor = null
+            scanCursor[thread] = null
         }
 
         var pages = 0
         var midHits = 0
         val pageBudget = maxOf(1, resolvePageLimit)
         while (pages < pageBudget) {
+            val pageStartCursor = cursor
             val page = client.fetchDirectThread(thread, cursor, resolvePageSize)
             pages += 1
             var pageOldest = Long.MAX_VALUE
@@ -424,10 +399,12 @@ class InstagramWebUnsendService(
                     Log.i("Retract", "IG resolve hit pages=$pages midHits=$midHits")
                     return mid to item.itemID
                 }
+                // Matched live item but no mid.$ — mark gone; GraphQL can't run, REST is dead.
                 Log.w(
                     "Retract",
                     "IG resolve target without mid pages=$pages midHits=$midHits item=${item.itemID.take(24)}",
                 )
+                goneHints.add(goneKey)
                 return null
             }
             if (pageOldest != Long.MAX_VALUE) {
@@ -439,16 +416,21 @@ class InstagramWebUnsendService(
                 goneHints.add(goneKey)
                 break
             }
-            cursor = page.oldestCursor
-            scanCursor[thread] = cursor
-            // Past the target's send time with no match → already gone (or id drift).
+            // Past sentAt with no match → already gone. Keep resume at this page's start so
+            // older siblings on the same page aren't skipped on the next resolve.
             if (pageOldest != Long.MAX_VALUE && pageOldest < target.sentAtMillis - 1_000) {
                 Log.w(
                     "Retract",
                     "IG resolve past sentAt pages=$pages midHits=$midHits stored=${stored.take(24)}",
                 )
+                scanCursor[thread] = pageStartCursor
                 goneHints.add(goneKey)
                 break
+            }
+            cursor = page.oldestCursor
+            scanCursor[thread] = cursor
+            if (pages < pageBudget) {
+                kotlinx.coroutines.delay(200)
             }
         }
         Log.w(
@@ -462,26 +444,6 @@ class InstagramWebUnsendService(
     private fun isOwned(target: CleanupTarget): Boolean {
         val owner = ownerID()?.takeIf { it.isNotEmpty() } ?: throw IntegrationError.SessionExpired
         return target.authorID == ParticipantID("ig:$owner")
-    }
-
-    private fun deletePath(thread: String, item: String): String {
-        val encodedThread = URLEncoder.encode(thread, Charsets.UTF_8)
-        val encodedItem = URLEncoder.encode(item, Charsets.UTF_8)
-        return "/api/v1/direct_v2/threads/$encodedThread/items/$encodedItem/delete/"
-    }
-
-    private fun restUnsendAttempts(target: CleanupTarget, itemId: String): List<InstagramAPIRequest> {
-        val path = deletePath(target.ref.conversationID.rawValue, itemId)
-        return listOf(
-            InstagramAPIRequest(
-                method = HTTPMethod.POST,
-                path = path,
-                host = InstagramWebConstants.API_HOST,
-                isIdempotent = false,
-                destructive = true,
-                emptyBody = true,
-            ),
-        )
     }
 
     private fun graphqlUnsend(target: CleanupTarget, owner: String, messageID: String): InstagramAPIRequest {
@@ -523,25 +485,13 @@ internal suspend fun InstagramAPIClient.fetchDirectThread(
     }
     val encoded = URLEncoder.encode(id, Charsets.UTF_8)
     val path = "/api/v1/direct_v2/threads/$encoded/"
-    var last: Exception? = null
-    for (host in InstagramRequestHost.order()) {
-        try {
-            val response = send(InstagramAPIRequest(HTTPMethod.GET, path, query, host = host))
-            val page = runCatching { InstagramWebFormat.parseThread(response.body) }.getOrElse {
-                Log.w("Retract", "IG thread parse $host keys=${InstagramWebFormat.topKeys(response.body)}")
-                throw IntegrationError.UnexpectedResponse(response.statusCode)
-            }
-            InstagramRequestHost.remember(host)
-            return page
-        } catch (error: IntegrationError.UnexpectedResponse) {
-            last = error
-            Log.w("Retract", "IG thread $host skip code=${error.code}")
-        } catch (error: IntegrationError.TransportFailure) {
-            last = error
-            Log.w("Retract", "IG thread $host skip transport")
-        }
+    // www only — dual-host preferred i.instagram.com and forced WebView origin thrash with GraphQL.
+    val host = InstagramWebConstants.WWW_HOST
+    val response = send(InstagramAPIRequest(HTTPMethod.GET, path, query, host = host))
+    return runCatching { InstagramWebFormat.parseThread(response.body) }.getOrElse {
+        Log.w("Retract", "IG thread parse $host keys=${InstagramWebFormat.topKeys(response.body)}")
+        throw IntegrationError.UnexpectedResponse(response.statusCode)
     }
-    throw last ?: IntegrationError.Unavailable
 }
 
 class InstagramInboxSync(
@@ -709,29 +659,16 @@ class InstagramInboxSync(
             "visual_message_return_type" to "unseen",
         )
         if (cursor != null) query["cursor"] = cursor
-        var last: Exception? = null
-        for (host in InstagramRequestHost.order()) {
-            try {
-                val response = client.send(InstagramAPIRequest(HTTPMethod.GET, "/api/v1/direct_v2/inbox/", query, host = host))
-                val page = runCatching { InstagramWebFormat.parseInbox(response.body) }
-                    .getOrElse {
-                        Log.e(
-                            "Retract",
-                            "IG inbox parse $host: ${it.javaClass.simpleName}: ${it.message} keys=${InstagramWebFormat.topKeys(response.body)}",
-                        )
-                        throw IntegrationError.UnexpectedResponse(response.statusCode)
-                    }
-                InstagramRequestHost.remember(host)
-                return page
-            } catch (error: IntegrationError.UnexpectedResponse) {
-                last = error
-                Log.w("Retract", "IG inbox $host skip code=${error.code}")
-            } catch (error: IntegrationError.TransportFailure) {
-                last = error
-                Log.w("Retract", "IG inbox $host skip transport")
+        val host = InstagramWebConstants.WWW_HOST
+        val response = client.send(InstagramAPIRequest(HTTPMethod.GET, "/api/v1/direct_v2/inbox/", query, host = host))
+        return runCatching { InstagramWebFormat.parseInbox(response.body) }
+            .getOrElse {
+                Log.e(
+                    "Retract",
+                    "IG inbox parse $host: ${it.javaClass.simpleName}: ${it.message} keys=${InstagramWebFormat.topKeys(response.body)}",
+                )
+                throw IntegrationError.UnexpectedResponse(response.statusCode)
             }
-        }
-        throw last ?: IntegrationError.Unavailable
     }
 
     private suspend fun loadConversation(
@@ -759,8 +696,7 @@ class InstagramInboxSync(
                     else -> continue
                 }
                 if (authoredByOwner) {
-                    // GraphQL Unsend needs mid.$… when Instagram provides it; numeric item_id alone
-                    // often only hits the REST delete path, which Instagram is rejecting with 1404006.
+                    // Prefer mid.$… so Unsend can GraphQL without a live-thread resolve.
                     val messageID = item.webMessageID?.takeIf { it.startsWith("mid.") }
                         ?: item.itemID
                     if (messageID.startsWith("mid.")) midStored += 1

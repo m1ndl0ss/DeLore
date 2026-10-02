@@ -237,6 +237,14 @@ fun PrivacySheet(onBack: (() -> Unit)? = null) {
             Text("Your password", color = Palette.ink(), fontWeight = FontWeight.Bold)
             Text("You type it into Instagram's own sign-in page. We never see it, we never store it, and it never leaves this phone through us.", color = Palette.secondaryInk())
         }
+        Card {
+            Text("Children", color = Palette.ink(), fontWeight = FontWeight.Bold)
+            Text("Retract is not directed at children under 13. We do not knowingly collect personal information from children under 13.", color = Palette.secondaryInk())
+        }
+        Card {
+            Text("Your choices", color = Palette.ink(), fontWeight = FontWeight.Bold)
+            Text("Disconnect & delete my data clears local Instagram session and library data on this phone. Uninstall also removes local data. Manage or cancel subscriptions in Google Play — deleting the app does not cancel billing by itself.", color = Palette.secondaryInk())
+        }
         Text("Retract isn't affiliated with, endorsed by, or connected to Instagram or Meta.", color = Palette.secondaryInk(), fontSize = 13.sp)
         Spacer(Modifier.height(Spacing.xl))
     }

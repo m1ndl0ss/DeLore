@@ -30,10 +30,9 @@ import java.util.concurrent.ConcurrentHashMap
  * already sitting on instagram.com. OkHttp's TLS stack is often dropped on the floor by
  * Instagram's edge, which is why login (Chromium) worked and inbox reads did not.
  *
- * Surfaces: GraphQL and token harvest on www.instagram.com; REST delete after navigating
- * to i.instagram.com so the POST is same-origin. GraphQL uses Relay headers only
- * (no X-Requested-With / ig-u-ds-user-id / X-IG-WWW-Claim). REST empty-body delete
- * must not send `_uid`/`_uuid` form fields (Instagram returns 4415001).
+ * Surface: www.instagram.com for inbox/thread GETs, GraphQL Unsend, and `fb_dtsg` harvest.
+ * GraphQL uses Relay headers only (no X-Requested-With / ig-u-ds-user-id / X-IG-WWW-Claim).
+ * Keep the WebView on www — navigating to i.instagram.com breaks subsequent www GraphQL.
  */
 class InstagramWebViewGateway {
     private val main = Handler(Looper.getMainLooper())

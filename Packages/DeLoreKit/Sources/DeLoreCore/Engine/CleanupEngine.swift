@@ -490,10 +490,8 @@ public actor CleanupEngine {
             return
 
         case .unexpectedResponse:
-            // Systemic IG refusals (e.g. 403 / 1404006) used to mark FAILED and keep walking the
-            // whole queue — progress looked healthy for hours while nothing unsent. Treat like a
-            // soft failure: retry, then pause after a streak so the user isn't left staring at a bar.
-            refundAttempt()
+            // Don't refund: a real IG refusal should burn attempts so items fail after
+            // maxAttempts instead of retrying forever until only consecutiveFailures pauses.
             consecutiveFailures += 1
             if items[index].attempts >= deps.policy.maxAttemptsPerItem {
                 items[index].nextAttemptAt = nil

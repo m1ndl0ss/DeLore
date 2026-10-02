@@ -8,7 +8,7 @@ data class FaqEntry(val question: String, val answer: String)
 data class LegalSection(val title: String, val body: String)
 
 object LegalCopy {
-    const val TERMS_VERSION = 1
+    const val TERMS_VERSION = 2
     const val NOT_RESPONSIBLE =
         "You use Retract at your own risk. We are not responsible for anything that happens — including Instagram bans, locks, lost messages, or failed unsends."
     const val NOT_AFFILIATED =
@@ -36,6 +36,10 @@ object LegalCopy {
         FaqEntry(
             "Why are some chats skipped?",
             "If we can’t tell which messages are yours, we leave that chat alone. Message requests aren’t included — only your main inbox.",
+        ),
+        FaqEntry(
+            "Can’t I just delete the chat in Instagram?",
+            "No. Deleting a chat only removes it from your inbox. The other people still see your messages. Unsend is what removes a message for everyone.",
         ),
         FaqEntry(
             "What’s free and what’s Pro?",
@@ -89,8 +93,20 @@ object LegalCopy {
             "You can unsend 100 messages for free. After that, Pro is sold as a monthly or yearly auto-renewing subscription through Google Play. Payment is charged to your Google account at confirmation of purchase. Subscriptions renew unless you cancel. Manage or cancel in Google Play. Deleting Retract does not cancel the subscription. Refunds follow Google Play’s policies and applicable law. Purchases stay with your Google account if you delete Retract’s local data.",
         ),
         LegalSection(
+            "Age",
+            "You must be at least 13 to use Retract. If you are under 18, use it only with a parent or guardian’s permission.",
+        ),
+        LegalSection(
+            "Apple / Google",
+            "For store builds, these Terms are between you and the publisher at $SUPPORT_EMAIL, not Apple or Google. Apple and Google are not responsible for Retract or its content and have no obligation to provide maintenance or support for Retract.",
+        ),
+        LegalSection(
             "Privacy",
-            "Your Instagram session, chat names, and message dates/types stay on this device. We don’t run analytics or ads. Cleanup traffic goes to Instagram from your phone. See in-app Privacy for the full explanation.",
+            "Your Instagram session, chat names, and message dates/types stay on this device. Message text is never saved. We don’t run analytics or ads. Cleanup traffic goes to Instagram from your phone. See in-app Privacy for the full explanation.",
+        ),
+        LegalSection(
+            "Changes",
+            "We may update these Terms. Continued use after an update means you accept the revised Terms.",
         ),
         LegalSection(
             "Contact",

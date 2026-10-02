@@ -12,9 +12,13 @@ This is the path that works in production (confirmed on live accounts). Do not
 | Host | Used for |
 |---|---|
 | `www.instagram.com` | Login WebView, inbox/thread GET, GraphQL Unsend, `fb_dtsg` harvest |
-| `i.instagram.com` | REST Unsend only, after the hidden WebView navigates here so `fetch` is same-origin |
 
 User-Agent is **desktop Chrome**. Never an Instagram iOS/Android app UA.
+
+Do **not** unsend via REST
+`i.instagram.com/api/v1/direct_v2/threads/{thread}/items/{item}/delete/`.
+That path returns `1404006` on the website session and navigates the WebView onto
+`i.instagram.com`, after which www GraphQL fails with `Failed to fetch`.
 
 ## Login and session
 
@@ -28,16 +32,19 @@ User-Agent is **desktop Chrome**. Never an Instagram iOS/Android app UA.
 Instagram’s edge often hangs or drops the app HTTP stack even when Chromium in the
 same process can load the site. Inbox and Unsend therefore run `fetch()` inside the
 already-authenticated WebView (`InstagramWebViewGateway` on Android; the iOS client
-uses the website session the same way).
+uses the website session the same way). Keep the WebView on **www** for GraphQL and
+thread GETs.
 
 ## Finding messages
 
-- Inbox listing: `GET /api/v1/direct_v2/inbox/` (folder `inbox` only — not requests).
-- Thread pages: `GET /api/v1/direct_v2/threads/{id}/`.
+- Inbox listing: `GET /api/v1/direct_v2/inbox/` on www (folder `inbox` only — not requests).
+- Thread pages: `GET /api/v1/direct_v2/threads/{id}/` on www only.
 - Oversized numeric `item_id` / `user_id` values are quoted before JSON parse so they
   are not rounded.
 - Only the signed-in user is queued (`is_sent_by_viewer` or `user_id == ds_user_id`).
 - Message **text is never stored**. We keep id, timestamp, and kind.
+- Prefer storing GraphQL `mid.$…` when Instagram provides it (including nested under
+  media/xma blobs). Numeric `item_id` alone requires a live-thread resolve before Unsend.
 
 ## Kind tracking (texts vs photos)
 
@@ -53,11 +60,18 @@ Instagram’s `item_type` is frequently missing, set to `"text"` on media, or a 
 Shared posts count as **Links & shared posts**, not photos. See
 `InstagramItemKind` (Android and iOS).
 
-## Unsend, in order
+## Unsend
 
 For each queued item:
 
-1. **GraphQL** `POST https://www.instagram.com/api/graphql`  
+1. Resolve a `mid.$…` if the library only has a numeric `item_id`, by paging the live
+   thread from the tip (or a resume cursor). Queue is newest-*owned* first; Instagram
+   pages from the absolute tip (often hundreds of the other person's newer messages).
+2. Resume a per-thread cursor so each later owned message does not re-walk the tip.
+   If the cursor is already older than the current target, restart from the tip.
+   When a page is older than the target's `sentAt` with no match, treat as already gone
+   and keep the resume cursor at that page's start (do not advance past it).
+3. **GraphQL only** `POST https://www.instagram.com/api/graphql`  
    Friendly name `direct_unsend_message`, `doc_id` `26948700068153789`.  
    Variables: `{ "message_id": "mid.$…", "send_data": { "thread_id": "…" } }`.  
    Body includes `fb_dtsg` (from `require('DTSGInitialData')` on www), `lsd`, `av` /
@@ -68,35 +82,19 @@ For each queued item:
    POST — Meta’s ajax layer then returns `error: 1357001` “Log in to continue”
    even with a real `fb_dtsg`. Do not send `__a=1`.
 
-2. **REST fallback** empty-body `POST`
-   `https://i.instagram.com/api/v1/direct_v2/threads/{thread}/items/{item}/delete/`  
-   The WebView must already be on `i.instagram.com` (same-origin).  
-   www.instagram.com has no such route (404 HTML SPA that *looks* logged-out).  
-   Fetch from www → i.instagram.com is CORS `Failed to fetch`.  
-   A form body with `_uid` / `_uuid` returns JSON `4415001`
-   “Prompt has contribution”. Empty body is required.
-
-Success is **honest**: GraphQL `data.direct_unsend_message === true`, or REST JSON
-`status` ok/success, or the item is already gone. A `for (;;);` envelope or a
-generic HTML 404 is **not** counted as unsent.
+Success is **honest**: GraphQL `data.direct_unsend_message === true`, or the item is
+already gone. A `for (;;);` envelope or a generic HTML 404 is **not** counted as unsent.
 
 ## Engine behavior
 
 - Session expired, checkpoint, and rate-limit **pause** the job.
-- A streak of unexpected Instagram refusals (e.g. HTTP 403 / `1404006`) **pauses**
-  after consecutive failures and auto-retries later — we do not walk the whole queue
-  marking every item failed while the progress bar looks healthy.
-- Prefer storing GraphQL `mid.$…` ids when Instagram provides them; resolve from the
-  live thread when a job only has numeric `item_id`s.
-- Resolve must page past the other person's newer messages to reach your older sends
-  (queue is newest-*owned* first; IG pages from the absolute tip). Resume a per-thread
-  cursor so each item does not re-walk the tip; stop once the page is older than the
-  target's `sentAt`. If the item is missing there, treat it as already gone — do **not**
-  fall through to REST (1404006) or the WebView will stick on `i.instagram.com` and
-  GraphQL will `Failed to fetch`.
-- Android WebView: www requests require the www surface (not `i.`); REST delete still
-  navigates to `i.` only when GraphQL already had a mid and failed.
-- Pacing is `RatePolicy.conservative` (gaps, hourly cap, backoff). Keep the app open.
+- A streak of unexpected Instagram refusals (e.g. HTTP 403) **pauses** after consecutive
+  failures and auto-retries later — we do not walk the whole queue marking every item
+  failed while the progress bar looks healthy.
+- Do **not** refund attempts on `UnexpectedResponse` — burn attempts so stubborn refusals
+  fail the item instead of retrying forever.
+- Pacing is `RatePolicy.conservative` (~1.25s gap, hourly cap, backoff). Keep the app open.
+- First unsend on a deep chat can take about a minute while resolve lines up with the tip.
 
 ## What we will not do
 
@@ -105,3 +103,4 @@ generic HTML 404 is **not** counted as unsent.
 - Bypass checkpoints, CAPTCHAs, or 2FA
 - Host DMs on a Retract server
 - Blindly repeat a destructive request whose outcome is unknown
+- Fall through to REST delete after a GraphQL / mid miss

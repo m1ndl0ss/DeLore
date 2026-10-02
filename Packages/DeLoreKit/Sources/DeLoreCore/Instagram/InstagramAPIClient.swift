@@ -91,27 +91,11 @@ func fetchInstagramThread(
     }
     let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
     let path = "/api/v1/direct_v2/threads/\(encoded)/"
-    var last: IntegrationError?
-    for host in InstagramRequestHost.shared.order() {
-        do {
-            let response = try await client.send(
-                InstagramAPIRequest(method: .get, path: path, query: query, host: host)
-            )
-            let page = try InstagramWebFormat.parseThread(response.body)
-            InstagramRequestHost.shared.remember(host)
-            return page
-        } catch let error as IntegrationError {
-            switch error {
-            case .unexpectedResponse, .transportFailure:
-                last = error
-            default:
-                throw error
-            }
-        } catch {
-            last = .unexpectedResponse(code: 0)
-        }
-    }
-    throw last ?? IntegrationError.unavailable
+    // www only — dual-host preferred i.instagram.com and fights GraphQL's www surface.
+    let response = try await client.send(
+        InstagramAPIRequest(method: .get, path: path, query: query, host: InstagramWebConstants.wwwHost)
+    )
+    return try InstagramWebFormat.parseThread(response.body)
 }
 
 /// Performs Instagram website requests with the locally stored user session.

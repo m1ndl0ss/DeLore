@@ -171,11 +171,40 @@ enum InstagramWebFormat {
             )
             isSystem = InstagramItemKind.isSystem(type)
             sentByViewer = try container.decodeIfPresent(Bool.self, forKey: .isSentByViewer)
-            val message = try container.decodeIfPresent(FlexibleID.self, forKey: .messageID)?.rawValue
+            let message = try container.decodeIfPresent(FlexibleID.self, forKey: .messageID)?.rawValue
             let client = try container.decodeIfPresent(FlexibleID.self, forKey: .clientContext)?.rawValue
-            // Prefer an explicit mid.$…; some payloads only expose it under nested blobs — Decoder
-            // can't walk those, so top-level fields are the reliable path for Codable.
+            // Prefer an explicit mid.$…; nested blobs are filled in parseThread via findMid.
             webMessageID = [message, client].compactMap { $0 }.first { $0.hasPrefix("mid.") }
+        }
+
+        func with(webMessageID newMid: String) -> Item {
+            Item(
+                itemID: itemID,
+                authorID: authorID,
+                sentAt: sentAt,
+                kind: kind,
+                isSystem: isSystem,
+                sentByViewer: sentByViewer,
+                webMessageID: newMid
+            )
+        }
+
+        init(
+            itemID: String,
+            authorID: String?,
+            sentAt: Date,
+            kind: MessageKind,
+            isSystem: Bool,
+            sentByViewer: Bool?,
+            webMessageID: String?
+        ) {
+            self.itemID = itemID
+            self.authorID = authorID
+            self.sentAt = sentAt
+            self.kind = kind
+            self.isSystem = isSystem
+            self.sentByViewer = sentByViewer
+            self.webMessageID = webMessageID
         }
 
         /// Direct timestamps are microseconds when they're 16+ digits.
@@ -240,20 +269,55 @@ enum InstagramWebFormat {
         guard let object = root as? [String: Any] else {
             throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "thread root"))
         }
+        let threadObject: [String: Any]?
         let payload: Data
         if object["thread"] == nil, let data = object["data"] as? [String: Any], data["thread"] != nil {
+            threadObject = data["thread"] as? [String: Any]
             payload = try JSONSerialization.data(withJSONObject: data)
         } else {
+            threadObject = object["thread"] as? [String: Any]
             payload = quoted
         }
         let page = try JSONDecoder().decode(ThreadPage.self, from: payload)
-        guard page.thread != nil else {
+        guard let thread = page.thread else {
             throw DecodingError.keyNotFound(
                 ThreadPage.Thread.CodingKeys.items,
                 .init(codingPath: [], debugDescription: "thread")
             )
         }
-        return page
+        let rawItems = threadObject?["items"] as? [[String: Any]] ?? []
+        let items = thread.items ?? []
+        let enriched: [Item] = items.enumerated().map { index, item in
+            if let mid = item.webMessageID, mid.hasPrefix("mid.") { return item }
+            guard index < rawItems.count, let mid = findMid(rawItems[index]) else { return item }
+            return item.with(webMessageID: mid)
+        }
+        let enrichedThread = ThreadPage.Thread(
+            threadID: thread.threadID,
+            threadTitle: thread.threadTitle,
+            users: thread.users,
+            items: enriched,
+            hasOlder: thread.hasOlder,
+            oldestCursor: thread.oldestCursor
+        )
+        return ThreadPage(thread: enrichedThread, status: page.status)
+    }
+
+    /// Walk nested JSON for a `mid.$…` string Instagram sometimes nests under media/xma blobs.
+    static func findMid(_ value: Any?, depth: Int = 0) -> String? {
+        guard depth <= 4, let value else { return nil }
+        if let string = value as? String, string.hasPrefix("mid.") { return string }
+        if let dict = value as? [String: Any] {
+            for child in dict.values {
+                if let found = findMid(child, depth: depth + 1) { return found }
+            }
+        }
+        if let array = value as? [Any] {
+            for child in array {
+                if let found = findMid(child, depth: depth + 1) { return found }
+            }
+        }
+        return nil
     }
 
     static func quoteOversizedNumericIDs(_ body: Data) -> Data {

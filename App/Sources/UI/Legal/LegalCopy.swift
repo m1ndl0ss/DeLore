@@ -2,7 +2,7 @@ import Foundation
 
 enum LegalCopy {
     static let supportEmail = "contact@kandalintsev.com"
-    static let termsVersion = 1
+    static let termsVersion = 2
     static var supportMailto: URL { URL(string: "mailto:\(supportEmail)")! }
     static let notResponsible =
         "You use Retract at your own risk. We are not responsible for anything that happens — including Instagram bans, locks, lost messages, or failed unsends."
@@ -32,6 +32,10 @@ enum LegalCopy {
         (
             "Why are some chats skipped?",
             "If we can’t tell which messages are yours, we leave that chat alone. Message requests aren’t included — only your main inbox."
+        ),
+        (
+            "Can’t I just delete the chat in Instagram?",
+            "No. Deleting a chat only removes it from your inbox. The other people still see your messages. Unsend is what removes a message for everyone."
         ),
         (
             "What’s free and what’s Pro?",
@@ -85,12 +89,20 @@ enum LegalCopy {
             "You can unsend 100 messages for free. After that, Pro is sold as a monthly or yearly auto-renewing subscription through the App Store. Payment is charged to your Apple ID at confirmation of purchase. Subscriptions renew unless you turn off auto-renew at least 24 hours before the period ends. Your account may be charged for renewal within 24 hours before the end of the current period. Manage or cancel in Settings → Apple ID → Subscriptions. Deleting Retract does not cancel the subscription. Refunds follow Apple’s policies and applicable law. Purchases stay with your Apple ID if you delete Retract’s local data."
         ),
         (
+            "Age",
+            "You must be at least 13 to use Retract. If you are under 18, use it only with a parent or guardian’s permission."
+        ),
+        (
             "Apple",
             "These Terms are between you and the publisher reachable at \(supportEmail), not Apple. Apple is not responsible for Retract or its content, and has no obligation to provide support. Apple and Apple’s subsidiaries are third-party beneficiaries of these Terms to the extent App Store rules require it."
         ),
         (
             "Privacy",
-            "Your Instagram session, chat names, and message dates/types stay on this device. We don’t run analytics or ads. Cleanup traffic goes to Instagram from your phone. See in-app Privacy for the full explanation."
+            "Your Instagram session, chat names, and message dates/types stay on this device. Message text is never saved. We don’t run analytics or ads. Cleanup traffic goes to Instagram from your phone. See in-app Privacy for the full explanation."
+        ),
+        (
+            "Changes",
+            "We may update these Terms. Continued use after an update means you accept the revised Terms."
         ),
         (
             "Contact",
