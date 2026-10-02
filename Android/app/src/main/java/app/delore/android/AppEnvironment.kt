@@ -198,6 +198,20 @@ class AppEnvironment(private val context: Context) {
         history = history,
     )
 
+    /** Signs out of Instagram on this phone. Keeps Pro, passes, terms acceptance, and onboarding. */
+    fun disconnectInstagram() {
+        sessionVault.clear()
+        jobStore.wipe()
+        library.wipe()
+        history.wipe()
+        inboxWork.clear()
+        inboxListCursor = null
+        saveRetractQueue(emptySet())
+        prefs.edit().remove("inbox.holdOffUntil").apply()
+        isDemoMode = false
+        webBrowser.destroy()
+    }
+
     fun eraseAllData() {
         val eraserKeys = PassLedger.preservedKeys + PromoVault.COMPLIMENTARY_KEY
         secrets.wipePreserving(eraserKeys)

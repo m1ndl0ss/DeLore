@@ -13,10 +13,7 @@ struct SettingsTabView: View {
                     .font(Type.medium(26))
                     .foregroundStyle(Palette.ink)
 
-                Button {
-                    if model.env.hasLiveSession { return }
-                    model.beginLogin(.connect)
-                } label: {
+                VStack(alignment: .leading, spacing: Spacing.m) {
                     HStack(spacing: Spacing.m) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Instagram")
@@ -31,19 +28,30 @@ struct SettingsTabView: View {
                                 .foregroundStyle(model.env.hasLiveSession || model.isDemoMode ? Palette.accent : Palette.secondaryInk)
                         }
                         Spacer()
-                        if !model.env.hasLiveSession {
-                            Text("Connect")
-                                .font(Type.medium(15))
-                                .foregroundStyle(Palette.onAccent)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(Capsule().fill(Palette.accent))
+                        if !model.env.hasLiveSession, !model.isDemoMode {
+                            Button {
+                                model.beginLogin(.connect)
+                            } label: {
+                                Text("Connect")
+                                    .font(Type.medium(15))
+                                    .foregroundStyle(Palette.onAccent)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .background(Capsule().fill(Palette.accent))
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .padding(Metrics.cardInset)
-                    .contentShape(Rectangle())
+                    if model.env.hasLiveSession || model.isDemoMode {
+                        Button("Log out", role: .destructive) {
+                            Task { await model.logOutInstagram() }
+                        }
+                        .font(Type.medium(16))
+                        .foregroundStyle(Palette.danger)
+                    }
                 }
-                .buttonStyle(.plain)
+                .padding(Metrics.cardInset)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .elevated()
 
                 VStack(spacing: 0) {

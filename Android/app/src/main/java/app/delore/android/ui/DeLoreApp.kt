@@ -329,38 +329,42 @@ private fun AccountScreen(model: AppViewModel) {
             fontSize = 26.sp,
             lineHeight = 32.sp,
         )
-        Row(
+        Column(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(Radius.m))
                 .background(Palette.surface())
-                .clickable(enabled = !model.hasLiveSession) { model.beginLogin(LoginPurpose.CONNECT) }
                 .padding(Metrics.cardInset),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(Spacing.m),
         ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Instagram", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-                Text(
-                    when {
-                        model.hasLiveSession -> "Connected · stays on this phone"
-                        state.isDemoMode -> "Sample inbox · not a real account"
-                        else -> "Not connected"
-                    },
-                    color = if (model.hasLiveSession || state.isDemoMode) Palette.accent else Palette.secondaryInk(),
-                    fontFamily = Type.sans,
-                    fontSize = 14.sp,
-                )
-            }
-            if (!model.hasLiveSession) {
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(Palette.accent)
-                        .clickable { model.beginLogin(LoginPurpose.CONNECT) }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                ) {
-                    Text("Connect", color = Palette.onAccent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Instagram", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                    Text(
+                        when {
+                            model.hasLiveSession -> "Connected · stays on this phone"
+                            state.isDemoMode -> "Sample inbox · not a real account"
+                            else -> "Not connected"
+                        },
+                        color = if (model.hasLiveSession || state.isDemoMode) Palette.accent else Palette.secondaryInk(),
+                        fontFamily = Type.sans,
+                        fontSize = 14.sp,
+                    )
                 }
+                if (!model.hasLiveSession && !state.isDemoMode) {
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Palette.accent)
+                            .clickable { model.beginLogin(LoginPurpose.CONNECT) }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
+                        Text("Connect", color = Palette.onAccent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    }
+                }
+            }
+            if (model.hasLiveSession || state.isDemoMode) {
+                QuietButton("Log out", tint = Palette.danger()) { model.logOutInstagram() }
             }
         }
         Column(Modifier.clip(RoundedCornerShape(Radius.m)).background(Palette.surface())) {
@@ -997,14 +1001,32 @@ private fun SettingsSheet(model: AppViewModel) {
         }
         restoreNotice?.let { Text(it, color = Palette.secondaryInk(), fontSize = 13.sp) }
         Spacer(Modifier.height(Spacing.l))
-        Text("Your data", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
-        QuietButton("How we handle your data") { model.showSheet(Sheet.Privacy) }
-        if (!model.hasLiveSession) {
-            QuietButton(if (state.isDemoMode) "Connect Instagram" else "Reconnect Instagram") {
-                model.showSheet(null)
-                model.beginLogin(if (state.isDemoMode) LoginPurpose.CONNECT else LoginPurpose.RECONNECT)
+        Text("Instagram", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
+        when {
+            model.hasLiveSession -> {
+                Text("Connected · stays on this phone", color = Palette.secondaryInk(), fontSize = 14.sp)
+                QuietButton("Log out", tint = Palette.danger()) {
+                    model.logOutInstagram()
+                    model.showSheet(null)
+                }
+            }
+            state.isDemoMode -> {
+                Text("Sample inbox · not a real account", color = Palette.secondaryInk(), fontSize = 14.sp)
+                QuietButton("Log out", tint = Palette.danger()) {
+                    model.logOutInstagram()
+                    model.showSheet(null)
+                }
+            }
+            else -> {
+                QuietButton("Connect Instagram") {
+                    model.showSheet(null)
+                    model.beginLogin(LoginPurpose.CONNECT)
+                }
             }
         }
+        Spacer(Modifier.height(Spacing.l))
+        Text("Your data", color = Palette.ink(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
+        QuietButton("How we handle your data") { model.showSheet(Sheet.Privacy) }
         Spacer(Modifier.height(Spacing.l))
         QuietButton("Support") { model.showSheet(Sheet.Support) }
         QuietButton("Privacy policy") { model.showSheet(Sheet.Privacy) }

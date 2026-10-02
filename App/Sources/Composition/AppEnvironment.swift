@@ -287,6 +287,19 @@ final class AppEnvironment {
         return Set(raw.map(ConversationID.init))
     }
 
+    /// Signs out of Instagram on this phone. Keeps Pro, passes, terms acceptance, and onboarding.
+    func disconnectInstagram() throws {
+        try sessionVault.clear()
+        try jobStore.wipe()
+        try library.wipe()
+        try history.wipe()
+        saveInboxWork(nil)
+        inboxListCursor = nil
+        saveRetractQueue([])
+        inboxHoldOffUntil = nil
+        isDemoMode = false
+    }
+
     /// Disconnects and removes everything sensitive. Purchases (unused passes, free usage)
     /// are kept because they belong to the user, and aren't sensitive.
     func eraseAllData() throws {

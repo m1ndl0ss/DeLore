@@ -539,4 +539,23 @@ final class AppModel {
         tab = .settings
         withAnimation { route = .home }
     }
+
+    func logOutInstagram() async {
+        if let session, !session.isFinished { await session.cancel() }
+        isSessionPresented = false
+        self.session = nil
+        sheet = nil
+        loginPurpose = nil
+        inboxSyncModel?.cancel()
+        inboxSyncModel = nil
+        do {
+            try env.disconnectInstagram()
+        } catch {
+            env.logger.error("logout failed: \(error.safeDescription)")
+        }
+        overview = nil
+        history = []
+        isDemoMode = false
+        await reloadOverview()
+    }
 }

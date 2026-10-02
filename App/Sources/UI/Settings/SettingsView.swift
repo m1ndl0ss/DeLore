@@ -50,14 +50,35 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Your data") {
-                    NavigationLink("How we handle your data") { PrivacyView() }
-                    if !model.env.hasLiveSession {
-                        Button(model.isDemoMode ? "Connect Instagram" : "Reconnect Instagram") {
+                Section("Instagram") {
+                    if model.env.hasLiveSession {
+                        Text("Connected · stays on this phone")
+                            .foregroundStyle(Palette.secondaryInk)
+                        Button("Log out", role: .destructive) {
+                            Task {
+                                await model.logOutInstagram()
+                                dismiss()
+                            }
+                        }
+                    } else if model.isDemoMode {
+                        Text("Sample inbox · not a real account")
+                            .foregroundStyle(Palette.secondaryInk)
+                        Button("Log out", role: .destructive) {
+                            Task {
+                                await model.logOutInstagram()
+                                dismiss()
+                            }
+                        }
+                    } else {
+                        Button("Connect Instagram") {
                             dismiss()
-                            model.beginLogin(model.isDemoMode ? .connect : .reconnect)
+                            model.beginLogin(.connect)
                         }
                     }
+                }
+
+                Section("Your data") {
+                    NavigationLink("How we handle your data") { PrivacyView() }
                 }
 
                 Section("Help") {

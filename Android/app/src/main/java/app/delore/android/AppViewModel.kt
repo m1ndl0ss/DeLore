@@ -402,6 +402,23 @@ class AppViewModel(
         _state.update { UiState(route = Route.HOME, tab = MainTab.SETTINGS, isDemoMode = false) }
     }
 
+    fun logOutInstagram() = viewModelScope.launch {
+        work.cancelInbox()
+        engine?.cancel()
+        work.releaseEngine()
+        env.disconnectInstagram()
+        reloadOverview()
+        reloadHistory()
+        _state.update {
+            it.copy(
+                sessionPresented = false,
+                progress = null,
+                sheet = null,
+                isDemoMode = false,
+            )
+        }
+    }
+
     fun pauseCleanup() = viewModelScope.launch { engine?.pause() }
     fun cancelCleanup() = viewModelScope.launch {
         val cleaned = engine?.cancel().orEmpty()
