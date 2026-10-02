@@ -291,6 +291,8 @@ struct UpgradeDock: View {
 private struct ActiveCleanupCard: View {
     let progress: CleanupProgress
     let open: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var shown = false
 
     var body: some View {
         Button(action: open) {
@@ -298,6 +300,8 @@ private struct ActiveCleanupCard: View {
                 HStack {
                     Text(progress.status == .running ? "Cleaning now" : "Cleanup paused")
                         .font(Type.medium(16))
+                        .contentTransition(.opacity)
+                        .animation(reduceMotion ? .none : .easeOut(duration: 0.22), value: progress.status == .running)
                     Spacer()
                     Text("Open")
                         .font(Type.medium(14))
@@ -309,11 +313,19 @@ private struct ActiveCleanupCard: View {
                      : "Resume. We won't unsend twice.")
                     .font(Type.body(14))
                     .foregroundStyle(Palette.secondaryInk)
+                    .contentTransition(.opacity)
+                    .animation(reduceMotion ? .none : .snappy, value: progress.remaining)
             }
             .padding(Metrics.cardInset)
             .elevated()
         }
         .buttonStyle(.plain)
+        .scaleEffect(shown ? 1 : 0.97)
+        .opacity(shown ? 1 : 0)
+        .onAppear {
+            guard !reduceMotion else { shown = true; return }
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { shown = true }
+        }
         .accessibilityHint("Opens the cleanup. Resume picks up without unsending twice.")
     }
 }

@@ -154,6 +154,7 @@ private struct MainTabs: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(AppModel.Tab.settings)
         }
+        .animation(.easeOut(duration: 0.2), value: model.tab)
         .toolbarBackground(.hidden, for: .tabBar)
         .toolbarColorScheme(.dark, for: .tabBar)
         .background { ClearHostingBackground() }

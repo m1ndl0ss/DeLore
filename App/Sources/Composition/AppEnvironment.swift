@@ -16,7 +16,7 @@ final class AppEnvironment {
     let connectivity: ConnectivityMonitor
     let publisherNotify: PublisherNotify
     let webBrowser: InstagramWebViewGateway
-    private let liveUnsender: UnsendService
+    private let liveUnsender: InstagramWebUnsendService
     private let demoUnsender = ReviewDemoUnsendService()
     private let dataDirectory: URL
 
@@ -108,6 +108,10 @@ final class AppEnvironment {
     var unsender: UnsendService { isDemoMode ? demoUnsender : liveUnsender }
     var isCleanupAvailable: Bool { hasLiveSession || isDemoMode }
     var ratePolicy: RatePolicy { isDemoMode ? .review : configuration.ratePolicy }
+
+    func releaseUnsendWorkingCaches() async {
+        await liveUnsender.releaseWorkingCaches()
+    }
 
     var hasLiveSession: Bool {
         (try? sessionVault.loadSession())?.hasLiveSession == true

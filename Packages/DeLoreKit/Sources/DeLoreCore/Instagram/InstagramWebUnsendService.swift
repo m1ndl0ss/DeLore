@@ -19,7 +19,7 @@ public struct InstagramWebUnsendService: UnsendService {
         ownerID: @escaping @Sendable () throws -> String?,
         presencePageLimit: Int = 8,
         resolvePageLimit: Int = 200,
-        resolvePageSize: Int = 50
+        resolvePageSize: Int = 100
     ) {
         self.client = client
         self.ownerID = ownerID
@@ -49,7 +49,10 @@ public struct InstagramWebUnsendService: UnsendService {
         }
 
         let response = try await client.send(graphqlUnsend(target, owner: owner, messageID: mid))
-        return try InstagramDeleteParse.outcome(from: response)
+        let outcome = try InstagramDeleteParse.outcome(from: response)
+        await midCache.forget(thread: thread, stored: stored, mid: mid)
+        await midCache.invalidatePages(thread: thread)
+        return outcome
     }
 
     public func presence(of target: CleanupTarget) async throws -> MessagePresence {
@@ -96,41 +99,62 @@ public struct InstagramWebUnsendService: UnsendService {
         if let cached = await midCache.lookup(thread: thread, stored: stored) {
             return cached
         }
+
+        // Resume deepest cursor. Only restart tip when that page sits *below* the target
+        // (true overshoot) — not when global oldest-of-all-speakers is ancient.
         var cursor = await midCache.scanCursor(thread: thread)
-        if let oldest = await midCache.oldest(thread: thread),
-           target.sentAt > oldest.addingTimeInterval(5) {
-            cursor = nil
-            await midCache.setScanCursor(thread: thread, cursor: nil)
-        }
+        var allowedTipRestart = cursor != nil
         var pages = 0
+        var networkPages = 0
         while pages < resolvePageLimit {
             let pageStart = cursor
-            let page = try await fetchInstagramThread(
-                client: client,
-                id: thread,
+            let (page, fromCache) = try await midCache.fetchPage(
+                thread: thread,
                 cursor: cursor,
-                limit: resolvePageSize
-            )
+                pageSize: resolvePageSize
+            ) {
+                try await fetchInstagramThread(
+                    client: client,
+                    id: thread,
+                    cursor: cursor,
+                    limit: resolvePageSize
+                )
+            }
             let items = page.thread?.items ?? []
             pages += 1
+            if !fromCache { networkPages += 1 }
+
             var pageOldest: Date?
+            var pageNewest: Date?
             for item in items {
-                if pageOldest == nil || item.sentAt < pageOldest! {
-                    pageOldest = item.sentAt
-                }
+                if pageOldest == nil || item.sentAt < pageOldest! { pageOldest = item.sentAt }
+                if pageNewest == nil || item.sentAt > pageNewest! { pageNewest = item.sentAt }
                 if let mid = item.webMessageID, mid.hasPrefix("mid.") {
                     await midCache.remember(thread: thread, itemID: item.itemID, mid: mid)
                 }
+            }
+
+            if allowedTipRestart,
+               pageStart != nil,
+               let pageNewest,
+               target.sentAt > pageNewest.addingTimeInterval(5) {
+                cursor = nil
+                await midCache.setScanCursor(thread: thread, cursor: nil)
+                allowedTipRestart = false
+                continue
+            }
+            allowedTipRestart = false
+
+            for item in items {
                 guard matches(stored, item: item) else { continue }
                 if let mid = item.webMessageID, mid.hasPrefix("mid.") {
+                    await midCache.setScanCursor(thread: thread, cursor: pageStart)
                     return (mid, item.itemID)
                 }
                 // Live item without mid.$ — retry later; do not stamp as permanently gone.
                 return nil
             }
-            if let pageOldest {
-                await midCache.noteOldest(thread: thread, date: pageOldest)
-            }
+
             guard page.thread?.hasOlder == true, let next = page.thread?.oldestCursor else {
                 await midCache.setScanCursor(thread: thread, cursor: nil)
                 await midCache.markGone(thread: thread, stored: stored)
@@ -143,8 +167,8 @@ public struct InstagramWebUnsendService: UnsendService {
             }
             cursor = next
             await midCache.setScanCursor(thread: thread, cursor: cursor)
-            if pages < resolvePageLimit {
-                try? await Task.sleep(nanoseconds: 800_000_000)
+            if !fromCache, pages < resolvePageLimit {
+                try? await Task.sleep(nanoseconds: 200_000_000)
             }
         }
         return nil
@@ -175,14 +199,20 @@ public struct InstagramWebUnsendService: UnsendService {
             destructive: true
         )
     }
+
+    /// Free cached thread pages after a job ends (mid map kept for a later resume).
+    public func releaseWorkingCaches() async {
+        await midCache.releaseWorkingCaches()
+    }
 }
 
 private actor MidCache {
     private var midByItem: [String: String] = [:]
     private var itemByMid: [String: String] = [:]
     private var scanCursorByThread: [String: String?] = [:]
-    private var oldestByThread: [String: Date] = [:]
     private var gone: Set<String> = []
+    private var pageCache: [String: InstagramWebFormat.ThreadPage] = [:]
+    private var pageCacheOrder: [String] = []
 
     func remember(thread: String, itemID: String, mid: String) {
         midByItem["\(thread)|\(itemID)"] = mid
@@ -192,6 +222,12 @@ private actor MidCache {
     func remember(thread: String, item: InstagramWebFormat.Item) {
         guard let mid = item.webMessageID, mid.hasPrefix("mid.") else { return }
         remember(thread: thread, itemID: item.itemID, mid: mid)
+    }
+
+    func forget(thread: String, stored: String, mid: String) {
+        midByItem.removeValue(forKey: "\(thread)|\(stored)")
+        midByItem.removeValue(forKey: "\(thread)|\(mid)")
+        itemByMid.removeValue(forKey: "\(thread)|\(mid)")
     }
 
     func lookup(thread: String, stored: String) -> (mid: String, itemID: String)? {
@@ -212,18 +248,6 @@ private actor MidCache {
         scanCursorByThread[thread] = cursor
     }
 
-    func oldest(thread: String) -> Date? {
-        oldestByThread[thread]
-    }
-
-    func noteOldest(thread: String, date: Date) {
-        if let prior = oldestByThread[thread] {
-            oldestByThread[thread] = min(prior, date)
-        } else {
-            oldestByThread[thread] = date
-        }
-    }
-
     func markGone(thread: String, stored: String) {
         gone.insert("\(thread)|\(stored)")
     }
@@ -234,5 +258,39 @@ private actor MidCache {
 
     func consumeGone(thread: String, stored: String) -> Bool {
         gone.remove("\(thread)|\(stored)") != nil
+    }
+
+    func fetchPage(
+        thread: String,
+        cursor: String?,
+        pageSize: Int,
+        load: () async throws -> InstagramWebFormat.ThreadPage
+    ) async throws -> (InstagramWebFormat.ThreadPage, Bool) {
+        let key = "\(thread)|\(cursor ?? "")|\(pageSize)"
+        if let cached = pageCache[key] {
+            return (cached, true)
+        }
+        let page = try await load()
+        pageCache[key] = page
+        pageCacheOrder.append(key)
+        while pageCacheOrder.count > 24 {
+            let old = pageCacheOrder.removeFirst()
+            pageCache.removeValue(forKey: old)
+        }
+        return (page, false)
+    }
+
+    func invalidatePages(thread: String) {
+        let prefix = "\(thread)|"
+        let stale = pageCacheOrder.filter { $0.hasPrefix(prefix) }
+        for key in stale {
+            pageCache.removeValue(forKey: key)
+            pageCacheOrder.removeAll { $0 == key }
+        }
+    }
+
+    func releaseWorkingCaches() {
+        pageCache.removeAll(keepingCapacity: false)
+        pageCacheOrder.removeAll(keepingCapacity: false)
     }
 }

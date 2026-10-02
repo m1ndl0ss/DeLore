@@ -283,9 +283,10 @@ class InstagramWebUnsendService(
     private val client: InstagramAPIClient,
     private val ownerID: () -> String?,
     private val presencePageLimit: Int = 8,
-    /** Hard cap so a pathological thread can't page forever. ~20 items/page → ~4000 msgs. */
+    /** Hard cap so a pathological thread can't page forever. */
     private val resolvePageLimit: Int = 200,
-    private val resolvePageSize: Int = 50,
+    /** Larger pages = fewer round-trips while resolving mid.$ for long chats. */
+    private val resolvePageSize: Int = 100,
 ) : UnsendService {
     /** thread|item_id → mid.$… resolved while paging a thread. */
     private val midCache = HashMap<String, String>()
@@ -297,7 +298,10 @@ class InstagramWebUnsendService(
      * so each later owned message doesn't re-walk the same tip.
      */
     private val scanCursor = HashMap<String, String?>()
-    private val scanOldestMillis = HashMap<String, Long>()
+    /** thread|cursor|pageSize → last resolve page (avoids re-fetching tip after a bad restart). */
+    private val resolvePageCache = object : LinkedHashMap<String, ThreadPage>(24, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ThreadPage>?): Boolean = size > 24
+    }
     /** thread|storedId marked gone when resolve paged past sentAt with no match. */
     private val goneHints = HashSet<String>()
 
@@ -325,9 +329,12 @@ class InstagramWebUnsendService(
             val response = client.send(graphqlUnsend(target, owner, mid))
             val outcome = InstagramDeleteParse.outcome(response)
             Log.i("Retract", "IG unsend ok graphql mid")
-            // Drop presence short-circuit so a later presence check re-reads the live thread.
+            // Drop only this message — keep sibling mids learned while paging the thread.
             midCache.remove(goneKey)
             midCache.remove("${target.ref.conversationID.rawValue}|$mid")
+            itemCache.remove("${target.ref.conversationID.rawValue}|$mid")
+            // Tip pages change after an unsend; never reuse them from cache in FGS / next resolve.
+            invalidateThreadPages(target.ref.conversationID.rawValue)
             outcome
         } catch (error: IntegrationError.UnexpectedResponse) {
             Log.w("Retract", "IG unsend skip graphql code=${error.code}")
@@ -380,34 +387,62 @@ class InstagramWebUnsendService(
         if (goneKey in goneHints) return null
         midCache["$thread|$stored"]?.let { mid ->
             val item = itemCache["$thread|$mid"] ?: stored.takeUnless { it.startsWith("mid.") }
-            if (item != null) return mid to item
+            if (item != null) {
+                Log.i("Retract", "IG resolve cache hit")
+                return mid to item
+            }
         }
 
-        // Resume from deepest page — unless cursor is already older than this target (overshoot).
-        val knownOldest = scanOldestMillis[thread]
+        // Resume deepest cursor. Only restart tip when that page sits *below* the target
+        // (true overshoot). Do NOT use global oldest-of-all-speakers — their old messages
+        // made every newer owned target look like an overshoot and re-walked the tip.
         var cursor = scanCursor[thread]
-        if (knownOldest != null && target.sentAtMillis > knownOldest + 5_000L) {
-            Log.i("Retract", "IG resolve restart tip (cursor past target)")
-            cursor = null
-            scanCursor[thread] = null
-        }
-
+        var allowedTipRestart = cursor != null
         var pages = 0
+        var networkPages = 0
         var midHits = 0
         val pageBudget = maxOf(1, resolvePageLimit)
         while (pages < pageBudget) {
             val pageStartCursor = cursor
-            val page = client.fetchDirectThread(thread, cursor, resolvePageSize)
+            val (page, fromCache) = fetchResolvePage(thread, cursor)
             pages += 1
+            if (!fromCache) networkPages += 1
+
             var pageOldest = Long.MAX_VALUE
+            var pageNewest = Long.MIN_VALUE
             for (item in page.items) {
-                if (item.sentAtMillis > 0) pageOldest = minOf(pageOldest, item.sentAtMillis)
+                if (item.sentAtMillis > 0) {
+                    pageOldest = minOf(pageOldest, item.sentAtMillis)
+                    pageNewest = maxOf(pageNewest, item.sentAtMillis)
+                }
                 rememberItem(thread, item)
                 if (item.webMessageID?.startsWith("mid.") == true) midHits += 1
+            }
+
+            // Resumed too deep for this (newer) target — restart tip once.
+            if (allowedTipRestart &&
+                pageStartCursor != null &&
+                pageNewest != Long.MIN_VALUE &&
+                target.sentAtMillis > pageNewest + 5_000L
+            ) {
+                Log.i("Retract", "IG resolve restart tip (resume below target)")
+                cursor = null
+                scanCursor[thread] = null
+                allowedTipRestart = false
+                continue
+            }
+            allowedTipRestart = false
+
+            for (item in page.items) {
                 if (!matches(stored, item)) continue
                 val mid = item.webMessageID?.takeIf { it.startsWith("mid.") }
                 if (mid != null) {
-                    Log.i("Retract", "IG resolve hit pages=$pages midHits=$midHits")
+                    // Stay on this page so older siblings in the newest-first queue re-scan it.
+                    scanCursor[thread] = pageStartCursor
+                    Log.i(
+                        "Retract",
+                        "IG resolve hit pages=$pages net=$networkPages midHits=$midHits cached=$fromCache",
+                    )
                     return mid to item.itemID
                 }
                 // Live item without mid.$ — retry later; do not stamp as permanently gone.
@@ -417,10 +452,7 @@ class InstagramWebUnsendService(
                 )
                 return null
             }
-            if (pageOldest != Long.MAX_VALUE) {
-                val prior = scanOldestMillis[thread]
-                scanOldestMillis[thread] = if (prior == null) pageOldest else minOf(prior, pageOldest)
-            }
+
             if (!page.hasOlder || page.oldestCursor == null) {
                 scanCursor[thread] = null
                 goneHints.add(goneKey)
@@ -439,16 +471,36 @@ class InstagramWebUnsendService(
             }
             cursor = page.oldestCursor
             scanCursor[thread] = cursor
-            if (pages < pageBudget) {
-                kotlinx.coroutines.delay(800)
+            if (!fromCache && pages < pageBudget) {
+                kotlinx.coroutines.delay(200)
             }
         }
         Log.w(
             "Retract",
-            "IG resolve miss stored=${stored.take(24)} pages=$pages midHits=$midHits " +
-                "scannedOldest=${scanOldestMillis[thread]} targetSent=${target.sentAtMillis}",
+            "IG resolve miss stored=${stored.take(24)} pages=$pages net=$networkPages midHits=$midHits " +
+                "targetSent=${target.sentAtMillis}",
         )
         return null
+    }
+
+    private suspend fun fetchResolvePage(thread: String, cursor: String?): Pair<ThreadPage, Boolean> {
+        val key = "$thread|${cursor.orEmpty()}|$resolvePageSize"
+        resolvePageCache[key]?.let { return it to true }
+        val page = client.fetchDirectThread(thread, cursor, resolvePageSize)
+        resolvePageCache[key] = page
+        return page to false
+    }
+
+    /** Drop cached pages for a thread (call after Unsend so tip isn't stale in background). */
+    fun invalidateThreadPages(thread: String) {
+        val prefix = "$thread|"
+        val stale = resolvePageCache.keys.filter { it.startsWith(prefix) }
+        stale.forEach { resolvePageCache.remove(it) }
+    }
+
+    /** Free page bodies when cleanup ends — mid map stays for a later resume. */
+    fun releaseWorkingCaches() {
+        resolvePageCache.clear()
     }
 
     private fun isOwned(target: CleanupTarget): Boolean {

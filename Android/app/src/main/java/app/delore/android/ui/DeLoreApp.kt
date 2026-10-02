@@ -7,10 +7,19 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.EaseInOut
+import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -293,10 +302,18 @@ private fun MainTabs(model: AppViewModel) {
         Box(Modifier.fillMaxSize()) {
             MeshBackground(Modifier.matchParentSize())
             Box(Modifier.fillMaxSize().padding(padding)) {
-                when (state.tab) {
-                    MainTab.UNSENDING -> HomeScreen(model)
-                    MainTab.ACTIVITY -> ActivityScreen(model)
-                    MainTab.SETTINGS -> AccountScreen(model)
+                AnimatedContent(
+                    targetState = state.tab,
+                    transitionSpec = {
+                        fadeIn(tween(220, easing = EaseOut)) togetherWith fadeOut(tween(160, easing = EaseOut))
+                    },
+                    label = "main-tab",
+                ) { tab ->
+                    when (tab) {
+                        MainTab.UNSENDING -> HomeScreen(model)
+                        MainTab.ACTIVITY -> ActivityScreen(model)
+                        MainTab.SETTINGS -> AccountScreen(model)
+                    }
                 }
             }
         }
@@ -805,7 +822,12 @@ private fun HomeScreen(model: AppViewModel) {
                 }
             }
             val progress = state.progress
-            if (progress != null && !progress.status.isFinished) {
+            AnimatedVisibility(
+                visible = progress != null && !progress.status.isFinished,
+                enter = fadeIn(tween(280, easing = EaseOut)) + slideInVertically(tween(280, easing = EaseOut)) { it / 6 },
+                exit = fadeOut(tween(180)) + slideOutVertically(tween(180)) { it / 8 },
+            ) {
+                val live = progress ?: return@AnimatedVisibility
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -816,13 +838,18 @@ private fun HomeScreen(model: AppViewModel) {
                     verticalArrangement = Arrangement.spacedBy(Spacing.s),
                 ) {
                     Row {
-                        Text(if (progress.status == JobStatus.Running) "Cleaning now" else "Cleanup paused", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (live.status == JobStatus.Running) "Cleaning now" else "Cleanup paused",
+                            color = Palette.ink(),
+                            fontFamily = Type.sans,
+                            fontWeight = FontWeight.SemiBold,
+                        )
                         Spacer(Modifier.weight(1f))
                         Text("Open", color = Palette.accent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                     }
-                    LoreProgressBar(progress.fraction)
+                    LoreProgressBar(live.fraction)
                     Text(
-                        if (progress.status == JobStatus.Running) "${inflect(progress.remaining, "message")} to go. You can exit — don't close Retract."
+                        if (live.status == JobStatus.Running) "${inflect(live.remaining, "message")} to go. You can exit — don't close Retract."
                         else "Resume. We won't unsend twice.",
                         color = Palette.secondaryInk(),
                         fontFamily = Type.sans,
@@ -2138,9 +2165,26 @@ private fun CleanupRunScreen(model: AppViewModel) {
                 Spacer(Modifier.weight(1f))
                 Text(copy.headline, color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, lineHeight = 34.sp)
                 Spacer(Modifier.height(Spacing.m))
+                val animatedProcessed by animateIntAsState(
+                    targetValue = progress.processed,
+                    animationSpec = tween(320, easing = EaseOut),
+                    label = "processed-count",
+                )
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text(NumberFormat.getIntegerInstance().format(progress.processed), color = Palette.ink(), fontFamily = Type.sans, fontSize = 48.sp, fontWeight = FontWeight.SemiBold, lineHeight = 52.sp)
-                    Text(" / ${NumberFormat.getIntegerInstance().format(progress.total)}", color = Palette.secondaryInk(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                    Text(
+                        NumberFormat.getIntegerInstance().format(animatedProcessed),
+                        color = Palette.ink(),
+                        fontFamily = Type.sans,
+                        fontSize = 48.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        lineHeight = 52.sp,
+                    )
+                    Text(
+                        " / ${NumberFormat.getIntegerInstance().format(progress.total)}",
+                        color = Palette.secondaryInk(),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                    )
                 }
                 LoreProgressBar(progress.fraction)
                 if (progress.remaining > 0) {

@@ -203,6 +203,7 @@ class InstagramWorkController(private val app: Application, private val env: App
         engine = null
         currentJobId = null
         _cleanup.value = null
+        env.releaseUnsendWorkingCaches()
         stopIfIdle()
     }
 
@@ -324,6 +325,7 @@ class InstagramWorkController(private val app: Application, private val env: App
             env.entitlements.recordFreeUsage(update.completed)
         }
         BillingLedger.clear(env.prefs, id)
+        env.releaseUnsendWorkingCaches()
         scope.launch {
             val cleaned = engine?.completedKeys().orEmpty()
             if (cleaned.isNotEmpty()) {

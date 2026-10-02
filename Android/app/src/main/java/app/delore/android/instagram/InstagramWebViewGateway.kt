@@ -244,7 +244,10 @@ class InstagramWebViewGateway {
         val onWww = withContext(Dispatchers.Main) {
             InstagramLoginPolicy.isWebSurface(view.url.orEmpty())
         }
-        if (onWww) harvestTokens(view)
+        // Skip JS harvest when tokens are already warm — it was firing after every thread page.
+        if (onWww && (fbDtsg.isNullOrBlank() || lsdToken.isNullOrBlank())) {
+            harvestTokens(view)
+        }
     }
 
     private suspend fun harvestTokens(view: WebView) {

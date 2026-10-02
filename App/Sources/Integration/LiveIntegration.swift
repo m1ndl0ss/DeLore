@@ -37,7 +37,7 @@ enum LiveIntegration {
         sessionVault: SessionVault,
         logger: AppLogger,
         webGateway: InstagramWebViewGateway? = nil
-    ) -> UnsendService {
+    ) -> InstagramWebUnsendService {
         let client = makeAPIClient(sessionVault: sessionVault, logger: logger, webGateway: webGateway)
         return InstagramWebUnsendService(
             client: client,

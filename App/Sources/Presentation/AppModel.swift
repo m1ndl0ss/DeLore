@@ -513,6 +513,7 @@ final class AppModel {
         isSessionPresented = false
         self.session = nil
         try? env.jobStore.discardActiveJob()
+        await env.releaseUnsendWorkingCaches()
         await reloadOverview()
         if thenChooseChats { sheet = .chooseChats }
         maybeShowTermsNotice()

@@ -84,6 +84,10 @@ class AppEnvironment(private val context: Context) {
     val unsender: app.delore.android.domain.UnsendService
         get() = if (isDemoMode) demoUnsender else liveUnsender
 
+    fun releaseUnsendWorkingCaches() {
+        liveUnsender.releaseWorkingCaches()
+    }
+
     val hasLibrary: Boolean get() = library.hasLibrary
     val hasLiveSession: Boolean get() = loadSession()?.hasLiveSession == true
     val isCleanupAvailable: Boolean get() = hasLiveSession || isDemoMode
