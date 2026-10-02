@@ -152,7 +152,7 @@ class InstagramWebViewGateway {
             }
             when (result) {
                 is NativeResult.Failed -> {
-                    Log.e("Retract", "IG webview fetch ${request.host}${request.path}: ${result.message}")
+                    Log.e("Retract", "IG webview fetch ${request.host}${request.path} failed")
                     throw IntegrationError.TransportFailure(request.destructive)
                 }
                 is NativeResult.Ok -> {
@@ -418,6 +418,10 @@ class InstagramWebViewGateway {
                 if (graphql) {
                   var dtsg = tok.dtsg;
                   var lsd = tok.lsd;
+                  if (!dtsg) {
+                    DeloreNative.fail(${JSONObject.quote(id)}, 'missing fb_dtsg');
+                    return;
+                  }
                   var docId = grab(html, /"direct_unsend_message"[\s\S]{0,240}?"(\d{10,})"/);
                   var params = new URLSearchParams();
                   var actor = userId;

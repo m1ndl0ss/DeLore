@@ -83,7 +83,7 @@ public struct InstagramWebUnsendService: UnsendService {
         return target.authorID == ParticipantID("ig:" + owner)
     }
 
-    private func matches(_ stored: String, item: InstagramWebFormat.Thread.Item) -> Bool {
+    private func matches(_ stored: String, item: InstagramWebFormat.Item) -> Bool {
         item.itemID == stored || item.webMessageID == stored
     }
 
@@ -125,7 +125,7 @@ public struct InstagramWebUnsendService: UnsendService {
                 if let mid = item.webMessageID, mid.hasPrefix("mid.") {
                     return (mid, item.itemID)
                 }
-                await midCache.markGone(thread: thread, stored: stored)
+                // Live item without mid.$ — retry later; do not stamp as permanently gone.
                 return nil
             }
             if let pageOldest {
@@ -144,7 +144,7 @@ public struct InstagramWebUnsendService: UnsendService {
             cursor = next
             await midCache.setScanCursor(thread: thread, cursor: cursor)
             if pages < resolvePageLimit {
-                try? await Task.sleep(nanoseconds: 200_000_000)
+                try? await Task.sleep(nanoseconds: 800_000_000)
             }
         }
         return nil
@@ -189,7 +189,7 @@ private actor MidCache {
         itemByMid["\(thread)|\(mid)"] = itemID
     }
 
-    func remember(thread: String, item: InstagramWebFormat.Thread.Item) {
+    func remember(thread: String, item: InstagramWebFormat.Item) {
         guard let mid = item.webMessageID, mid.hasPrefix("mid.") else { return }
         remember(thread: thread, itemID: item.itemID, mid: mid)
     }

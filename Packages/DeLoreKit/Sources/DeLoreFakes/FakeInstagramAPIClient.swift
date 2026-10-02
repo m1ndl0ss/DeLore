@@ -127,16 +127,18 @@ public final class FakeInstagramAPIClient: InstagramAPIClient, @unchecked Sendab
             guard let tIndex = threads.firstIndex(where: { $0.id == threadID }) else {
                 return json(200, ["message": "Item not found", "status": "fail"])
             }
-            guard let iIndex = threads[tIndex].items.firstIndex(where: { $0.id == itemID }) else {
+            guard let iIndex = threads[tIndex].items.firstIndex(where: {
+                $0.id == itemID || "mid.\($0.id)" == itemID || "mid.$\($0.id)" == itemID
+            }) else {
                 return json(200, ["message": "Item not found", "status": "fail"])
             }
             let item = threads[tIndex].items[iIndex]
             if item.userID != ownerID {
-                return json(200, ["status": "ok"])
+                return json(200, ["data": ["direct_unsend_message": false], "status": "ok"])
             }
             threads[tIndex].items.remove(at: iIndex)
-            deletedIDs.append(itemID)
-            return json(200, ["status": "ok"])
+            deletedIDs.append(item.id)
+            return json(200, ["data": ["direct_unsend_message": true], "status": "ok"])
         }
     }
 
@@ -233,6 +235,7 @@ public final class FakeInstagramAPIClient: InstagramAPIClient, @unchecked Sendab
     private func itemJSON(_ item: Item) -> [String: Any] {
         var json: [String: Any] = [
             "item_id": item.id,
+            "message_id": "mid.$\(item.id)",
             "user_id": item.userID,
             "timestamp": item.timestampMicros,
             "item_type": item.type,

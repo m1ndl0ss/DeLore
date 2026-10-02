@@ -186,6 +186,7 @@ class InstagramWorkController(private val app: Application, private val env: App
     }
 
     fun holdEngine(loaded: CleanupEngine) {
+        attachBrowser()
         engine = loaded
         finishHandled = false
         currentJobId = loaded.jobID
@@ -206,6 +207,7 @@ class InstagramWorkController(private val app: Application, private val env: App
     }
 
     fun resumePersistedWork(): Job = scope.launch {
+        if (env.hasLiveSession) attachBrowser()
         mutex.withLock {
             if (!resumeCleanupLocked()) resumeInboxLocked()
         }

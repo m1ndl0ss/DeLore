@@ -21,6 +21,12 @@ Copy the worker URL into app config:
 
 If URL/secret are empty, the apps skip notify (no crash, no delay on UI).
 
+## Security note
+
+`NOTIFY_SECRET` ships inside the app binary when notify is enabled. Treat it as an ops gate, not
+a user credential: rotate via Wrangler if leaked, keep the worker rate-limited, and leave URL/secret
+empty in public builds until you want connect/purchase emails. Chat contents are never sent.
+
 ## Body
 
 ```json

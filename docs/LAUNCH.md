@@ -10,6 +10,12 @@ Legal source of truth: `docs/legal/` → host before submit:
 
 Ask before editing the live site. Until those URLs return 200, store submission fails.
 
+### Do you need a website?
+
+**Not a marketing site.** Apple and Google require a *public HTTPS privacy policy URL* on the listing. Play and many regions also expect public Terms. In-app Terms/Privacy are not enough for the console forms — reviewers and users must open the URL without installing the app.
+
+Minimum: host the two static files from `docs/legal/` at the URLs above (any static host is fine). No landing page, blog, or product site required.
+
 **Reviewer paste text:** [`docs/REVIEW_NOTES.md`](REVIEW_NOTES.md)  
 **Unsend engineering:** [`docs/instagram-unsend.md`](instagram-unsend.md)  
 **Publisher notify (optional ops):** [`workers/notify/README.md`](../workers/notify/README.md)

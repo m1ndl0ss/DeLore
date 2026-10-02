@@ -22,8 +22,11 @@ final class ReviewDemoTests: XCTestCase {
             sentAt: Date(),
             kind: .text
         )
-        XCTAssertEqual(try await unsender.unsend(target), .unsent)
-        XCTAssertEqual(try await unsender.unsend(target), .alreadyGone)
-        XCTAssertEqual(try await unsender.presence(of: target), .gone)
+        let first = try await unsender.unsend(target)
+        XCTAssertEqual(first, .unsent)
+        let second = try await unsender.unsend(target)
+        XCTAssertEqual(second, .alreadyGone)
+        let presence = try await unsender.presence(of: target)
+        XCTAssertEqual(presence, .gone)
     }
 }

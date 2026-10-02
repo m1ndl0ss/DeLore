@@ -27,7 +27,7 @@ final class InstagramWebIntegrationTests: XCTestCase {
             ids += page.map(\.ref.messageID)
         }
         XCTAssertEqual(Set(ids).count, ids.count)
-        XCTAssertEqual(ids, ["m1", "m3", "m4"])
+        XCTAssertEqual(ids, ["mid.$m1", "mid.$m3", "mid.$m4"])
 
         let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil)
         while let url = enumerator?.nextObject() as? URL {
@@ -143,7 +143,8 @@ final class InstagramWebIntegrationTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? IntegrationError, .rateLimited(retryAfter: nil))
         }
-        fake.script(.verificationRequired, onCall: 2)
+        // Call 1 was the resolve thread GET. Script the next GraphQL attempt.
+        fake.script(.verificationRequired, onCall: 3)
         do {
             _ = try await service.unsend(target)
             XCTFail("expected verification")
@@ -285,7 +286,7 @@ final class InstagramWebIntegrationTests: XCTestCase {
 
     func testMalformedInboxStopsSafely() async throws {
         let fake = FakeInstagramAPIClient.sampleInbox()
-        fake.script(.malformed, onCall: 1)
+        fake.setPersistent(.malformed)
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         do {
@@ -316,7 +317,7 @@ final class InstagramWebIntegrationTests: XCTestCase {
         let sent = try XCTUnwrap(transport.last)
         XCTAssertEqual(sent.url.host, "www.instagram.com")
         XCTAssertEqual(sent.url.scheme, "https")
-        XCTAssertTrue(sent.url.path.contains("/api/v1/direct_v2/inbox/"))
+        XCTAssertTrue(sent.url.path.contains("/api/v1/direct_v2/inbox"))
         var dumpText = ""
         dump(sent, to: &dumpText)
         XCTAssertFalse(dumpText.contains("cookie-value-xyz"))
@@ -369,7 +370,7 @@ final class InstagramWebIntegrationTests: XCTestCase {
         ))
         let sent = try XCTUnwrap(transport.last)
         XCTAssertEqual(sent.url.host, "i.instagram.com")
-        XCTAssertTrue(sent.url.path.contains("/items/2/delete/"))
+        XCTAssertTrue(sent.url.path.contains("/items/2/delete"))
         XCTAssertEqual(sent.method, .post)
         XCTAssertNotNil(sent.body)
     }

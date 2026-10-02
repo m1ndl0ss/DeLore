@@ -50,7 +50,10 @@ public enum InstagramResponseClassifier {
         }
         let status = (object["status"] as? String)?.lowercased() ?? ""
         let envelope = envelopeText(object)
-        if envelope.contains("checkpoint_required") || envelope.contains("challenge_required") {
+        if boolish(object["checkpoint_required"])
+            || boolish(object["challenge_required"])
+            || envelope.contains("checkpoint_required")
+            || envelope.contains("challenge_required") {
             return .verificationRequired
         }
         if envelope.contains("login_required") || envelope.contains("not_logged_in") {

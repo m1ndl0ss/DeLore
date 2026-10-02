@@ -31,9 +31,8 @@ That path returns `1404006` on the website session and navigates the WebView ont
 
 Instagram’s edge often hangs or drops the app HTTP stack even when Chromium in the
 same process can load the site. Inbox and Unsend therefore run `fetch()` inside the
-already-authenticated WebView (`InstagramWebViewGateway` on Android; the iOS client
-uses the website session the same way). Keep the WebView on **www** for GraphQL and
-thread GETs.
+already-authenticated WebView (`InstagramWebViewGateway` on Android and iOS). Keep the
+WebView on **www** for GraphQL and thread GETs.
 
 ## Finding messages
 

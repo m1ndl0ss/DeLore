@@ -15,6 +15,7 @@ final class AppEnvironment {
     let entitlements: EntitlementManager
     let connectivity: ConnectivityMonitor
     let publisherNotify: PublisherNotify
+    let webBrowser: InstagramWebViewGateway
     private let liveUnsender: UnsendService
     private let demoUnsender = ReviewDemoUnsendService()
     private let dataDirectory: URL
@@ -57,7 +58,13 @@ final class AppEnvironment {
             logger.error("history setup failed: \(error.safeDescription)")
             history = InMemoryCleanupHistoryStore()
         }
-        liveUnsender = LiveIntegration.makeUnsendService(sessionVault: sessionVault, logger: logger)
+        let browser = InstagramWebViewGateway(sessionVault: sessionVault, logger: logger)
+        webBrowser = browser
+        liveUnsender = LiveIntegration.makeUnsendService(
+            sessionVault: sessionVault,
+            logger: logger,
+            webGateway: browser
+        )
         connectivity = ConnectivityMonitor()
 
         let vault = sessionVault
@@ -135,7 +142,13 @@ final class AppEnvironment {
         }
         let resume = inboxListCursor
         let cursorKey = Self.listCursorKey
-        let sync = LiveIntegration.makeInboxSync(sessionVault: sessionVault, library: library, logger: logger)
+        webBrowser.attachIfNeeded()
+        let sync = LiveIntegration.makeInboxSync(
+            sessionVault: sessionVault,
+            library: library,
+            logger: logger,
+            webGateway: webBrowser
+        )
         let overview = try await Task.detached(priority: .userInitiated) {
             try await sync.list(session: session, resumeCursor: resume, onProgress: onProgress) { cursor in
                 if let cursor, !cursor.isEmpty {
@@ -158,7 +171,13 @@ final class AppEnvironment {
         guard let session = try sessionVault.loadSession(), session.hasLiveSession else {
             throw IntegrationError.sessionExpired
         }
-        let sync = LiveIntegration.makeInboxSync(sessionVault: sessionVault, library: library, logger: logger)
+        webBrowser.attachIfNeeded()
+        let sync = LiveIntegration.makeInboxSync(
+            sessionVault: sessionVault,
+            library: library,
+            logger: logger,
+            webGateway: webBrowser
+        )
         let overview = try await Task.detached(priority: .userInitiated) {
             try await sync.load(
                 session: session,
@@ -289,6 +308,7 @@ final class AppEnvironment {
 
     /// Signs out of Instagram on this phone. Keeps Pro, passes, terms acceptance, and onboarding.
     func disconnectInstagram() throws {
+        webBrowser.destroy()
         try sessionVault.clear()
         try jobStore.wipe()
         try library.wipe()
@@ -303,6 +323,7 @@ final class AppEnvironment {
     /// Disconnects and removes everything sensitive. Purchases (unused passes, free usage)
     /// are kept because they belong to the user, and aren't sensitive.
     func eraseAllData() throws {
+        webBrowser.destroy()
         let eraser = LocalDataEraser(
             secrets: secrets,
             jobs: jobStore,

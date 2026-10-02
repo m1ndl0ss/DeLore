@@ -143,12 +143,22 @@ public struct InstagramHTTPClient: InstagramAPIClient {
 
         await warmupIfNeeded(session: session, csrf: csrf)
 
-        var headers = apiHeaders(session: session, csrf: csrf, host: request.host)
+        let isGraphQL = request.path.contains("graphql")
+        if isGraphQL {
+            guard let dtsg = wwwClaim.fbDtsg(), !dtsg.isEmpty else {
+                logger.debug("graphql blocked: missing fb_dtsg")
+                throw IntegrationError.unavailable
+            }
+        }
+
+        var headers = isGraphQL
+            ? relayHeaders(session: session, csrf: csrf)
+            : apiHeaders(session: session, csrf: csrf, host: request.host)
         if request.method == .post {
             headers["Content-Type"] = Sensitive("application/x-www-form-urlencoded; charset=UTF-8")
         }
 
-        let body = graphqlForm(request, csrf: csrf)
+        let body = try graphqlForm(request, csrf: csrf)
 
         let httpRequest = HTTPRequest(
             method: request.method,
@@ -170,6 +180,29 @@ public struct InstagramHTTPClient: InstagramAPIClient {
         wwwClaim.update(from: response)
         try InstagramResponseClassifier.throwIfNeeded(response, destructive: request.destructive)
         return response
+    }
+
+    /// Relay Modern headers for GraphQL Unsend. Extra IG ajax headers
+    /// (`X-Requested-With`, `ig-u-ds-user-id`, `X-IG-WWW-Claim`) make Meta return 1357001.
+    private func relayHeaders(session: InstagramWebSession, csrf: String) -> [String: Sensitive<String>] {
+        var headers: [String: Sensitive<String>] = [
+            "Cookie": session.cookieHeader(),
+            "X-CSRFToken": Sensitive(csrf),
+            "X-IG-App-ID": Sensitive(InstagramWebConstants.webAppID),
+            "X-FB-Friendly-Name": Sensitive("direct_unsend_message"),
+            "Referer": Sensitive(InstagramWebConstants.inboxReferer.absoluteString),
+            "Origin": Sensitive(InstagramWebConstants.baseURL.absoluteString),
+            "Accept": Sensitive("*/*"),
+            "Accept-Language": Sensitive("en-US,en;q=0.9"),
+            "User-Agent": Sensitive(InstagramWebConstants.safariUserAgent),
+            "Sec-Fetch-Dest": Sensitive("empty"),
+            "Sec-Fetch-Mode": Sensitive("cors"),
+            "Sec-Fetch-Site": Sensitive("same-origin"),
+        ]
+        if let lsd = wwwClaim.lsdToken(), !lsd.isEmpty {
+            headers["X-FB-LSD"] = Sensitive(lsd)
+        }
+        return headers
     }
 
     private func apiHeaders(session: InstagramWebSession, csrf: String, host: String) -> [String: Sensitive<String>] {
@@ -229,7 +262,7 @@ public struct InstagramHTTPClient: InstagramAPIClient {
 
     /// Only relative paths on Instagram's own HTTPS hosts. Absolute URLs are rejected so a
     /// malformed path cannot steer the client at another host.
-    static func instagramURL(path: String, query: [String: String], host: String = InstagramWebConstants.wwwHost) throws -> URL {
+    public static func instagramURL(path: String, query: [String: String], host: String = InstagramWebConstants.wwwHost) throws -> URL {
         let path = path.hasPrefix("/") ? path : "/" + path
         guard !path.contains("://"), !path.hasPrefix("//") else { throw NetworkError.invalidResponse }
         let requested = host.lowercased()
@@ -254,7 +287,7 @@ public struct InstagramHTTPClient: InstagramAPIClient {
         return url
     }
 
-    static func encodeForm(_ fields: [String: String]) -> Data {
+    public static func encodeForm(_ fields: [String: String]) -> Data {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._*")
         let encoded = fields.map { key, value in
@@ -274,14 +307,15 @@ public struct InstagramHTTPClient: InstagramAPIClient {
         return Sensitive(encodeForm(fields))
     }
 
-    private func graphqlForm(_ request: InstagramAPIRequest, csrf: String) -> Sensitive<Data>? {
+    private func graphqlForm(_ request: InstagramAPIRequest, csrf: String) throws -> Sensitive<Data>? {
         if let body = request.body { return body }
         var form = request.form
         if request.path.contains("graphql") {
-            if form["fb_dtsg"] == nil, let dtsg = wwwClaim.fbDtsg(), !dtsg.isEmpty {
-                form["fb_dtsg"] = dtsg
-                form["jazoest"] = "2" + String(dtsg.unicodeScalars.reduce(0) { $0 + Int($1.value) })
+            guard let dtsg = wwwClaim.fbDtsg(), !dtsg.isEmpty else {
+                throw IntegrationError.unavailable
             }
+            form["fb_dtsg"] = dtsg
+            form["jazoest"] = "2" + String(dtsg.unicodeScalars.reduce(0) { $0 + Int($1.value) })
             if form["lsd"] == nil, let lsd = wwwClaim.lsdToken(), !lsd.isEmpty {
                 form["lsd"] = lsd
             }

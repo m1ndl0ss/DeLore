@@ -1753,8 +1753,21 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
         selected = product.id
         scope.launch {
             when (model.entitlements.purchase(host, product)) {
-                PurchaseOutcome.PURCHASED -> onClose()
-                PurchaseOutcome.PENDING -> notice = "Waiting for approval."
+                PurchaseOutcome.PURCHASED -> {
+                    isPro = true
+                    untilMillis = model.entitlements.state.proRenewsOrExpiresAt
+                    onClose()
+                }
+                PurchaseOutcome.PENDING -> {
+                    model.entitlements.refresh()
+                    if (model.entitlements.isPro) {
+                        isPro = true
+                        untilMillis = model.entitlements.state.proRenewsOrExpiresAt
+                        onClose()
+                    } else {
+                        notice = "Waiting for approval."
+                    }
+                }
                 PurchaseOutcome.CANCELLED -> Unit
                 null -> notice = "That didn't go through. You haven't been charged."
             }

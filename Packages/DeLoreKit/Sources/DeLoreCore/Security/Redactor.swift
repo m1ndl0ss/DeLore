@@ -10,6 +10,7 @@ public enum Redactor {
             "sessionid", "session_id", "session", "csrftoken", "csrf", "ds_user_id", "ds_user", "mid", "ig_did",
             "rur", "token", "access_token", "refresh_token", "auth", "authorization", "cookie", "set-cookie",
             "password", "passwd", "pwd", "secret", "api_key", "apikey", "x-ig-www-claim", "x-csrftoken",
+            "fb_dtsg", "dtsg", "lsd", "jazoest", "x-retract-secret", "notify_secret",
             "user_id", "userid", "thread_id", "item_id", "message_id", "username"
         ].map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
         return try? NSRegularExpression(

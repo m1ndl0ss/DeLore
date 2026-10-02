@@ -121,6 +121,7 @@ final class AppModel {
             isSessionPresented = true
             switch job.status {
             case .ready, .paused(.interrupted), .paused(.appInBackground):
+                env.webBrowser.attachIfNeeded()
                 await session?.resume()
             default:
                 break
@@ -496,6 +497,7 @@ final class AppModel {
         CleanupBilling.record(billing, for: prepared.job.id)
 
         do {
+            env.webBrowser.attachIfNeeded()
             guard let engine = try CleanupEngine.loadActive(dependencies: env.engineDependencies()) else { return }
             attachSession(CleanupSessionModel(engine: engine, initial: await engine.progress(), entitlements: entitlements))
             sheet = nil

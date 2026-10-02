@@ -9,6 +9,7 @@ struct RootView: View {
     var body: some View {
         @Bindable var model = model
         ZStack {
+            InstagramBrowserHost(gateway: model.env.webBrowser)
             switch model.route {
             case .launching:
                 SplashView()
@@ -109,6 +110,21 @@ struct RootView: View {
 
     private var importBinding: Binding<ImportModel?> {
         Binding(get: { model.importModel }, set: { if $0 == nil { model.dismissImport() } })
+    }
+}
+
+private struct InstagramBrowserHost: UIViewRepresentable {
+    let gateway: InstagramWebViewGateway
+
+    func makeUIView(context: Context) -> UIView {
+        let host = gateway.hostView
+        host.removeFromSuperview()
+        gateway.attachIfNeeded()
+        return host
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        gateway.attachIfNeeded()
     }
 }
 

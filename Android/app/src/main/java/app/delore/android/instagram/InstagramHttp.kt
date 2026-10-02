@@ -100,25 +100,37 @@ class InstagramHTTPClient(
         val csrf = session.csrfToken?.takeIf { it.isNotEmpty() } ?: throw IntegrationError.SessionExpired
         warmupIfNeeded(session, csrf)
         val url = instagramUrl(request.path, request.query, request.host)
+        val graphql = request.path.contains("graphql")
+        if (graphql && fbDtsg.isNullOrBlank()) {
+            throw IntegrationError.Unavailable
+        }
         val sameSite = request.host == InstagramWebConstants.API_HOST
         val builder = Request.Builder()
             .url(url)
             .header("Cookie", session.cookieHeader())
             .header("X-CSRFToken", csrf)
             .header("X-IG-App-ID", InstagramWebConstants.WEB_APP_ID)
-            .header("X-IG-WWW-Claim", wwwClaim)
-            .header("X-Requested-With", "XMLHttpRequest")
             .header("Referer", InstagramWebConstants.INBOX_REFERER)
             .header("Origin", InstagramWebConstants.BASE)
-            .header("Accept", "application/json")
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("User-Agent", InstagramWebConstants.CHROME_USER_AGENT)
-            .header("ig-u-ds-user-id", session.userID)
-            .header("ig-intended-user-id", session.userID)
             .header("Sec-Fetch-Dest", "empty")
             .header("Sec-Fetch-Mode", "cors")
             .header("Sec-Fetch-Site", if (sameSite) "same-site" else "same-origin")
-        asbdID?.let { builder.header("X-ASBD-ID", it) }
+        if (graphql) {
+            builder
+                .header("Accept", "*/*")
+                .header("X-FB-Friendly-Name", "direct_unsend_message")
+            lsdToken?.takeIf { it.isNotBlank() }?.let { builder.header("X-FB-LSD", it) }
+        } else {
+            builder
+                .header("Accept", "application/json")
+                .header("X-IG-WWW-Claim", wwwClaim)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .header("ig-u-ds-user-id", session.userID)
+                .header("ig-intended-user-id", session.userID)
+            asbdID?.let { builder.header("X-ASBD-ID", it) }
+        }
         when (request.method) {
             HTTPMethod.GET -> builder.get()
             HTTPMethod.POST -> {
@@ -126,11 +138,10 @@ class InstagramHTTPClient(
                     builder.post("".toRequestBody(null))
                 } else {
                     val fields = signedForm(request.form, csrf, request.destructive).toMutableMap()
-                    if (request.path.contains("graphql")) {
-                        fbDtsg?.takeIf { it.isNotBlank() }?.let { token ->
-                            fields.putIfAbsent("fb_dtsg", token)
-                            fields.putIfAbsent("jazoest", InstagramWebBootstrap.jazoest(token))
-                        }
+                    if (graphql) {
+                        val token = fbDtsg?.takeIf { it.isNotBlank() } ?: throw IntegrationError.Unavailable
+                        fields.putIfAbsent("fb_dtsg", token)
+                        fields.putIfAbsent("jazoest", InstagramWebBootstrap.jazoest(token))
                         lsdToken?.takeIf { it.isNotBlank() }?.let { fields.putIfAbsent("lsd", it) }
                     }
                     builder.post(InstagramForm.encode(fields).toRequestBody(InstagramForm.mediaType()))
@@ -399,12 +410,11 @@ class InstagramWebUnsendService(
                     Log.i("Retract", "IG resolve hit pages=$pages midHits=$midHits")
                     return mid to item.itemID
                 }
-                // Matched live item but no mid.$ — mark gone; GraphQL can't run, REST is dead.
+                // Live item without mid.$ — retry later; do not stamp as permanently gone.
                 Log.w(
                     "Retract",
                     "IG resolve target without mid pages=$pages midHits=$midHits item=${item.itemID.take(24)}",
                 )
-                goneHints.add(goneKey)
                 return null
             }
             if (pageOldest != Long.MAX_VALUE) {
@@ -430,7 +440,7 @@ class InstagramWebUnsendService(
             cursor = page.oldestCursor
             scanCursor[thread] = cursor
             if (pages < pageBudget) {
-                kotlinx.coroutines.delay(200)
+                kotlinx.coroutines.delay(800)
             }
         }
         Log.w(

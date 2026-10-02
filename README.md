@@ -94,14 +94,11 @@ The UI never mentions cookies, endpoints, or HTTP. Reconnect is "Reconnect Insta
 
 Full write-up: [`docs/instagram-unsend.md`](docs/instagram-unsend.md). Short version:
 
-1. Inbox and threads are read with Instagram’s website session (WebView `fetch` on Android,
-   because Instagram’s edge often drops the app HTTP stack).
-2. Unsend tries GraphQL `direct_unsend_message` on `www.instagram.com` first (Relay-only
-   headers and a real `fb_dtsg`). Extra Instagram API headers make Meta treat the session
-   as logged out.
-3. If GraphQL doesn’t confirm, empty-body POST delete on `i.instagram.com` from the same
-   origin. www has no delete route; a `_uid` form body returns 4415001.
-4. A message is marked unsent only when Instagram confirms it. Unexpected replies fail that
+1. Inbox and threads are read with Instagram’s website session (WebView `fetch` on Android and
+   iOS; URLSession/OkHttp alone is often dropped by Instagram’s edge).
+2. Unsend uses GraphQL `direct_unsend_message` on `www.instagram.com` only (Relay-only headers
+   and a real `fb_dtsg` / mid.`$…`). Numeric REST delete returns 1404006 and is not used.
+3. A message is marked unsent only when Instagram confirms it. Unexpected replies fail that
    item and the job continues. Session, checkpoint, and rate-limit still pause.
 
 Desktop Chrome user-agent only. No Instagram-app spoofing. No checkpoint bypass.
@@ -223,11 +220,12 @@ See [`docs/LAUNCH.md`](docs/LAUNCH.md) for store copy, IAP IDs, and review notes
 1. Set `DEVELOPMENT_TEAM` and confirm the bundle ID. Register the app in App Store Connect.
 2. Create the subscription group and products (`app.delore.pro.monthly`, `app.delore.pro.yearly`).
    Do not submit `app.delore.cleanup.single`. Add pricing, localizations and review screenshots.
-3. Host `docs/legal/privacy.html` (and terms) on https://kandalintsev.com/retract/ so App Store
-   Connect has a public privacy URL. In-app Support is the FAQ; unsatisfied users get
-   contact@kandalintsev.com. Terms stay in-app.
-4. Fill in the App Privacy "nutrition label": *Data Not Collected* by Retract. Instagram receives
-   the same traffic the user would generate by unsending in a browser.
+3. Host `docs/legal/privacy.html` and `terms.html` on https://kandalintsev.com/retract/ so App Store
+   Connect / Play have public legal URLs (in-app copy alone is not enough for the console). Support
+   email: contact@kandalintsev.com.
+4. Fill in the App Privacy "nutrition label": declare Instagram username (+ promo on purchase) for
+   App Functionality — emailed to the publisher. Do **not** claim Data Not Collected. Chat text is
+   not collected. Instagram receives the same traffic as unsending in a browser.
 5. Archive with the Release scheme, upload, and test purchases in Sandbox/TestFlight (Staging).
 6. Optional: localize `Localizable.xcstrings` (it's populated from source at build time).
 
@@ -236,9 +234,10 @@ See [`docs/LAUNCH.md`](docs/LAUNCH.md) for store copy, IAP IDs, and review notes
 1. Open `Android/` in Android Studio. Keep `applicationId` `app.delore.android` unless you are
    ready to migrate.
 2. Create `app.delore.pro.monthly` and `app.delore.pro.yearly` in Play Console at $19.99 / $59.99.
-3. Host the same privacy HTML and paste the URL in Play Console. Support email:
-   contact@kandalintsev.com. The app FAQ and Terms are in-app.
-4. Data safety form: data not collected by Retract. Instagram receives the same website traffic as unsending in Chrome.
+3. Host the same privacy + terms HTML and paste the URLs in Play Console. Support email:
+   contact@kandalintsev.com. The app FAQ and Terms are also in-app.
+4. Data safety form: declare username (+ promo) as above — not “Data not collected.” Instagram
+   receives the same website traffic as unsending in Chrome.
 5. Upload an AAB from `assembleRelease`, complete content rating, and test license testers.
 
 Branding: Retract isn't affiliated with Instagram or Meta. "Instagram" is only used descriptively,

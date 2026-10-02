@@ -15,10 +15,16 @@ import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 data class StoreProduct(
     val id: String,
@@ -68,6 +74,8 @@ class EntitlementManager(
 
     private var billing: BillingClient? = null
     private var details: Map<String, ProductDetails> = emptyMap()
+    private val purchaseWaiter = AtomicReference<CompletableDeferred<PurchaseOutcome>?>(null)
+    private val setupMutex = Mutex()
 
     fun redeemPromo(raw: String): PromoRedeemResult {
         val result = promo.redeem(raw)
@@ -134,6 +142,8 @@ class EntitlementManager(
         if (isPurchasing) return null
         val target = checkoutProduct(forDisplay = product) ?: return null
         isPurchasing = true
+        val waiter = CompletableDeferred<PurchaseOutcome>()
+        purchaseWaiter.set(waiter)
         return try {
             ensureClient()
             val detail = details[target.id] ?: return null.also { storeUnavailable = true }
@@ -149,11 +159,20 @@ class EntitlementManager(
                 )
                 .build()
             val result = billing?.launchBillingFlow(activity, params)
-            if (result?.responseCode == BillingClient.BillingResponseCode.OK) PurchaseOutcome.PENDING else null
+            if (result?.responseCode != BillingClient.BillingResponseCode.OK) {
+                purchaseWaiter.compareAndSet(waiter, null)
+                return null
+            }
+            withTimeoutOrNull(120_000) { waiter.await() } ?: run {
+                // Flow launched but no callback yet — poll once for a completed purchase.
+                refresh()
+                if (isPro) PurchaseOutcome.PURCHASED else PurchaseOutcome.PENDING
+            }
         } catch (_: Exception) {
             storeUnavailable = true
             null
         } finally {
+            purchaseWaiter.compareAndSet(waiter, null)
             isPurchasing = false
         }
     }
@@ -178,23 +197,58 @@ class EntitlementManager(
 
     private suspend fun ensureClient() {
         if (billing?.isReady == true) return
-        withContext(Dispatchers.IO) {
-            suspendCancellableCoroutine { cont ->
-                val client = BillingClient.newBuilder(context)
-                    .setListener { _, purchases ->
-                        purchases?.forEach { handlePurchase(it) }
-                    }
-                    .enablePendingPurchases(
-                        PendingPurchasesParams.newBuilder().enableOneTimeProducts().build(),
-                    )
-                    .build()
-                billing = client
-                client.startConnection(object : BillingClientStateListener {
-                    override fun onBillingSetupFinished(result: BillingResult) {
-                        if (cont.isActive) cont.resume(Unit)
-                    }
-                    override fun onBillingServiceDisconnected() = Unit
-                })
+        setupMutex.withLock {
+            if (billing?.isReady == true) return
+            withContext(Dispatchers.IO) {
+                suspendCancellableCoroutine { cont ->
+                    val client = BillingClient.newBuilder(context)
+                        .setListener { result, purchases ->
+                            when (result.responseCode) {
+                                BillingClient.BillingResponseCode.OK -> {
+                                    var bought = false
+                                    purchases?.forEach {
+                                        handlePurchase(it)
+                                        if (it.purchaseState == Purchase.PurchaseState.PURCHASED &&
+                                            it.products.any { id -> id in subscriptionIds }
+                                        ) {
+                                            bought = true
+                                        }
+                                    }
+                                    purchaseWaiter.getAndSet(null)?.complete(
+                                        if (bought || paidFromStore) PurchaseOutcome.PURCHASED else PurchaseOutcome.PENDING,
+                                    )
+                                }
+                                BillingClient.BillingResponseCode.USER_CANCELED -> {
+                                    purchaseWaiter.getAndSet(null)?.complete(PurchaseOutcome.CANCELLED)
+                                }
+                                BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> {
+                                    purchases?.forEach { handlePurchase(it) }
+                                    purchaseWaiter.getAndSet(null)?.complete(PurchaseOutcome.PURCHASED)
+                                }
+                                else -> {
+                                    purchaseWaiter.getAndSet(null)?.complete(PurchaseOutcome.CANCELLED)
+                                }
+                            }
+                        }
+                        .enablePendingPurchases(
+                            PendingPurchasesParams.newBuilder().enableOneTimeProducts().build(),
+                        )
+                        .build()
+                    billing = client
+                    client.startConnection(object : BillingClientStateListener {
+                        override fun onBillingSetupFinished(result: BillingResult) {
+                            if (!cont.isActive) return
+                            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                                storeUnavailable = false
+                                cont.resume(Unit)
+                            } else {
+                                storeUnavailable = true
+                                cont.resumeWithException(IllegalStateException("billing setup ${result.responseCode}"))
+                            }
+                        }
+                        override fun onBillingServiceDisconnected() = Unit
+                    })
+                }
             }
         }
     }
