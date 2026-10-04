@@ -221,6 +221,7 @@ class AppViewModel(
     fun handleLogin(session: InstagramWebSession, purpose: LoginPurpose) {
         env.saveSession(session)
         _state.update { it.copy(loginPurpose = null, isDemoMode = env.isDemoMode, hasLiveSession = true) }
+        viewModelScope.launch { env.entitlements.refresh() }
         val shouldSync = when (purpose) {
             LoginPurpose.CONNECT, LoginPurpose.REFRESH -> true
             LoginPurpose.RECONNECT -> !env.hasLibrary
@@ -373,7 +374,16 @@ class AppViewModel(
     }
 
     suspend fun startCleanup(prepared: PreparedCleanup) {
-        val decision = prepared.decision as? CleanupAllowanceDecision.Allowed ?: return
+        var decision = prepared.decision as? CleanupAllowanceDecision.Allowed ?: return
+        // Pull server free-usage before starting so reinstall / multi-device can't refill the free tier.
+        if (decision.usesFreeAllowance) {
+            env.entitlements.syncFreeUsage()
+            val refreshed = env.entitlements.allowance(
+                prepared.count,
+                prepared.job.request.filter.isAdvanced,
+            )
+            decision = refreshed as? CleanupAllowanceDecision.Allowed ?: return
+        }
         val billing = when {
             decision.consumesPass -> {
                 if (!env.entitlements.consumePass()) return
@@ -383,6 +393,7 @@ class AppViewModel(
             else -> SecretBilling.PRO
         }
         BillingLedger.record(env.prefs, billing, prepared.job.id)
+        env.entitlements.setTracksFreeUnsent(billing == SecretBilling.FREE)
         val loaded = CleanupEngine.loadActive(env.engineDependencies()) ?: return
         work.holdEngine(loaded)
         _state.update { it.copy(sheet = null, sessionPresented = true, progress = loaded.progress()) }
@@ -410,6 +421,7 @@ class AppViewModel(
         engine?.cancel()
         work.releaseEngine()
         env.eraseAllData()
+        env.entitlements.refresh()
         didPromptDeletionLogin = false
         _state.update {
             UiState(route = Route.HOME, tab = MainTab.SETTINGS, isDemoMode = false, hasLiveSession = false)
@@ -421,6 +433,7 @@ class AppViewModel(
         engine?.cancel()
         work.releaseEngine()
         env.disconnectInstagram()
+        env.entitlements.refresh()
         reloadOverview()
         reloadHistory()
         _state.update {
@@ -629,7 +642,8 @@ class CleanupSetupState(
             )
             val decision = env.entitlements.allowance(report.job.itemCount, usesAdvancedFilters)
             prepared = PreparedCleanup(report.job, decision)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e("Retract", "prepare failed", e)
             failed = true
         } finally {
             isEvaluating = false
@@ -637,40 +651,52 @@ class CleanupSetupState(
         }
     }
 
-    /** Loads chats that haven't been sized yet. Results stay on device so reopen skips Instagram. */
+    /**
+     * Rechecks in-scope chats against Instagram before every prepare.
+     * Skipping already-loaded chats left a stale zero count after the first clean
+     * (ledger exclusion + cached `messagesLoaded`), so later cleans looked empty.
+     */
     private suspend fun refreshChatSizes() {
         val targets = QueueBuilder.conversationsInScope(scope, overview.conversations)
-        val pending = targets.filter { !it.messagesLoaded }
-        if (pending.isEmpty()) {
+        if (targets.isEmpty()) {
             overview = env.loadOverview()
             return
         }
         isEvaluating = true
-        val titles = pending.map { it.title }
         evaluateProgress = InboxReadProgress(
-            chatsFound = pending.size,
+            chatsFound = targets.size,
             chatsRead = 0,
-            chatsTotal = pending.size,
-            currentTitle = pending.firstOrNull()?.title,
-            foundTitles = titles,
+            chatsTotal = targets.size,
+            currentTitle = targets.firstOrNull()?.title,
+            foundTitles = targets.firstOrNull()?.title?.let { listOf(it) }.orEmpty(),
         )
         if (env.hasLiveSession) {
-            val titleMap = pending.associate { it.id.rawValue to it.title }
-            env.loadInbox(pending.map { it.id }, titleMap, forceRefresh = false) { progress ->
+            val titleMap = targets.associate { it.id.rawValue to it.title }
+            env.loadInbox(targets.map { it.id }, titleMap, forceRefresh = true) { progress ->
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     evaluateProgress = progress
                 }
             }
         } else {
-            pending.forEachIndexed { index, chat ->
-                delay(90)
+            val revealed = mutableListOf<String>()
+            targets.forEachIndexed { index, chat ->
+                revealed += chat.title
                 evaluateProgress = InboxReadProgress(
-                    chatsFound = pending.size,
-                    chatsRead = index + 1,
-                    chatsTotal = pending.size,
+                    chatsFound = targets.size,
+                    chatsRead = index,
+                    chatsTotal = targets.size,
                     sendsFound = chat.sentByOwner,
                     currentTitle = chat.title,
-                    foundTitles = titles,
+                    foundTitles = revealed.toList(),
+                )
+                delay(90)
+                evaluateProgress = InboxReadProgress(
+                    chatsFound = targets.size,
+                    chatsRead = index + 1,
+                    chatsTotal = targets.size,
+                    sendsFound = chat.sentByOwner,
+                    currentTitle = chat.title,
+                    foundTitles = revealed.toList(),
                 )
             }
         }

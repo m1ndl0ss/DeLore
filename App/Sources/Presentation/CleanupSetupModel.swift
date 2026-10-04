@@ -117,38 +117,39 @@ final class CleanupSetupModel {
         }
     }
 
-    /// Loads chats that haven't been sized yet. Results stay on device (`messagesLoaded`) so reopen skips Instagram.
+    /// Rechecks in-scope chats against Instagram before every prepare.
+    /// Skipping already-loaded chats left a stale zero count after the first clean
+    /// (ledger exclusion + cached `messagesLoaded`), so later cleans looked empty.
     private func refreshChatSizes() async throws {
         let targets = QueueBuilder.conversationsInScope(for: scope, in: overview.conversations)
-        let pending = targets.filter { !$0.messagesLoaded }
-        guard !pending.isEmpty else {
+        guard !targets.isEmpty else {
             overview = try await env.loadOverview()
             return
         }
         isEvaluating = true
-        let titles = pending.map(\.title)
+        let titles = targets.map(\.title)
         evaluateProgress = InboxReadProgress(
-            chatsFound: pending.count,
+            chatsFound: targets.count,
             chatsRead: 0,
-            chatsTotal: pending.count,
-            currentTitle: pending.first?.title,
+            chatsTotal: targets.count,
+            currentTitle: targets.first?.title,
             foundTitles: titles
         )
         if env.hasLiveSession {
-            let ids = pending.map(\.id)
-            let titleMap = Dictionary(uniqueKeysWithValues: pending.map { ($0.id.rawValue, $0.title) })
-            _ = try await env.loadInbox(ids: ids, titles: titleMap, forceRefresh: false) { progress in
+            let ids = targets.map(\.id)
+            let titleMap = Dictionary(uniqueKeysWithValues: targets.map { ($0.id.rawValue, $0.title) })
+            _ = try await env.loadInbox(ids: ids, titles: titleMap, forceRefresh: true) { progress in
                 Task { @MainActor in
                     self.evaluateProgress = progress
                 }
             }
         } else {
-            for (index, chat) in pending.enumerated() {
+            for (index, chat) in targets.enumerated() {
                 try await Task.sleep(nanoseconds: 90_000_000)
                 evaluateProgress = InboxReadProgress(
-                    chatsFound: pending.count,
+                    chatsFound: targets.count,
                     chatsRead: index + 1,
-                    chatsTotal: pending.count,
+                    chatsTotal: targets.count,
                     sendsFound: chat.sentByOwner,
                     currentTitle: chat.title,
                     foundTitles: titles
