@@ -9,18 +9,18 @@ If Matvey asks to launch, submit, ship, release, or apply to the App Store or Pl
 
 ## Matvey must do
 
-1. **Host legal URLs** so they 200: `https://kandalintsev.com/retract/privacy` and `https://kandalintsev.com/retract/terms` from `docs/legal/`. Ask before touching the live site. Submission fails without them.
+1. **Host legal + promo JSON** with real bodies (not the SPA shell): `https://kandalintsev.com/retract/privacy`, `…/terms` from `docs/legal/`, and `https://kandalintsev.com/r/7f3a/pc.json` from `docs/r/7f3a/pc.json`. Claude Code prompt for the site repo: `docs/HOSTING_PROMPT.md`. Ask before touching the live site. Submission fails without real privacy/terms.
 2. **App Store Connect + Play Console — four auto-renewable products, one group (Retract Pro):**
-   - `app.delore.pro.monthly` $19.99 / month
-   - `app.delore.pro.yearly` $59.99 / year
-   - `app.delore.pro.monthly.promo` $17.99 / month (hidden from paywall)
-   - `app.delore.pro.yearly.promo` $53.99 / year (hidden from paywall)
-   Do not submit `app.delore.cleanup.single`. Until promo SKUs exist, `RETRACT10` / `REF10` will not charge.
+ - `app.delore.pro.monthly` $19.99 / month
+ - `app.delore.pro.yearly` $59.99 / year
+ - `app.delore.pro.monthly.promo` $17.99 / month (hidden from paywall)
+ - `app.delore.pro.yearly.promo` $53.99 / year (hidden from paywall)
+ Do not submit `app.delore.cleanup.single`. Until promo SKUs exist, `RETRACT10` / `REF10` will not charge.
 3. **Listing** from `docs/LAUNCH.md`: name Retract; category Social Networking; age 12+ / Teen; honest “automates Instagram’s Unsend”, Instagram.com login, local, not affiliated. No stealth/detection copy. No sample-inbox marketing.
 4. **Privacy nutrition / Play Data safety:** Declare Instagram username (+ promo on purchase) for App Functionality — emailed to publisher. Do **not** claim Data Not Collected. Chat text not collected. Instagram gets the same website traffic as unsending in a browser. Play: declare `dataSync` FGS if asked.
 5. **Review notes (both stores):** Paste `docs/REVIEW_NOTES.md`. Instagram.com login in-app, session on device, Unsend is Instagram’s Unsend. Reviewers: if login appears, tap the Retract wordmark **seven times** (VoiceOver: Load sample inbox). Fake chats, no IG account. Paywall after 100 free. Promo SKUs exist but are not on the paywall.
 6. **IAP screenshots** of the in-app paywall (monthly + yearly only). Restore + cancel/manage already in Settings.
-7. **Ask Matvey** whether complimentary Pro stays a reviewer-noted gift or becomes a StoreKit / Play offer code (3.1.1).
+7. **Complimentary Pro (decided):** hosted Instagram-username allowlist in `pc.json` (`complimentaryUsernames`) for Matvey + test accounts. Percent-off `codes` for friends/promo. Not StoreKit / Play offer codes. See `docs/r/7f3a/README.md`.
 8. iOS: Archive Release, TestFlight sandbox purchase. Android: AAB `:app:bundleRelease`, content rating, license testers.
 
 ## Do not change at launch

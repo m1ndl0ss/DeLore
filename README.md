@@ -213,32 +213,69 @@ logging scan.
   app returns.
 - Ownership is never guessed. If authorship isn't clear, the message is skipped.
 
-## Remaining manual steps before App Store submission
+## What’s left before App Store / Play deployment
 
-See [`docs/LAUNCH.md`](docs/LAUNCH.md) for store copy, IAP IDs, and review notes.
+Full copy, IAP IDs, and reviewer text: [`docs/LAUNCH.md`](docs/LAUNCH.md).  
+Paste-this-into-Claude-Code prompt to fix the live site: [`docs/HOSTING_PROMPT.md`](docs/HOSTING_PROMPT.md).
 
-1. Set `DEVELOPMENT_TEAM` and confirm the bundle ID. Register the app in App Store Connect.
-2. Create the subscription group and products (`app.delore.pro.monthly`, `app.delore.pro.yearly`).
-   Do not submit `app.delore.cleanup.single`. Add pricing, localizations and review screenshots.
-3. Host `docs/legal/privacy.html` and `terms.html` on https://kandalintsev.com/retract/ so App Store
-   Connect / Play have public legal URLs (in-app copy alone is not enough for the console). Support
-   email: contact@kandalintsev.com.
-4. Fill in the App Privacy "nutrition label": declare Instagram username (+ promo on purchase) for
-   App Functionality — emailed to the publisher. Do **not** claim Data Not Collected. Chat text is
-   not collected. Instagram receives the same traffic as unsending in a browser.
-5. Archive with the Release scheme, upload, and test purchases in Sandbox/TestFlight (Staging).
-6. Optional: localize `Localizable.xcstrings` (it's populated from source at build time).
+### 1. Host three files on kandalintsev.com (blocking)
 
-## Remaining manual steps before Play Store submission
+These must return the **Retract file bodies**, not the personal-site SPA:
 
-1. Open `Android/` in Android Studio. Keep `applicationId` `app.delore.android` unless you are
-   ready to migrate.
-2. Create `app.delore.pro.monthly` and `app.delore.pro.yearly` in Play Console at $19.99 / $59.99.
-3. Host the same privacy + terms HTML and paste the URLs in Play Console. Support email:
-   contact@kandalintsev.com. The app FAQ and Terms are also in-app.
-4. Data safety form: declare username (+ promo) as above — not “Data not collected.” Instagram
-   receives the same website traffic as unsending in Chrome.
-5. Upload an AAB from `assembleRelease`, complete content rating, and test license testers.
+| URL | Repo file |
+|---|---|
+| https://kandalintsev.com/retract/privacy | `docs/legal/privacy.html` |
+| https://kandalintsev.com/retract/terms | `docs/legal/terms.html` |
+| https://kandalintsev.com/r/7f3a/pc.json | `docs/r/7f3a/pc.json` |
+
+Use [`docs/HOSTING_PROMPT.md`](docs/HOSTING_PROMPT.md) in the **website** repo. Ask before editing the live site.
+
+### 2. Promo codes + free Pro allowlist (decided)
+
+Documented in [`docs/r/7f3a/README.md`](docs/r/7f3a/README.md). **Not** StoreKit / Play offer codes.
+
+- **`codes`** — percent-off promo codes you give friends for promotion (`RETRACT10`, `REF10`, …). Needs the two hidden `*.promo` SKUs in both stores or they won’t charge.
+- **`complimentaryUsernames`** — Instagram handles that get Pro for free when they log in (you + test accounts). Edit `pc.json`, redeploy; no app update.
+
+Never put codes or handles in the public store listing.
+
+### 3. Create purchases in both store consoles
+
+One group **Retract Pro**, four auto-renewables:
+
+- `app.delore.pro.monthly` — $19.99 / month (paywall)
+- `app.delore.pro.yearly` — $59.99 / year (paywall)
+- `app.delore.pro.monthly.promo` — $17.99 / month (hidden)
+- `app.delore.pro.yearly.promo` — $53.99 / year (hidden)
+
+Do **not** submit `app.delore.cleanup.single`.
+
+### 4. Listing + privacy forms
+
+- Listing text / age / category from [`docs/LAUNCH.md`](docs/LAUNCH.md).
+- Paste [`docs/REVIEW_NOTES.md`](docs/REVIEW_NOTES.md) into both consoles.
+- IAP screenshots of the in-app paywall (monthly + yearly only).
+- Privacy nutrition / Play Data safety: declare Instagram username (+ promo on purchase) for App Functionality. Do **not** claim Data Not Collected. Chat text is not collected.
+- Support: contact@kandalintsev.com.
+
+### 5. Ship test builds and buy Pro yourself
+
+**iOS**
+
+1. Set `DEVELOPMENT_TEAM` in `Config/Base.xcconfig`. Bundle ID `app.delore.ios`.
+2. Archive **Release** → upload → TestFlight.
+3. Sandbox-buy monthly and yearly (optionally a promo SKU).
+
+**Android**
+
+1. Keep `applicationId` `app.delore.android`.
+2. `:app:bundleRelease` AAB → Play Console.
+3. Content rating + license testers → test purchase.
+
+### 6. Optional
+
+- Deploy `workers/notify` + release secrets if you want connect/purchase emails (app works with empty notify URL).
+- Localize `Localizable.xcstrings` (populated from source at build time).
 
 Branding: Retract isn't affiliated with Instagram or Meta. "Instagram" is only used descriptively,
 and the icon is an original mark.
