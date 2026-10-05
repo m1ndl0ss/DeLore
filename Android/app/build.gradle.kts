@@ -19,7 +19,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "app.delore.android"
+        applicationId = "app.retract.android"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -33,14 +33,16 @@ android {
         buildConfigField("String", "PRIVACY_URL", "\"https://kandalintsev.com/retract/privacy\"")
         buildConfigField("String", "SUPPORT_URL", "\"mailto:contact@kandalintsev.com\"")
         buildConfigField("String", "TERMS_URL", "\"https://kandalintsev.com/retract/terms\"")
-        buildConfigField("String", "PRODUCT_ONE_TIME", "\"app.delore.cleanup.single\"")
-        buildConfigField("String", "PRODUCT_PRO_MONTHLY", "\"app.delore.pro.monthly\"")
-        buildConfigField("String", "PRODUCT_PRO_YEARLY", "\"app.delore.pro.yearly\"")
-        buildConfigField("String", "PRODUCT_PRO_MONTHLY_PROMO", "\"app.delore.pro.monthly.promo\"")
-        buildConfigField("String", "PRODUCT_PRO_YEARLY_PROMO", "\"app.delore.pro.yearly.promo\"")
-        // Optional publisher notify (see workers/notify). Empty = disabled.
+        // Hosted percent-off list (not linked from the public site). Edit docs/r/7f3a/pc.json.
+        buildConfigField("String", "PROMO_CATALOG_URL", "\"https://kandalintsev.com/r/7f3a/pc.json\"")
+        buildConfigField("String", "PRODUCT_ONE_TIME", "\"app.retract.cleanup.single\"")
+        buildConfigField("String", "PRODUCT_PRO_MONTHLY", "\"app.retract.pro.monthly\"")
+        buildConfigField("String", "PRODUCT_PRO_YEARLY", "\"app.retract.pro.yearly\"")
+        buildConfigField("String", "PRODUCT_PRO_MONTHLY_PROMO", "\"app.retract.pro.monthly.promo\"")
+        buildConfigField("String", "PRODUCT_PRO_YEARLY_PROMO", "\"app.retract.pro.yearly.promo\"")
+        // Optional publisher worker (see workers/notify). Empty = disabled.
+        // Auth is a short-lived /v1/token — do not ship NOTIFY_SECRET in the app.
         buildConfigField("String", "NOTIFY_URL", "\"${localProp("NOTIFY_URL")}\"")
-        buildConfigField("String", "NOTIFY_SECRET", "\"${localProp("NOTIFY_SECRET")}\"")
     }
 
     buildTypes {

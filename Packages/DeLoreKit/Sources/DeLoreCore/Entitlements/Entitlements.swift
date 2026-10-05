@@ -65,8 +65,8 @@ public struct ProductCatalog: Equatable, Sendable {
         oneTimeCleanup: String,
         proMonthly: String,
         proYearly: String,
-        proMonthlyPromo: String = "app.delore.pro.monthly.promo",
-        proYearlyPromo: String = "app.delore.pro.yearly.promo",
+        proMonthlyPromo: String = "app.retract.pro.monthly.promo",
+        proYearlyPromo: String = "app.retract.pro.yearly.promo",
         subscriptionGroupID: String? = nil
     ) {
         self.oneTimeCleanup = oneTimeCleanup

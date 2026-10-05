@@ -24,8 +24,8 @@ struct InboxWorkSnapshot: Codable, Equatable, Sendable {
 @MainActor
 final class BackgroundWorkCenter {
     static let shared = BackgroundWorkCenter()
-    static let processingID = "app.delore.ios.processing"
-    static let refreshID = "app.delore.ios.refresh"
+    static let processingID = "app.retract.ios.processing"
+    static let refreshID = "app.retract.ios.refresh"
 
     private weak var model: AppModel?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid

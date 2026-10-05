@@ -99,12 +99,12 @@ One subscription group: **Retract Pro**. Four auto-renewables:
 
 | Product ID | Price | Paywall |
 |---|---|---|
-| `app.delore.pro.monthly` | $19.99 / month | Shown |
-| `app.delore.pro.yearly` | $59.99 / year | Shown |
-| `app.delore.pro.monthly.promo` | $17.99 / month | Hidden (10% codes) |
-| `app.delore.pro.yearly.promo` | $53.99 / year | Hidden (10% codes) |
+| `app.retract.pro.monthly` | $19.99 / month | Shown |
+| `app.retract.pro.yearly` | $59.99 / year | Shown |
+| `app.retract.pro.monthly.promo` | $17.99 / month | Hidden (10% codes) |
+| `app.retract.pro.yearly.promo` | $53.99 / year | Hidden (10% codes) |
 
-Do **not** submit `app.delore.cleanup.single`.  
+Do **not** submit `app.retract.cleanup.single`.  
 In-app percent-off codes purchase the promo SKUs (three guesses/day). Until promo products exist in the console, those codes will not charge.
 
 ### Adding / editing codes and free-Pro handles (no app update)
@@ -143,7 +143,7 @@ Play: declare `dataSync` foreground service if the console asks.
 
 ## App Store Connect checklist
 
-1. Bundle ID `app.delore.ios`. Set `DEVELOPMENT_TEAM` in `Config/Base.xcconfig`.
+1. Bundle ID `app.retract.ios`. Set `DEVELOPMENT_TEAM` in `Config/Base.xcconfig`.
 2. Subscription group + four products above.
 3. Nutrition label as in previous section.
 4. Paste [`REVIEW_NOTES.md`](REVIEW_NOTES.md).
@@ -155,7 +155,7 @@ Play: declare `dataSync` foreground service if the console asks.
 
 ## Play Console checklist
 
-1. Keep `applicationId` `app.delore.android`.
+1. Keep `applicationId` `app.retract.android`.
 2. Same four subscription products / base plans.
 3. Data safety as above.
 4. `:app:bundleRelease` AAB, content rating, license testers.
@@ -179,6 +179,6 @@ Play: declare `dataSync` foreground service if the console asks.
 
 ## Do not change at launch
 
-- Android package / `applicationId` `app.delore.android`
+- Android package / `applicationId` `app.retract.android`
 - Product IDs listed above
 - Desktop Chrome user-agent (never spoof the Instagram app)

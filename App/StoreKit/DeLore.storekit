@@ -15,7 +15,7 @@
           "locale" : "en_US"
         }
       ],
-      "productID" : "app.delore.cleanup.single",
+      "productID" : "app.retract.cleanup.single",
       "referenceName" : "One-time cleanup",
       "type" : "Consumable"
     }
@@ -57,7 +57,7 @@
               "locale" : "en_US"
             }
           ],
-          "productID" : "app.delore.pro.yearly",
+          "productID" : "app.retract.pro.yearly",
           "recurringSubscriptionPeriod" : "P1Y",
           "referenceName" : "Pro Yearly",
           "subscriptionGroupID" : "21600001",
@@ -82,7 +82,7 @@
               "locale" : "en_US"
             }
           ],
-          "productID" : "app.delore.pro.yearly.promo",
+          "productID" : "app.retract.pro.yearly.promo",
           "recurringSubscriptionPeriod" : "P1Y",
           "referenceName" : "Pro Yearly promo",
           "subscriptionGroupID" : "21600001",
@@ -107,7 +107,7 @@
               "locale" : "en_US"
             }
           ],
-          "productID" : "app.delore.pro.monthly",
+          "productID" : "app.retract.pro.monthly",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Pro Monthly",
           "subscriptionGroupID" : "21600001",
@@ -132,7 +132,7 @@
               "locale" : "en_US"
             }
           ],
-          "productID" : "app.delore.pro.monthly.promo",
+          "productID" : "app.retract.pro.monthly.promo",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Pro Monthly promo",
           "subscriptionGroupID" : "21600001",

@@ -52,8 +52,8 @@
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>app.delore.ios.processing</string>
-		<string>app.delore.ios.refresh</string>
+		<string>app.retract.ios.processing</string>
+		<string>app.retract.ios.refresh</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
@@ -83,7 +83,5 @@
 	<string>$(DL_ANALYTICS_ENABLED)</string>
 	<key>DLNotifyURL</key>
 	<string>$(DL_NOTIFY_URL)</string>
-	<key>DLNotifySecret</key>
-	<string>$(DL_NOTIFY_SECRET)</string>
 </dict>
 </plist>

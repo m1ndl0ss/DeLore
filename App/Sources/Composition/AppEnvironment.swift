@@ -32,7 +32,7 @@ final class AppEnvironment {
     init(configuration: AppConfiguration = .load()) {
         self.configuration = configuration
 
-        let subsystem = Bundle.main.bundleIdentifier ?? "app.delore.ios"
+        let subsystem = Bundle.main.bundleIdentifier ?? "app.retract.ios"
         logger = AppLogger.make(subsystem: subsystem)
         analytics = Analytics(sink: NoopAnalyticsSink(), isEnabled: configuration.analyticsEnabled)
 
@@ -70,7 +70,6 @@ final class AppEnvironment {
         let vault = sessionVault
         let notify = PublisherNotify(
             endpoint: configuration.notifyURL,
-            secret: configuration.notifySecret,
             isEnabled: { !UserDefaults.standard.bool(forKey: Self.reviewDemoKey) },
             resolveUsername: {
                 (try? vault.loadSession())?.displayName
@@ -79,11 +78,15 @@ final class AppEnvironment {
         publisherNotify = notify
 
         let ledger = PassLedger(store: secrets)
-        entitlements = EntitlementManager(
+        let entitlementsManager = EntitlementManager(
             service: StoreKitPurchaseService(catalog: configuration.products, ledger: ledger, logger: logger),
             ledger: ledger,
             freeLimit: configuration.freeCleanupLimit,
             analytics: analytics,
+            promoCatalogURL: configuration.promoCatalogURL,
+            accountUserID: { try? vault.loadSession()?.userID },
+            accountUsername: { try? vault.loadSession()?.displayName },
+            workerAuth: notify.workerAuth,
             onSubscriptionPurchased: { productID, promo in
                 let session = try? vault.loadSession()
                 notify.subscriptionPurchased(
@@ -102,6 +105,7 @@ final class AppEnvironment {
                 )
             }
         )
+        entitlements = entitlementsManager
     }
 
     var messageSource: MessageSource { library }
@@ -138,6 +142,7 @@ final class AppEnvironment {
     func saveInstagramSession(_ session: InstagramWebSession) throws {
         clearReviewDemoFlag()
         try sessionVault.saveSession(session)
+        Task { await maybeNotifyConnected() }
     }
 
     func listInbox(onProgress: (@Sendable (InboxReadProgress) -> Void)? = nil) async throws -> LibraryOverview {
@@ -215,7 +220,12 @@ final class AppEnvironment {
             policy: ratePolicy,
             analytics: analytics,
             logger: logger,
-            history: history
+            history: history,
+            onItemCompleted: { [entitlements] key in
+                Task { @MainActor in
+                    entitlements.noteFreeUnsent(idempotencyKey: key)
+                }
+            }
         )
     }
 
@@ -310,9 +320,10 @@ final class AppEnvironment {
         return Set(raw.map(ConversationID.init))
     }
 
-    /// Signs out of Instagram on this phone. Keeps Pro, passes, terms acceptance, and onboarding.
+    /// Signs out of Instagram on this phone. Clears local unlocks; paid Pro is re-checked from StoreKit.
     func disconnectInstagram() throws {
         webBrowser.destroy()
+        entitlements.clearLocalUnlocks()
         try sessionVault.clear()
         try jobStore.wipe()
         try library.wipe()
@@ -324,15 +335,16 @@ final class AppEnvironment {
         isDemoMode = false
     }
 
-    /// Disconnects and removes everything sensitive. Purchases (unused passes, free usage)
-    /// are kept because they belong to the user, and aren't sensitive.
+    /// Disconnects and removes everything sensitive. StoreKit purchases stay with the Apple ID.
+    /// Local complimentary unlocks are not preserved.
     func eraseAllData() throws {
         webBrowser.destroy()
+        entitlements.clearLocalUnlocks()
         let eraser = LocalDataEraser(
             secrets: secrets,
             jobs: jobStore,
             library: library,
-            preservedSecretKeys: PassLedger.preservedKeys + [PromoVault.complimentaryKey]
+            preservedSecretKeys: PassLedger.preservedKeys + PromoVault.preservedKeys
         )
         try history.wipe()
         try eraser.eraseAll()

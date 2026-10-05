@@ -1,44 +1,66 @@
 # Retract publisher notify (Cloudflare Worker)
 
 Emails `contact@kandalintsev.com` when the app reports Instagram connect or Pro purchase.
+Tracks **free-unsends usage** per Instagram user id (KV), including per-message increments
+so a reinstall still sees prior usage.
+
 Chat contents are never sent.
+
+## Auth
+
+The app **does not** ship `NOTIFY_SECRET`.
+
+1. `POST /v1/token` (unauthenticated, IP rate-limited) → short-lived HMAC bearer token **bound to the minting IP**  
+2. `POST /v1/notify` and `POST /v1/free-usage` require `Authorization: Bearer <token>` from the same IP  
+3. Mutations are rate-limited per IP / user id; notify is rate-limited per IP  
+
+Worker secrets (never in the app):
+
+- `TOKEN_SIGNING_KEY` — HMAC key for tokens  
+- `RESEND_API_KEY` — Resend  
+- `NOTIFY_SECRET` — optional admin override for curl/scripts only  
 
 ## Deploy
 
 ```bash
 cd workers/notify
 npm install
-npx wrangler secret put NOTIFY_SECRET
+npx wrangler secret put TOKEN_SIGNING_KEY
 npx wrangler secret put RESEND_API_KEY
-# Optional: set a verified from-address instead of onboarding@resend.dev
+# optional admin curl secret (not for the app):
+# npx wrangler secret put NOTIFY_SECRET
 npx wrangler deploy
 ```
 
-Copy the worker URL into app config:
+App config (URL only):
 
-- Android `local.properties`: `NOTIFY_URL=https://retract-notify.<you>.workers.dev/v1/notify` and `NOTIFY_SECRET=…`
-- iOS `Config/Secrets.xcconfig` (gitignored): `DL_NOTIFY_URL` and `DL_NOTIFY_SECRET`
+- Android `local.properties`: `NOTIFY_URL=https://retract-notify.<you>.workers.dev/v1/notify`
+- iOS `Config/Secrets.xcconfig`: `DL_NOTIFY_URL=…`
 
-If URL/secret are empty, the apps skip notify (no crash, no delay on UI).
+Empty URL disables notify **and** free-usage sync (local counter still works on-device).
 
-## Security note
+## Free usage
 
-`NOTIFY_SECRET` ships inside the app binary when notify is enabled. Treat it as an ops gate, not
-a user credential: rotate via Wrangler if leaked, keep the worker rate-limited, and leave URL/secret
-empty in public builds until you want connect/purchase emails. Chat contents are never sent.
+| op | body | effect |
+|---|---|---|
+| `increment` | `instagramUserId`, `delta` (1–20), `idempotencyKey` | add once per key |
+| `sync` | `instagramUserId`, `freeUsed` | max-merge; each call may raise by at most 40 |
+| `pull` | `instagramUserId` | read server total |
 
-## Body
+Response: `{ "ok": true, "freeUsed": N }`
+
+Clients loop `sync` until the local total is fully pushed. This caps griefing if someone mints a token and writes another user's id.
+
+## Notify body
 
 ```json
 {
   "event": "instagram_connected | subscription_purchased | complimentary_unlocked",
   "instagramUsername": "handle",
   "platform": "ios | android",
-  "productId": "app.delore.pro.yearly.promo",
+  "productId": "app.retract.pro.yearly.promo",
   "promoCode": "RETRACT10",
   "occurredAt": "2026-10-02T12:00:00Z",
   "idempotencyKey": "optional-client-key"
 }
 ```
-
-Header: `X-Retract-Secret: <NOTIFY_SECRET>`

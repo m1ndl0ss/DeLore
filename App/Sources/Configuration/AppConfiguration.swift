@@ -16,9 +16,11 @@ struct AppConfiguration {
     let freeCleanupLimit: Int
     let analyticsEnabled: Bool
     let advancedFilters: Bool
-    /// Publisher notify endpoint. Empty disables.
+    /// Publisher worker base endpoint (`…/v1/notify`). Empty disables notify + free-usage sync.
+    /// Auth is a short-lived token from `/v1/token` — no shared secret in the app.
     let notifyURL: String
-    let notifySecret: String
+    /// Hosted percent-off code list. Not linked from the public site.
+    let promoCatalogURL: URL
 
     /// Pacing for destructive requests. Tune here; the engine reads every limit from it.
     let ratePolicy: RatePolicy = .conservative
@@ -39,17 +41,17 @@ struct AppConfiguration {
             supportURL: url("DLSupportURL", fallback: "mailto:contact@kandalintsev.com"),
             termsURL: url("DLTermsURL", fallback: "https://kandalintsev.com/retract/terms"),
             products: ProductCatalog(
-                oneTimeCleanup: string("DLProductOneTime") ?? "app.delore.cleanup.single",
-                proMonthly: string("DLProductProMonthly") ?? "app.delore.pro.monthly",
-                proYearly: string("DLProductProYearly") ?? "app.delore.pro.yearly",
-                proMonthlyPromo: string("DLProductProMonthlyPromo") ?? "app.delore.pro.monthly.promo",
-                proYearlyPromo: string("DLProductProYearlyPromo") ?? "app.delore.pro.yearly.promo"
+                oneTimeCleanup: string("DLProductOneTime") ?? "app.retract.cleanup.single",
+                proMonthly: string("DLProductProMonthly") ?? "app.retract.pro.monthly",
+                proYearly: string("DLProductProYearly") ?? "app.retract.pro.yearly",
+                proMonthlyPromo: string("DLProductProMonthlyPromo") ?? "app.retract.pro.monthly.promo",
+                proYearlyPromo: string("DLProductProYearlyPromo") ?? "app.retract.pro.yearly.promo"
             ),
             freeCleanupLimit: string("DLFreeCleanupLimit").flatMap(Int.init) ?? 100,
             analyticsEnabled: string("DLAnalyticsEnabled")?.uppercased() == "YES",
             advancedFilters: true,
             notifyURL: string("DLNotifyURL") ?? "",
-            notifySecret: string("DLNotifySecret") ?? ""
+            promoCatalogURL: url("DLPromoCatalogURL", fallback: RemotePromoCatalog.defaultURL.absoluteString)
         )
     }
 }

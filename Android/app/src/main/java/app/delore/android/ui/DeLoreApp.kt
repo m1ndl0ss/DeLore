@@ -9,11 +9,8 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.RepeatMode
@@ -22,7 +19,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -137,7 +140,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextDecoration
-import app.delore.android.billing.PromoCatalog
 import app.delore.android.billing.PromoOffer
 import app.delore.android.billing.PromoRedeemResult
 import app.delore.android.billing.PurchaseOutcome
@@ -154,6 +156,7 @@ import app.delore.android.domain.inflect
 import app.delore.android.domain.title
 import app.delore.android.instagram.InstagramWebViewGateway
 import app.delore.android.persist.CleanupHistoryEntry
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.text.NumberFormat
@@ -198,7 +201,18 @@ fun DeLoreRoot(model: AppViewModel) {
                 InstagramBrowserHost(model.environment.webBrowser)
             }
             when (state.route) {
-                Route.LAUNCHING -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Wordmark() }
+                Route.LAUNCHING -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
+                        Wordmark()
+                        Text(
+                            "Take it back.",
+                            color = Palette.ink().copy(alpha = 0.72f),
+                            fontFamily = Type.sans,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 22.sp,
+                        )
+                    }
+                }
                 Route.HOME -> if (!covering) MainTabs(model)
             }
             if (state.termsPrompt != null) {
@@ -300,7 +314,7 @@ private fun MainTabs(model: AppViewModel) {
         },
     ) { padding ->
         Box(Modifier.fillMaxSize()) {
-            MeshBackground(Modifier.matchParentSize())
+            MeshBackground(Modifier.matchParentSize(), intensity = 0.55f)
             Box(Modifier.fillMaxSize().padding(padding)) {
                 AnimatedContent(
                     targetState = state.tab,
@@ -371,11 +385,12 @@ private fun AccountScreen(model: AppViewModel) {
                     Box(
                         Modifier
                             .clip(RoundedCornerShape(50))
-                            .background(Palette.danger().copy(alpha = 0.14f))
+                            .background(Palette.surfaceElevated)
+                            .border(1.dp, Palette.hairline(), RoundedCornerShape(50))
                             .clickable { model.logOutInstagram() }
                             .padding(horizontal = 14.dp, vertical = 8.dp),
                     ) {
-                        Text("Log out", color = Palette.danger(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text("Log out", color = Palette.secondaryInk(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                     }
                 } else {
                     Box(
@@ -391,7 +406,7 @@ private fun AccountScreen(model: AppViewModel) {
             }
         }
         Column(Modifier.clip(RoundedCornerShape(Radius.m)).background(Palette.surface())) {
-            YouRow("Plan", if (model.entitlements.isPro) "Pro" else "Free · Upgrade") {
+            YouRow("Plan", if (model.entitlements.isPro) "Pro · Manage" else "Free · Upgrade") {
                 model.showSheet(Sheet.Paywall("settings"))
             }
             YouDivider()
@@ -432,6 +447,14 @@ private fun AccountScreen(model: AppViewModel) {
         ) {
             Text("Delete my data", color = Palette.danger(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
         }
+        Text(
+            "Retract ${BuildConfig.VERSION_NAME} · We never read your chats. Not affiliated with Instagram or Meta.",
+            color = Palette.tertiaryDark,
+            fontFamily = Type.sans,
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = Spacing.s),
+        )
     }
     if (confirmErase) {
         AlertDialog(
@@ -511,10 +534,10 @@ private fun ActivityScreen(model: AppViewModel) {
         LoreHeadline(if (snapshot.total == 0) "Nothing taken back yet." else "What you took back.")
         ActivityHero(snapshot)
         if (snapshot.groups.isNotEmpty()) {
-            Text("By person", color = Palette.secondaryInk(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Text("By chat", color = Palette.secondaryInk(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
                 snapshot.groups.forEach { group ->
-                    ActivityPersonCard(group)
+                    ActivityPersonCard(group, showTime = snapshot.showPerChatTime)
                 }
             }
         }
@@ -553,7 +576,7 @@ private fun ActivityHero(snapshot: ActivitySnapshot) {
         }
         if (snapshot.total == 0) {
             Text(
-                "When you retract, people show up here. Message text never leaves this phone.",
+                "When you retract, chats show up here. Message text never leaves this phone.",
                 color = Palette.secondaryInk(),
                 fontFamily = Type.sans,
                 fontSize = 15.sp,
@@ -565,7 +588,7 @@ private fun ActivityHero(snapshot: ActivitySnapshot) {
 }
 
 @Composable
-private fun ActivityPersonCard(group: HistoryGroup) {
+private fun ActivityPersonCard(group: HistoryGroup, showTime: Boolean) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -575,21 +598,6 @@ private fun ActivityPersonCard(group: HistoryGroup) {
             .padding(Metrics.cardInset),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Palette.accent.copy(alpha = 0.22f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                personInitial(group.title),
-                color = Palette.accent,
-                fontFamily = Type.sans,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-        Spacer(Modifier.size(Spacing.m))
         Column(Modifier.weight(1f)) {
             Text(
                 group.title,
@@ -600,20 +608,30 @@ private fun ActivityPersonCard(group: HistoryGroup) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (showTime) {
+                Text(
+                    "Unsent ${relativeTime(group.lastCleanedMillis)}",
+                    color = Palette.secondaryInk(),
+                    fontFamily = Type.sans,
+                    fontSize = 13.sp,
+                )
+            }
+        }
+        Column(horizontalAlignment = Alignment.End) {
             Text(
-                "Unsent ${relativeTime(group.lastCleanedMillis)}",
-                color = Palette.secondaryInk(),
+                NumberFormat.getIntegerInstance().format(group.count),
+                color = Palette.accent,
                 fontFamily = Type.sans,
-                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 20.sp,
+            )
+            Text(
+                "unsent",
+                color = Palette.tertiaryDark,
+                fontFamily = Type.sans,
+                fontSize = 11.sp,
             )
         }
-        Text(
-            NumberFormat.getIntegerInstance().format(group.count),
-            color = Palette.accent,
-            fontFamily = Type.sans,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 20.sp,
-        )
     }
 }
 
@@ -622,6 +640,7 @@ private data class ActivitySnapshot(
     val people: Int,
     val lastCleanedMillis: Long?,
     val groups: List<HistoryGroup>,
+    val showPerChatTime: Boolean = true,
 )
 
 private data class HistoryGroup(
@@ -644,16 +663,18 @@ private fun activitySnapshot(
             lastCleanedMillis = entries.maxOf { it.cleanedAtMillis },
         )
     }.sortedWith(compareByDescending<HistoryGroup> { it.lastCleanedMillis }.thenByDescending { it.count })
+    val times = groups.map { relativeTime(it.lastCleanedMillis) }.toSet()
     return ActivitySnapshot(
         total = history.size,
         people = groups.size,
         lastCleanedMillis = groups.maxOfOrNull { it.lastCleanedMillis },
         groups = groups,
+        showPerChatTime = times.size > 1,
     )
 }
 
 private fun activityHeroSubtitle(snapshot: ActivitySnapshot): String {
-    val people = inflect(snapshot.people, "person", "people")
+    val people = inflect(snapshot.people, "chat", "chats")
     val last = snapshot.lastCleanedMillis?.let { relativeTime(it) }
     return if (last != null) "across $people · last $last" else "across $people"
 }
@@ -700,7 +721,7 @@ private fun InboxSyncScreen(model: AppViewModel) {
             }
             if (state.syncErrorTitle != null) {
                 Spacer(Modifier.height(Spacing.m))
-                Text(state.syncErrorTitle!!, color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 20.sp, textAlign = TextAlign.Center)
+                Text(state.syncErrorTitle!!, color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp, textAlign = TextAlign.Center)
                 Text(state.syncErrorMessage.orEmpty(), color = Palette.secondaryInk(), textAlign = TextAlign.Center, fontSize = 14.sp)
                 Spacer(Modifier.height(Spacing.m))
                 when (state.syncPauseKind) {
@@ -712,55 +733,39 @@ private fun InboxSyncScreen(model: AppViewModel) {
             } else {
                 val read = state.inboxRead
                 Spacer(Modifier.height(Spacing.s))
-                Appear {
-                    Text(
-                        if (read.isComplete) "All set" else read.headline,
-                        color = Palette.ink(),
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 20.sp,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-                Appear(80) {
-                    Text(
-                        read.detail,
-                        color = Palette.accent,
-                        fontFamily = Type.sans,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp,
-                    )
-                }
+                Text(
+                    if (read.isComplete) "All set" else read.headline,
+                    color = Palette.ink(),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 30.sp,
+                    lineHeight = 36.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.animateContentSize(),
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    read.detail,
+                    color = Palette.accent,
+                    fontFamily = Type.sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 16.sp,
+                )
                 Spacer(Modifier.height(Spacing.s))
                 LoreProgressBar(read.fraction)
             }
             Spacer(Modifier.height(Spacing.m))
-            Text(
-                when {
-                    titles.isEmpty() && state.syncErrorTitle == null -> "Names land here as we find them"
-                    state.syncErrorTitle != null -> "Kept on this phone · ${titles.size}"
-                    !state.inboxRead.isListing -> state.inboxRead.displayChat ?: "This chat"
-                    else -> "Found so far · ${titles.size}"
-                },
-                color = Palette.secondaryInk(),
-                fontFamily = Type.sans,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(Spacing.s))
-            if (titles.isNotEmpty()) {
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    reverseLayout = true,
-                ) {
-                    itemsIndexed(titles, key = { index, name -> "$index-$name" }) { index, name ->
-                        FoundPersonRow(name = name, newest = index == titles.lastIndex)
-                    }
-                }
-            } else {
-                Spacer(Modifier.weight(1f))
+            val caption = when {
+                titles.isEmpty() && state.syncErrorTitle == null -> "Names pop in as we find them"
+                state.syncErrorTitle != null -> "Kept on this phone · ${titles.size}"
+                !state.inboxRead.isListing -> state.inboxRead.displayChat?.let { "Reading $it" } ?: "Reading this chat"
+                else -> "Found so far · ${titles.size}"
             }
+            ChatDiscoveryList(
+                titles = titles,
+                caption = caption,
+                activeTitle = if (state.inboxRead.isListing) null else state.inboxRead.currentTitle,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            )
             Spacer(Modifier.height(Spacing.s))
             Text("This happens on your phone. You can exit — don't close Retract.", color = Palette.secondaryInk(), textAlign = TextAlign.Center, fontSize = 13.sp)
         }
@@ -780,8 +785,9 @@ private fun HomeScreen(model: AppViewModel) {
     }
     val canAct = selection.isNotEmpty()
     val actionLabel = when {
-        selection.isEmpty() -> "Pick people to retract with"
-        else -> "Retract with ${inflect(selection.size, "person", "people")}"
+        selection.isEmpty() -> "Select a chat"
+        selection.size == 1 -> "Continue with this chat"
+        else -> "Continue with ${selection.size} chats"
     }
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -859,11 +865,15 @@ private fun HomeScreen(model: AppViewModel) {
             }
             if (overview != null && overview.conversations.isNotEmpty()) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                    Box(Modifier.weight(1f)) { LoreHeadline("Pick who to retract with.") }
-                    if (selection.isNotEmpty()) Pill("${selection.size} picked")
+                    Box(Modifier.weight(1f)) { LoreHeadline("Choose chats") }
+                    if (selection.isNotEmpty()) Pill("${selection.size} selected")
                 }
                 Text(
-                    "${inflect(overview.conversations.size, "person", "people")} in your DMs. We only load a chat after you pick it.",
+                    if (overview.conversations.size == 1) {
+                        "1 chat in your DMs. Tap to load messages."
+                    } else {
+                        "${overview.conversations.size} chats in your DMs. Tap a chat to load messages."
+                    },
                     color = Palette.secondaryInk(),
                     fontFamily = Type.sans,
                     fontSize = 15.sp,
@@ -888,7 +898,7 @@ private fun HomeScreen(model: AppViewModel) {
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    placeholder = { Text("Search @username", color = Palette.secondaryInk()) },
+                    placeholder = { Text("Search chats", color = Palette.secondaryInk()) },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = Palette.secondaryInk()) },
                     trailingIcon = if (query.isNotEmpty()) {
                         {
@@ -913,7 +923,7 @@ private fun HomeScreen(model: AppViewModel) {
                 )
                 if (people.isEmpty() && query.isNotBlank()) {
                     Text(
-                        "No one matches that.",
+                        "No chats match that.",
                         color = Palette.secondaryInk(),
                         fontFamily = Type.sans,
                         fontSize = 15.sp,
@@ -935,19 +945,25 @@ private fun HomeScreen(model: AppViewModel) {
             } else if (overview != null) {
                 LoreHeadline("No DMs on this account.")
             } else if (state.loadingOverview) {
-                LoreHeadline("Finding who you talked to.")
+                LoreHeadline("Loading your chats.")
                 CircularProgressIndicator(color = Palette.accent)
             } else if (model.hasLiveSession) {
-                LoreHeadline("Couldn't find your people.")
-                Text("Reconnect Instagram and we'll pull the names again.", color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 17.sp)
+                LoreHeadline("Couldn't load your chats.")
+                Text("Reconnect Instagram and we'll try again.", color = Palette.secondaryInk(), fontFamily = Type.sans, fontSize = 17.sp)
             } else {
                 Spacer(Modifier.height(Spacing.m))
                 LoreHeadline()
                 Text(
-                    "Find who you talked to. Retract what you sent. It stays on this phone.",
+                    "Unsend what you sent in Instagram DMs — on this phone.",
                     color = Palette.secondaryInk(),
                     fontFamily = Type.sans,
                     fontSize = 17.sp,
+                )
+                Text(
+                    "Login stays on this phone. We never see your password.",
+                    color = Palette.secondaryInk(),
+                    fontFamily = Type.sans,
+                    fontSize = 14.sp,
                 )
             }
         }
@@ -964,10 +980,10 @@ private fun HomeScreen(model: AppViewModel) {
                 }
             } else if (overview == null && !state.loadingOverview) {
                 Appear(160) {
-                    ConnectButton(if (model.hasLiveSession) "Find people" else "Connect Instagram") { model.showConnect() }
+                    ConnectButton(if (model.hasLiveSession) "Load chats" else "Connect Instagram") { model.showConnect() }
                 }
             }
-            if (!model.entitlements.isPro) {
+            if (!model.entitlements.isPro && (model.hasLiveSession || state.isDemoMode)) {
                 UpgradeDock(
                     remaining = model.entitlements.remainingFree,
                 ) { model.showSheet(Sheet.Paywall("settings")) }
@@ -1012,7 +1028,7 @@ private fun SettingsSheet(model: AppViewModel) {
         Row {
             Text(if (model.entitlements.isPro) "Pro" else "Free", color = Palette.ink(), fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            if (!model.entitlements.isPro) {
+            if (!model.entitlements.isPro && (model.hasLiveSession || state.isDemoMode)) {
                 Text("${inflect(model.entitlements.remainingFree, "free message")} left", color = Palette.secondaryInk())
             }
         }
@@ -1038,14 +1054,14 @@ private fun SettingsSheet(model: AppViewModel) {
         when {
             state.hasLiveSession -> {
                 Text("Connected · stays on this phone", color = Palette.secondaryInk(), fontSize = 14.sp)
-                QuietButton("Log out", tint = Palette.danger()) {
+                QuietButton("Log out", tint = Palette.secondaryInk()) {
                     model.logOutInstagram()
                     model.showSheet(null)
                 }
             }
             state.isDemoMode -> {
                 Text("Sample inbox · not a real account", color = Palette.secondaryInk(), fontSize = 14.sp)
-                QuietButton("Log out", tint = Palette.danger()) {
+                QuietButton("Log out", tint = Palette.secondaryInk()) {
                     model.logOutInstagram()
                     model.showSheet(null)
                 }
@@ -1119,8 +1135,9 @@ private fun ChooseChatsSheet(model: AppViewModel, overview: LibraryOverview) {
     var selection by remember { mutableStateOf(setOf<ConversationID>()) }
     val chats = overview.conversations.sortedBy { it.title.lowercase() }
     val buttonLabel = when {
-        selection.isEmpty() -> "Pick at least one chat"
-        else -> "Retract with ${inflect(selection.size, "person", "people")}"
+        selection.isEmpty() -> "Select a chat"
+        selection.size == 1 -> "Continue with this chat"
+        else -> "Continue with ${selection.size} chats"
     }
     Column(Modifier.fillMaxSize().padding(Spacing.screen)) {
         Text("Choose chats", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
@@ -1174,65 +1191,132 @@ private fun OverlayChoiceRow(primary: String, onPrimary: () -> Unit, secondary: 
 }
 
 @Composable
-private fun FoundPersonRow(name: String, newest: Boolean) {
+private fun ChatDiscoveryList(
+    titles: List<String>,
+    caption: String,
+    activeTitle: String? = null,
+    limit: Int? = null,
+    modifier: Modifier = Modifier,
+) {
     val reduce = reduceMotion()
-    val clock = rememberInfiniteTransition(label = "found-row")
-    val glow by clock.animateFloat(
-        initialValue = 0.22f,
-        targetValue = 0.55f,
-        animationSpec = infiniteRepeatable(tween(900, easing = EaseInOut), RepeatMode.Reverse),
-        label = "found-glow",
-    )
-    val highlight = if (newest && !reduce) glow else 0.22f
-    Appear(if (newest) 0 else 40) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(if (newest) Palette.surfaceElevated else Palette.surface())
-                .then(
-                    if (newest) Modifier.border(1.dp, Palette.accent.copy(alpha = highlight), RoundedCornerShape(12.dp))
-                    else Modifier,
-                )
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(
-                Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(Palette.accent.copy(alpha = 0.22f)),
-                contentAlignment = Alignment.Center,
+    val visible = remember(titles, limit) {
+        if (limit == null) titles else titles.takeLast(limit)
+    }
+    var seen by remember { mutableStateOf(setOf<String>()) }
+    var fresh by remember { mutableStateOf(setOf<String>()) }
+    LaunchedEffect(titles) {
+        val newcomers = titles.toSet() - seen
+        if (newcomers.isEmpty()) return@LaunchedEffect
+        seen = seen + newcomers
+        fresh = fresh + newcomers
+        if (!reduce) {
+            delay(2400)
+            fresh = fresh - newcomers
+        }
+    }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+        Text(
+            caption,
+            color = Palette.secondaryInk(),
+            fontFamily = Type.sans,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 14.sp,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (visible.isEmpty()) {
+            Spacer(Modifier.weight(1f))
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                reverseLayout = true,
             ) {
-                Text(
-                    personInitial(name),
-                    color = Palette.accent,
-                    fontFamily = Type.sans,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
-                )
-            }
-            Text(
-                name,
-                color = Palette.ink(),
-                fontFamily = Type.sans,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 16.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            if (newest) {
-                Text("new", color = Palette.accent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                itemsIndexed(visible, key = { index, name -> "$index-$name" }) { _, name ->
+                    val isActive = activeTitle != null && activeTitle.equals(name, ignoreCase = true)
+                    val isFresh = name in fresh
+                    FoundChatRow(name = name, fresh = isFresh, active = isActive)
+                }
             }
         }
     }
 }
 
-private fun personInitial(name: String): String {
-    val cleaned = name.trim().trimStart('@')
-    return cleaned.firstOrNull()?.uppercase() ?: "?"
+@Composable
+private fun FoundChatRow(name: String, fresh: Boolean, active: Boolean) {
+    val reduce = reduceMotion()
+    val clock = rememberInfiniteTransition(label = "found-row")
+    val pulse by clock.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(750, easing = EaseInOut), RepeatMode.Reverse),
+        label = "dot-pulse",
+    )
+    val glow by clock.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(tween(900, easing = EaseInOut), RepeatMode.Reverse),
+        label = "found-glow",
+    )
+    val enter = remember { Animatable(if (reduce) 1f else 0f) }
+    LaunchedEffect(name) {
+        if (!reduce) enter.animateTo(1f, spring(dampingRatio = 0.72f, stiffness = 380f))
+    }
+    val scale by animateFloatAsState(
+        targetValue = if (fresh && !active) 1.02f else 1f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = 420f),
+        label = "row-scale",
+    )
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                val t = enter.value
+                alpha = t
+                translationY = (1f - t) * 18f
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (active || fresh) Palette.surfaceElevated else Palette.surface())
+            .then(
+                when {
+                    active -> Modifier.border(1.4.dp, Palette.accent.copy(alpha = if (reduce) 0.85f else glow), RoundedCornerShape(14.dp))
+                    fresh -> Modifier.border(1.dp, Palette.accent.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+                    else -> Modifier
+                },
+            )
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .graphicsLayer { scaleX = if (active && !reduce) pulse else 1f; scaleY = if (active && !reduce) pulse else 1f }
+                .clip(CircleShape)
+                .background(
+                    when {
+                        active -> Palette.accent
+                        fresh -> Palette.accent.copy(alpha = 0.55f)
+                        else -> Palette.hairline().copy(alpha = 0.7f)
+                    },
+                ),
+        )
+        Text(
+            name,
+            color = Palette.ink(),
+            fontFamily = Type.sans,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 16.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        when {
+            active -> Text("reading", color = Palette.accent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+            fresh -> Text("new", color = Palette.accent, fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+        }
+    }
 }
 
 @Composable
@@ -1253,30 +1337,23 @@ private fun ChatRow(chat: ConversationSummary, selected: Boolean, onClick: () ->
                 RoundedCornerShape(16.dp),
             )
             .clickable(onClick = onClick)
-            .padding(Spacing.m),
+            .padding(horizontal = Spacing.m, vertical = Spacing.m),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Palette.accent.copy(alpha = if (selected) 1f else 0.22f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                personInitial(chat.title),
-                color = if (selected) Palette.onAccent else Palette.accent,
-                fontFamily = Type.sans,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
+                .width(3.dp)
+                .height(36.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(if (selected) Palette.accent else Palette.hairline().copy(alpha = 0.55f)),
+        )
         Spacer(Modifier.size(Spacing.m))
         Column(Modifier.weight(1f)) {
             Text(chat.title, color = Palette.ink(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 when {
-                    !chat.messagesLoaded -> "We'll count what you sent next"
-                    chat.sentByOwner == 0 -> "Nothing from you"
+                    !chat.messagesLoaded -> "Tap to load messages"
+                    chat.sentByOwner == 0 -> "No messages from you"
                     else -> "${inflect(chat.sentByOwner, "message")} from you"
                 },
                 color = Palette.secondaryInk(),
@@ -1302,114 +1379,127 @@ private fun CleanupSetupScreen(model: AppViewModel, overview: LibraryOverview, s
     val scopeHandle = rememberCoroutineScope()
     var showPaywall by remember { mutableStateOf(false) }
     BackHandler { model.showSheet(null) }
-    Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.screen)) {
-        IconButton(onClick = { model.showSheet(null) }) {
-            Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Palette.ink())
-        }
-        Text("Clean up", color = Palette.ink(), fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
-        Spacer(Modifier.height(Spacing.l))
-        Text(
-            if (setup.estimatedCount > 0) {
-                "Messages you sent ${NumberFormat.getIntegerInstance().format(setup.estimatedCount)}"
-            } else {
-                "We'll count what you sent"
-            },
-            color = Palette.ink(),
-            fontFamily = Type.sans,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 26.sp,
-            lineHeight = 32.sp,
-        )
-        Spacer(Modifier.height(Spacing.l))
-        Text("Who", color = Palette.secondaryInk(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-        Spacer(Modifier.height(Spacing.s))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-            Segment("Everyone", setup.scopeKind == CleanupSetupState.ScopeKind.EVERYTHING) {
-                setup.scopeKind = CleanupSetupState.ScopeKind.EVERYTHING
-                bump()
-            }
-            Segment("Chosen chats", setup.scopeKind == CleanupSetupState.ScopeKind.CHOSEN) {
-                setup.scopeKind = CleanupSetupState.ScopeKind.CHOSEN
-                bump()
-            }
-        }
-        if (setup.scopeKind == CleanupSetupState.ScopeKind.CHOSEN) {
-            Spacer(Modifier.height(Spacing.s))
-            SecondaryButton(if (setup.chosen.isEmpty()) "Pick chats" else "${inflect(setup.chosen.size, "chat")} picked") {
-                model.showSheet(Sheet.ChooseChats)
-            }
-        }
-        Spacer(Modifier.height(Spacing.l))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("When", color = Palette.secondaryInk(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-            Spacer(Modifier.size(8.dp))
-            if (!isPro) Pill("Pro")
-        }
-        Spacer(Modifier.height(Spacing.s))
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
-            listOf(
-                Triple(CleanupSetupState.DateBound.ANY, "Any time", "All messages you sent"),
-                Triple(CleanupSetupState.DateBound.BEFORE, "Before a date", "Older than the day you pick"),
-                Triple(CleanupSetupState.DateBound.AFTER, "After a date", "Newer than the day you pick"),
-            ).forEach { (value, title, detail) ->
-                DateOptionRow(
-                    title = title,
-                    detail = detail,
-                    selected = setup.dateBound == value,
-                ) {
-                    if (isPro || value == CleanupSetupState.DateBound.ANY) {
-                        setup.dateBound = value
-                        bump()
-                    } else showPaywall = true
+    Box(Modifier.fillMaxSize()) {
+        MeshBackground(Modifier.matchParentSize(), intensity = 0.9f)
+        Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.screen)) {
+                IconButton(onClick = { model.showSheet(null) }) {
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Palette.ink())
                 }
-            }
-        }
-        if (setup.dateBound != CleanupSetupState.DateBound.ANY) {
-            Spacer(Modifier.height(Spacing.s))
-            CleanupDateCalendar(
-                label = if (setup.dateBound == CleanupSetupState.DateBound.BEFORE) "Before this day" else "After this day",
-                selectedMillis = setup.cutoff,
-                onDateSelected = {
-                    setup.cutoff = it
-                    bump()
-                },
-            )
-        }
-        Spacer(Modifier.height(Spacing.l))
-        PrimaryButton(if (setup.isPreparing) "Working…" else "Start cleaning", enabled = setup.canContinue && !setup.isPreparing) {
-            scopeHandle.launch {
-                setup.prepare()
-                model.reloadOverview()
-                val prepared = setup.prepared
-                if (prepared != null && prepared.count > 0) {
-                    val decision = model.entitlements.allowance(prepared.count, setup.usesAdvancedFilters)
-                    if (decision is CleanupAllowanceDecision.Allowed) {
-                        model.startCleanup(PreparedCleanup(prepared.job, decision))
-                        return@launch
+                Text(
+                    "Clean up",
+                    color = Palette.ink(),
+                    fontFamily = Type.display,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 34.sp,
+                    lineHeight = 40.sp,
+                )
+                Spacer(Modifier.height(Spacing.m))
+                Text(
+                    if (setup.estimatedCount > 0) {
+                        "${NumberFormat.getIntegerInstance().format(setup.estimatedCount)} messages from you"
+                    } else {
+                        "Counting messages from you…"
+                    },
+                    color = Palette.accent,
+                    fontFamily = Type.sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 22.sp,
+                    lineHeight = 28.sp,
+                )
+                Spacer(Modifier.height(Spacing.l))
+                Text("Who", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                Spacer(Modifier.height(Spacing.s))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                    Segment("Everyone", setup.scopeKind == CleanupSetupState.ScopeKind.EVERYTHING) {
+                        setup.scopeKind = CleanupSetupState.ScopeKind.EVERYTHING
+                        bump()
+                    }
+                    Segment("Chosen chats", setup.scopeKind == CleanupSetupState.ScopeKind.CHOSEN) {
+                        setup.scopeKind = CleanupSetupState.ScopeKind.CHOSEN
+                        bump()
                     }
                 }
-                bump()
+                if (setup.scopeKind == CleanupSetupState.ScopeKind.CHOSEN) {
+                    Spacer(Modifier.height(Spacing.s))
+                    SecondaryButton(if (setup.chosen.isEmpty()) "Pick chats" else "${inflect(setup.chosen.size, "chat")} picked") {
+                        model.showSheet(Sheet.ChooseChats)
+                    }
+                }
+                Spacer(Modifier.height(Spacing.l))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("When", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    Spacer(Modifier.size(8.dp))
+                    if (!isPro) Pill("Pro")
+                }
+                Spacer(Modifier.height(Spacing.s))
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                    listOf(
+                        Triple(CleanupSetupState.DateBound.ANY, "Any time", "All messages you sent"),
+                        Triple(CleanupSetupState.DateBound.BEFORE, "Before a date", "Older than the day you pick"),
+                        Triple(CleanupSetupState.DateBound.AFTER, "After a date", "Newer than the day you pick"),
+                    ).forEach { (value, title, detail) ->
+                        DateOptionRow(
+                            title = title,
+                            detail = detail,
+                            selected = setup.dateBound == value,
+                        ) {
+                            if (isPro || value == CleanupSetupState.DateBound.ANY) {
+                                setup.dateBound = value
+                                bump()
+                            } else showPaywall = true
+                        }
+                    }
+                }
+                if (setup.dateBound != CleanupSetupState.DateBound.ANY) {
+                    Spacer(Modifier.height(Spacing.s))
+                    CleanupDateCalendar(
+                        label = if (setup.dateBound == CleanupSetupState.DateBound.BEFORE) "Before this day" else "After this day",
+                        selectedMillis = setup.cutoff,
+                        onDateSelected = {
+                            setup.cutoff = it
+                            bump()
+                        },
+                    )
+                }
+                Spacer(Modifier.height(Spacing.l))
+                PrimaryButton(
+                    if (setup.isPreparing) "Working…" else "Start cleaning",
+                    enabled = setup.canContinue && !setup.isPreparing,
+                ) {
+                    scopeHandle.launch {
+                        setup.prepare()
+                        model.reloadOverview()
+                        val prepared = setup.prepared
+                        if (prepared != null && prepared.count > 0) {
+                            val decision = model.entitlements.allowance(prepared.count, setup.usesAdvancedFilters)
+                            if (decision is CleanupAllowanceDecision.Allowed) {
+                                model.startCleanup(PreparedCleanup(prepared.job, decision))
+                                return@launch
+                            }
+                        }
+                        bump()
+                    }
+                }
+                if (setup.failed) {
+                    Text("We couldn't get your messages ready. Try again.", color = Palette.danger())
+                }
+                setup.prepared?.let { prepared ->
+                    val decision = model.entitlements.allowance(prepared.count, setup.usesAdvancedFilters)
+                    val showGate = prepared.count == 0 || decision !is CleanupAllowanceDecision.Allowed
+                    if (showGate) ConfirmBlock(model, setup, prepared) { bump() }
+                }
+                Spacer(Modifier.height(Spacing.xl))
+            }
+            if (setup.isEvaluating) {
+                EvaluatingChatSizeOverlay(setup.evaluateProgress)
+            }
+            if (showPaywall) {
+                Box(Modifier.fillMaxSize().background(Palette.backgroundDark.copy(alpha = 0.97f))) {
+                    PaywallSheet(model) { showPaywall = false }
+                }
             }
         }
-        if (setup.failed) {
-            Text("We couldn't get your messages ready. Try again.", color = Palette.danger())
-        }
-        setup.prepared?.let { prepared ->
-            val decision = model.entitlements.allowance(prepared.count, setup.usesAdvancedFilters)
-            val showGate = prepared.count == 0 || decision !is CleanupAllowanceDecision.Allowed
-            if (showGate) ConfirmBlock(model, setup, prepared) { bump() }
-        }
-        Spacer(Modifier.height(Spacing.xl))
-    }
-    if (setup.isEvaluating) {
-        EvaluatingChatSizeOverlay(setup.evaluateProgress)
-    }
-    if (showPaywall) {
-        Box(Modifier.fillMaxSize().background(Palette.backgroundDark)) {
-            PaywallSheet(model) { showPaywall = false }
-        }
-    }
     }
 }
 
@@ -1509,66 +1599,42 @@ private fun EvaluatingChatSizeOverlay(progress: InboxReadProgress) {
                 Spacer(Modifier.weight(1f))
             }
             Spacer(Modifier.height(Spacing.s))
-            Appear {
-                Text(
-                    headline,
-                    color = Palette.ink(),
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 20.sp,
-                    textAlign = TextAlign.Center,
-                )
-            }
-            Appear(80) {
-                Text(
-                    progress.detail,
-                    color = Palette.accent,
-                    fontFamily = Type.sans,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                )
-            }
+            Text(
+                headline,
+                color = Palette.ink(),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 30.sp,
+                lineHeight = 36.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.animateContentSize(),
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                progress.detail,
+                color = Palette.accent,
+                fontFamily = Type.sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp,
+            )
             Spacer(Modifier.height(Spacing.s))
             LoreProgressBar(progress.fraction)
             Spacer(Modifier.height(Spacing.m))
+            ChatDiscoveryList(
+                titles = titles,
+                caption = if (titles.isEmpty()) "Names pop in as we check them" else "Checking · ${titles.size}",
+                activeTitle = progress.currentTitle,
+                limit = 6,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            )
             Text(
-                when {
-                    titles.isEmpty() -> "Names land here as we check them"
-                    else -> "Checking · ${titles.size}"
-                },
+                "We're sizing each chat so unsending stays efficient — only what's still there, nothing wasted.",
                 color = Palette.secondaryInk(),
                 fontFamily = Type.sans,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp,
-                modifier = Modifier.fillMaxWidth(),
+                fontSize = 15.sp,
+                textAlign = TextAlign.Center,
+                lineHeight = 22.sp,
+                modifier = Modifier.padding(horizontal = Spacing.m, vertical = Spacing.s),
             )
-            Spacer(Modifier.height(Spacing.s))
-            if (titles.isNotEmpty()) {
-                Column(
-                    Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    titles.takeLast(4).forEachIndexed { index, name ->
-                        val visible = titles.takeLast(4)
-                        FoundPersonRow(name = name, newest = index == visible.lastIndex)
-                    }
-                }
-            }
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = Spacing.m),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    "We're sizing each chat so unsending stays efficient — only what's still there, nothing wasted.",
-                    color = Palette.secondaryInk(),
-                    fontFamily = Type.sans,
-                    fontSize = 15.sp,
-                    textAlign = TextAlign.Center,
-                    lineHeight = 22.sp,
-                )
-            }
             Text(
                 "This happens on your phone. You can exit — don't close Retract.",
                 color = Palette.secondaryInk(),
@@ -1585,8 +1651,12 @@ private fun DateOptionRow(title: String, detail: String, selected: Boolean, onCl
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(Radius.m))
-            .background(Palette.surface())
-            .border(1.dp, if (selected) Palette.accent.copy(alpha = 0.5f) else Palette.accent.copy(alpha = 0.16f), RoundedCornerShape(Radius.m))
+            .background(if (selected) Palette.accent.copy(alpha = 0.16f) else Palette.surfaceElevated)
+            .border(
+                1.5.dp,
+                if (selected) Palette.accent.copy(alpha = 0.85f) else Palette.accent.copy(alpha = 0.28f),
+                RoundedCornerShape(Radius.m),
+            )
             .clickable(onClick = onClick)
             .padding(Metrics.cardInset),
         verticalAlignment = Alignment.CenterVertically,
@@ -1608,11 +1678,16 @@ private fun DateOptionRow(title: String, detail: String, selected: Boolean, onCl
 private fun Segment(label: String, selected: Boolean, onClick: () -> Unit) {
     Text(
         label,
-        color = if (selected) Palette.onVolt else Palette.ink(),
+        color = if (selected) Palette.onCta else Palette.ink(),
         fontWeight = FontWeight.SemiBold,
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (selected) Palette.accent else Palette.surface())
+            .background(if (selected) Palette.cta else Palette.surfaceElevated)
+            .border(
+                1.dp,
+                if (selected) Palette.accent.copy(alpha = 0.55f) else Palette.accent.copy(alpha = 0.22f),
+                RoundedCornerShape(50),
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
     )
@@ -1651,10 +1726,10 @@ private fun ConfirmBlock(model: AppViewModel, setup: CleanupSetupState, prepared
                         scope.launch {
                             setup.prepare(decision.remainingFree)
                             model.reloadOverview()
-                            val prepared = setup.prepared ?: return@launch
-                            val next = model.entitlements.allowance(prepared.count, setup.usesAdvancedFilters)
+                            val nextPrepared = setup.prepared ?: return@launch
+                            val next = model.entitlements.allowance(nextPrepared.count, setup.usesAdvancedFilters)
                             if (next is CleanupAllowanceDecision.Allowed) {
-                                model.startCleanup(PreparedCleanup(prepared.job, next))
+                                model.startCleanup(PreparedCleanup(nextPrepared.job, next))
                             } else {
                                 bump()
                             }
@@ -1821,7 +1896,7 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
                 percentOff = model.entitlements.percentOff
                 when (result.offer) {
                     PromoOffer.COMPLIMENTARY -> onClose()
-                    PromoOffer.PERCENT_OFF -> promoNotice = "${PromoCatalog.CAMPAIGN_PERCENT_OFF}% off applied."
+                    PromoOffer.PERCENT_OFF -> promoNotice = "${model.entitlements.percentOff}% off applied."
                 }
             }
         }
@@ -1829,10 +1904,22 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
     when {
         legal == "terms" -> TermsSheet(onBack = { legal = null })
         legal == "privacy" -> PrivacySheet(onBack = { legal = null })
-        isPro -> SubscribedPlanSheet(
-            untilMillis = untilMillis,
-            onCancel = { openPlaySubscriptions(activity ?: context) },
-        )
+        isPro -> Column(
+            Modifier
+                .fillMaxWidth()
+                .background(Palette.backgroundDark)
+                .then(if (embedded) Modifier else Modifier.statusBarsPadding()),
+        ) {
+            if (!embedded) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = Spacing.s, vertical = Spacing.xs), horizontalArrangement = Arrangement.End) {
+                    CloseButton(onClose)
+                }
+            }
+            SubscribedPlanSheet(
+                untilMillis = untilMillis,
+                onCancel = { openPlaySubscriptions(activity ?: context) },
+            )
+        }
         else -> Column(
             Modifier
                 .fillMaxWidth()
@@ -1843,6 +1930,11 @@ private fun PaywallContent(model: AppViewModel, embedded: Boolean, onClose: () -
                 .padding(bottom = Spacing.xl),
             verticalArrangement = Arrangement.spacedBy(Spacing.m),
         ) {
+        if (!embedded) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                CloseButton(onClose)
+            }
+        }
         Text("Go Pro", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 26.sp, lineHeight = 32.sp)
         Text(
             "Unlimited unsends. Pick a plan.",
@@ -2334,7 +2426,7 @@ private fun Context.findActivity(): Activity? {
 private fun openPlaySubscriptions(context: Context) {
     val intent = Intent(
         Intent.ACTION_VIEW,
-        Uri.parse("https://play.google.com/store/account/subscriptions?package=app.delore.android"),
+        Uri.parse("https://play.google.com/store/account/subscriptions?package=app.retract.android"),
     )
     if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     context.startActivity(intent)

@@ -27,9 +27,9 @@ WHAT WE COLLECT
 
 SUBSCRIPTIONS
 • Product group: Retract Pro.
-• Visible on paywall: app.delore.pro.monthly, app.delore.pro.yearly.
-• Hidden promo SKUs (10% codes): app.delore.pro.monthly.promo, app.delore.pro.yearly.promo — not listed on the paywall.
-• Do not review the unused one-time ID app.delore.cleanup.single (not submitted).
+• Visible on paywall: app.retract.pro.monthly, app.retract.pro.yearly.
+• Hidden promo SKUs (10% codes): app.retract.pro.monthly.promo, app.retract.pro.yearly.promo — not listed on the paywall.
+• Do not review the unused one-time ID app.retract.cleanup.single (not submitted).
 
 PRIVACY / TERMS
 • https://kandalintsev.com/retract/privacy

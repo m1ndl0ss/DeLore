@@ -28,6 +28,8 @@ import app.delore.android.instagram.InstagramWebFormat
 import app.delore.android.instagram.InstagramWebSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -374,8 +376,8 @@ private class MemorySecrets : app.delore.android.secrets.SecretStore {
 
 class PromoCodeTest {
     @Test
-    fun complimentaryIsCaseInsensitive() {
-        assertEquals(app.delore.android.billing.PromoOffer.COMPLIMENTARY, app.delore.android.billing.PromoCatalog.offer("kandal24"))
+    fun binaryComplimentaryCodeIsGone() {
+        assertNull(app.delore.android.billing.PromoCatalog.offer("kandal24"))
     }
 
     @Test
@@ -390,20 +392,44 @@ class PromoCodeTest {
         )
         assertEquals(
             setOf("RETRACT10", "REF10"),
-            app.delore.android.billing.PromoCatalog.percentOffCodes,
+            app.delore.android.billing.PromoCatalog.bakedPercentOffCodes,
         )
+    }
+
+    @Test
+    fun remotePayloadParsesComplimentaryUsernames() {
+        val parsed = app.delore.android.billing.RemotePromoCatalog.parse(
+            """{"percentOff":10,"codes":["NEWCODE","retract10"],"complimentaryUsernames":["Alice","@Bob"]}""",
+        )
+        assertNotNull(parsed)
+        assertEquals(10, parsed!!.second)
+        assertEquals(setOf("NEWCODE", "RETRACT10"), parsed.first)
+        assertEquals(setOf("alice", "bob"), parsed.third)
+    }
+
+    @Test
+    fun campaignBookCachesRemoteCodesAndAllowlist() {
+        val store = MemorySecrets()
+        val book = app.delore.android.billing.PromoCampaignBook(store)
+        assertTrue(book.replaceCampaign(setOf("FRIEND10", "VIP10"), 10, setOf("matvey")))
+        assertEquals(app.delore.android.billing.PromoOffer.PERCENT_OFF, book.offer("friend10"))
+        assertNull(book.offer("RETRACT10"))
+        assertTrue(book.isComplimentaryUsername("Matvey"))
+        val reloaded = app.delore.android.billing.PromoCampaignBook(store)
+        assertEquals(app.delore.android.billing.PromoOffer.PERCENT_OFF, reloaded.offer("VIP10"))
+        assertTrue(reloaded.isComplimentaryUsername("matvey"))
     }
 
     @Test
     fun checkoutIdUsesPromoSkuWhenDiscounted() {
         val catalog = app.delore.android.domain.ProductCatalog(
-            oneTimeCleanup = "app.delore.cleanup.single",
-            proMonthly = "app.delore.pro.monthly",
-            proYearly = "app.delore.pro.yearly",
+            oneTimeCleanup = "app.retract.cleanup.single",
+            proMonthly = "app.retract.pro.monthly",
+            proYearly = "app.retract.pro.yearly",
         )
-        assertEquals("app.delore.pro.yearly", catalog.checkoutId("app.delore.pro.yearly", discounted = false))
-        assertEquals("app.delore.pro.yearly.promo", catalog.checkoutId("app.delore.pro.yearly", discounted = true))
-        assertEquals("app.delore.pro.monthly.promo", catalog.checkoutId("app.delore.pro.monthly", discounted = true))
+        assertEquals("app.retract.pro.yearly", catalog.checkoutId("app.retract.pro.yearly", discounted = false))
+        assertEquals("app.retract.pro.yearly.promo", catalog.checkoutId("app.retract.pro.yearly", discounted = true))
+        assertEquals("app.retract.pro.monthly.promo", catalog.checkoutId("app.retract.pro.monthly", discounted = true))
         assertEquals(5, catalog.all.size)
     }
 
@@ -419,7 +445,7 @@ class PromoCodeTest {
         assertTrue(vault.redeem("WRONG1", now) is app.delore.android.billing.PromoRedeemResult.Invalid)
         vault.redeem("WRONG2", now)
         vault.redeem("WRONG3", now)
-        assertEquals(app.delore.android.billing.PromoRedeemResult.Locked, vault.redeem("KANDAL24", now))
+        assertEquals(app.delore.android.billing.PromoRedeemResult.Locked, vault.redeem("RETRACT10", now))
     }
 
     @Test
@@ -430,11 +456,15 @@ class PromoCodeTest {
     }
 
     @Test
-    fun complimentaryPersists() {
+    fun allowlistGrantsComplimentaryByUsername() {
         val store = MemorySecrets()
-        val vault = app.delore.android.billing.PromoVault(store)
-        assertTrue(vault.redeem("KANDAL24") is app.delore.android.billing.PromoRedeemResult.Applied)
-        assertTrue(app.delore.android.billing.PromoVault(store).isComplimentary)
+        val book = app.delore.android.billing.PromoCampaignBook(store)
+        assertTrue(book.replaceCampaign(setOf("RETRACT10"), 10, setOf("you")))
+        val vault = app.delore.android.billing.PromoVault(store, book)
+        assertTrue(vault.isComplimentaryUsername("You"))
+        assertFalse(vault.isComplimentaryUsername("someoneelse"))
+        vault.clearLocalUnlocks()
+        assertTrue(app.delore.android.billing.PromoVault(store, book).isComplimentaryUsername("you"))
     }
 
     @Test
@@ -445,7 +475,7 @@ class PromoCodeTest {
         vault.redeem("A", day1)
         vault.redeem("B", day1)
         vault.redeem("C", day1)
-        val result = vault.redeem("KANDAL24", day2)
+        val result = vault.redeem("REF10", day2)
         assertTrue(result is app.delore.android.billing.PromoRedeemResult.Applied)
     }
 }

@@ -70,7 +70,7 @@ All of it lives in `Config/Base.xcconfig`. No secrets are needed or committed.
 | Setting | What to do |
 |---|---|
 | `DEVELOPMENT_TEAM` | Your Apple team ID (or set it in Xcode) |
-| `PRODUCT_BUNDLE_IDENTIFIER` | Your bundle ID (default `app.delore.ios`) |
+| `PRODUCT_BUNDLE_IDENTIFIER` | Your bundle ID (default `app.retract.ios`) |
 | `DL_PRIVACY_URL`, `DL_TERMS_URL` | Host `docs/legal/*.html` (needed for store consoles). The app shows Privacy/Terms in-app and does not open these in a browser |
 | `DL_SUPPORT_URL` | `mailto:contact@kandalintsev.com`. Support in the app opens the FAQ, then this email |
 | `DL_PRODUCT_*` | Must match App Store Connect (and `App/StoreKit/DeLore.storekit`) |
@@ -174,9 +174,9 @@ samples. No throughput is ever promised in the UI. The values can be tuned in
 
 - **Free:** 100 messages of cleanup (a lifetime allowance kept in the Keychain,
   charged only for messages actually cleaned).
-- **Pro monthly** (`app.delore.pro.monthly`): **$19.99**/month after the free 100. Unlimited cleanup and filters.
-- **Pro yearly** (`app.delore.pro.yearly`): **$59.99**/year (~$5/month). Same Pro group.
-- `app.delore.cleanup.single` remains a leftover StoreKit ID and is not sold in the paywall.
+- **Pro monthly** (`app.retract.pro.monthly`): **$19.99**/month after the free 100. Unlimited cleanup and filters.
+- **Pro yearly** (`app.retract.pro.yearly`): **$59.99**/year (~$5/month). Same Pro group.
+- `app.retract.cleanup.single` remains a leftover StoreKit ID and is not sold in the paywall.
 - Transactions are verified with `VerificationResult` and finished only after delivery. The app
   listens to `Transaction.updates` and handles `Transaction.unfinished`. Restore calls
   `AppStore.sync()`. There's also Manage subscription. If the store is unreachable, the app stays
@@ -243,12 +243,12 @@ Never put codes or handles in the public store listing.
 
 One group **Retract Pro**, four auto-renewables:
 
-- `app.delore.pro.monthly` — $19.99 / month (paywall)
-- `app.delore.pro.yearly` — $59.99 / year (paywall)
-- `app.delore.pro.monthly.promo` — $17.99 / month (hidden)
-- `app.delore.pro.yearly.promo` — $53.99 / year (hidden)
+- `app.retract.pro.monthly` — $19.99 / month (paywall)
+- `app.retract.pro.yearly` — $59.99 / year (paywall)
+- `app.retract.pro.monthly.promo` — $17.99 / month (hidden)
+- `app.retract.pro.yearly.promo` — $53.99 / year (hidden)
 
-Do **not** submit `app.delore.cleanup.single`.
+Do **not** submit `app.retract.cleanup.single`.
 
 ### 4. Listing + privacy forms
 
@@ -262,13 +262,13 @@ Do **not** submit `app.delore.cleanup.single`.
 
 **iOS**
 
-1. Set `DEVELOPMENT_TEAM` in `Config/Base.xcconfig`. Bundle ID `app.delore.ios`.
+1. Set `DEVELOPMENT_TEAM` in `Config/Base.xcconfig`. Bundle ID `app.retract.ios`.
 2. Archive **Release** → upload → TestFlight.
 3. Sandbox-buy monthly and yearly (optionally a promo SKU).
 
 **Android**
 
-1. Keep `applicationId` `app.delore.android`.
+1. Keep `applicationId` `app.retract.android`.
 2. `:app:bundleRelease` AAB → Play Console.
 3. Content rating + license testers → test purchase.
 

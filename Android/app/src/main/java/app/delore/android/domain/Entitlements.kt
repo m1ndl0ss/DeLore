@@ -43,8 +43,8 @@ data class ProductCatalog(
     val oneTimeCleanup: String,
     val proMonthly: String,
     val proYearly: String,
-    val proMonthlyPromo: String = "app.delore.pro.monthly.promo",
-    val proYearlyPromo: String = "app.delore.pro.yearly.promo",
+    val proMonthlyPromo: String = "app.retract.pro.monthly.promo",
+    val proYearlyPromo: String = "app.retract.pro.yearly.promo",
 ) {
     val all: List<String> get() = listOf(oneTimeCleanup, proMonthly, proYearly, proMonthlyPromo, proYearlyPromo)
     val subscriptions: List<String> get() = listOf(proMonthly, proYearly, proMonthlyPromo, proYearlyPromo)

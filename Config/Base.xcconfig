@@ -9,7 +9,7 @@ CURRENT_PROJECT_VERSION = 1
 // Set your Apple Developer Team ID here or in Xcode's Signing & Capabilities.
 DEVELOPMENT_TEAM =
 
-PRODUCT_BUNDLE_IDENTIFIER = app.delore.ios
+PRODUCT_BUNDLE_IDENTIFIER = app.retract.ios
 
 // Public copies of in-app Privacy / Terms for store listings. Host docs/legal/*.html
 // at these URLs before submitting. The app itself shows Privacy, FAQ, and Terms in-app.
@@ -18,11 +18,11 @@ DL_SUPPORT_URL = mailto:contact@kandalintsev.com
 DL_TERMS_URL = https:/$()/kandalintsev.com/retract/terms
 
 // Must match App Store Connect and App/StoreKit/DeLore.storekit.
-DL_PRODUCT_ONE_TIME = app.delore.cleanup.single
-DL_PRODUCT_PRO_MONTHLY = app.delore.pro.monthly
-DL_PRODUCT_PRO_YEARLY = app.delore.pro.yearly
-DL_PRODUCT_PRO_MONTHLY_PROMO = app.delore.pro.monthly.promo
-DL_PRODUCT_PRO_YEARLY_PROMO = app.delore.pro.yearly.promo
+DL_PRODUCT_ONE_TIME = app.retract.cleanup.single
+DL_PRODUCT_PRO_MONTHLY = app.retract.pro.monthly
+DL_PRODUCT_PRO_YEARLY = app.retract.pro.yearly
+DL_PRODUCT_PRO_MONTHLY_PROMO = app.retract.pro.monthly.promo
+DL_PRODUCT_PRO_YEARLY_PROMO = app.retract.pro.yearly.promo
 
 // Lifetime number of messages free users can clean.
 DL_FREE_LIMIT = 100
@@ -32,4 +32,3 @@ DL_ANALYTICS_ENABLED = NO
 
 // Publisher notify (see workers/notify). Leave empty to disable. Override in Secrets.xcconfig.
 DL_NOTIFY_URL =
-DL_NOTIFY_SECRET =

@@ -1,6 +1,6 @@
 name: DeLore
 options:
-  bundleIdPrefix: app.delore
+  bundleIdPrefix: app.retract
   deploymentTarget:
     iOS: "17.0"
   developmentLanguage: en
@@ -65,7 +65,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: app.delore.ios.tests
+        PRODUCT_BUNDLE_IDENTIFIER: app.retract.ios.tests
     dependencies:
       - target: DeLore
       - package: DeLoreKit
