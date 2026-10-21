@@ -22,7 +22,7 @@ android {
         applicationId = "app.retract.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = 2
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -45,11 +45,26 @@ android {
         buildConfigField("String", "NOTIFY_URL", "\"${localProp("NOTIFY_URL")}\"")
     }
 
+    // Play upload key. Keystore + credentials live outside version control
+    // (Android/keystore/ + local.properties); builds stay unsigned if absent.
+    signingConfigs {
+        create("upload") {
+            val storePath = localProperties.getProperty("UPLOAD_STORE_FILE").orEmpty()
+            if (storePath.isNotEmpty()) {
+                storeFile = rootProject.file(storePath)
+                storePassword = localProperties.getProperty("UPLOAD_STORE_PASSWORD")
+                keyAlias = localProperties.getProperty("UPLOAD_KEY_ALIAS")
+                keyPassword = localProperties.getProperty("UPLOAD_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("upload").takeIf { it.storeFile != null }
         }
         debug {
             applicationIdSuffix = ".debug"

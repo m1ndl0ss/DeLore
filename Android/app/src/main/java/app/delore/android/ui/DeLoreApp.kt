@@ -982,6 +982,11 @@ private fun HomeScreen(model: AppViewModel) {
                 Appear(160) {
                     ConnectButton(if (model.hasLiveSession) "Load chats" else "Connect Instagram") { model.showConnect() }
                 }
+                if (!model.hasLiveSession && !state.isDemoMode) {
+                    Appear(220) {
+                        QuietButton("Try it with a sample inbox") { model.openSampleInbox() }
+                    }
+                }
             }
             if (!model.entitlements.isPro && (model.hasLiveSession || state.isDemoMode)) {
                 UpgradeDock(

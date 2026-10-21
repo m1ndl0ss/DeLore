@@ -40,3 +40,6 @@ preview/
 Android/delore-tabs.png
 Android/retract-*.png
 
+
+# Play upload keystore — never commit
+Android/keystore/
