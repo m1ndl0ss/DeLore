@@ -84,6 +84,8 @@ data class UiState(
     val progress: CleanupProgress? = null,
     val tryAgainAt: Long? = null,
     val sessionBusy: Boolean = false,
+    /** Server-side delete failed during "Delete my data"; nothing local was removed yet. */
+    val eraseServerFailure: Boolean = false,
 )
 
 class AppViewModel(
@@ -416,7 +418,20 @@ class AppViewModel(
         maybeShowTermsNotice()
     }
 
-    fun eraseEverything() = viewModelScope.launch {
+    fun eraseEverything(skipServerDelete: Boolean = false) = viewModelScope.launch {
+        _state.update { it.copy(eraseServerFailure = false) }
+        // Delete the server-side usage record first, while the user id is still
+        // in the vault. On failure keep local data so the user can retry.
+        if (!skipServerDelete && !env.isDemoMode) {
+            val account = env.loadSession()
+            if (account != null && account.userID.isNotBlank() && env.publisherNotify.auth.isConfigured) {
+                val deleted = env.publisherNotify.freeUsage.delete(account.userID, account.displayName)
+                if (!deleted) {
+                    _state.update { it.copy(eraseServerFailure = true) }
+                    return@launch
+                }
+            }
+        }
         work.cancelInbox()
         engine?.cancel()
         work.releaseEngine()
@@ -427,6 +442,8 @@ class AppViewModel(
             UiState(route = Route.HOME, tab = MainTab.SETTINGS, isDemoMode = false, hasLiveSession = false)
         }
     }
+
+    fun dismissEraseFailure() = _state.update { it.copy(eraseServerFailure = false) }
 
     fun logOutInstagram() = viewModelScope.launch {
         work.cancelInbox()

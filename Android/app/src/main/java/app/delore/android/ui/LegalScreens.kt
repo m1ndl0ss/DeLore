@@ -245,7 +245,7 @@ fun PrivacySheet(onBack: (() -> Unit)? = null) {
         }
         Card {
             Text("Your choices", color = Palette.ink(), fontWeight = FontWeight.Bold)
-            Text("Disconnect & delete my data clears local Instagram session and library data on this phone. Uninstall also removes local data. Manage or cancel subscriptions in Google Play — deleting the app does not cancel billing by itself.", color = Palette.secondaryInk())
+            Text("Disconnect & delete my data clears local Instagram session and library data on this phone, and deletes your server-side usage record (user id, username, free-usage count). You can also request deletion at kandalintsev.com/retract/delete-data. Uninstall also removes local data. Manage or cancel subscriptions in Google Play — deleting the app does not cancel billing by itself.", color = Palette.secondaryInk())
         }
         Text("Retract isn't affiliated with, endorsed by, or connected to Instagram or Meta.", color = Palette.secondaryInk(), fontSize = 13.sp)
         Spacer(Modifier.height(Spacing.xl))

@@ -76,6 +76,8 @@ final class AppModel {
     private(set) var isLoadingOverview = false
     private(set) var history: [CleanupHistoryEntry] = []
     private(set) var isDemoMode = false
+    /// Server-side delete failed during "Delete my data"; nothing local was removed yet.
+    var eraseServerFailure = false
 
     let env: AppEnvironment
     var entitlements: EntitlementManager { env.entitlements }
@@ -533,7 +535,24 @@ final class AppModel {
 
     // MARK: Erase
 
-    func eraseEverything() async {
+    func eraseEverything(skipServerDelete: Bool = false) async {
+        eraseServerFailure = false
+        // Delete the server-side usage record first, while the user id is still
+        // in the vault. On failure keep local data so the user can retry.
+        if !skipServerDelete, !env.isDemoMode,
+           let account = try? env.sessionVault.loadSession(),
+           !account.userID.isEmpty,
+           env.publisherNotify.workerAuth.baseURL != nil {
+            let deleted = await FreeUsageSync.deleteAll(
+                auth: env.publisherNotify.workerAuth,
+                userID: account.userID,
+                username: account.displayName
+            )
+            guard deleted else {
+                eraseServerFailure = true
+                return
+            }
+        }
         if let session, !session.isFinished { await session.cancel() }
         isSessionPresented = false
         session = nil

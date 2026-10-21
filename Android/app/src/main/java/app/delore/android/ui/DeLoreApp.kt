@@ -470,6 +470,27 @@ private fun AccountScreen(model: AppViewModel) {
             dismissButton = { QuietButton("Keep it") { confirmErase = false } },
         )
     }
+    EraseFailureDialog(model)
+}
+
+@Composable
+private fun EraseFailureDialog(model: AppViewModel) {
+    val failed = model.state.collectAsState().value.eraseServerFailure
+    if (!failed) return
+    AlertDialog(
+        onDismissRequest = { model.dismissEraseFailure() },
+        title = { Text("Couldn't delete your server data") },
+        text = { Text("The Retract server couldn't be reached, so your usage record is still there. Nothing on this phone was removed yet. You can also email contact@kandalintsev.com.") },
+        confirmButton = {
+            QuietButton("Try again", tint = Palette.danger()) { model.eraseEverything() }
+        },
+        dismissButton = {
+            Row {
+                QuietButton("Phone only", tint = Palette.danger()) { model.eraseEverything(skipServerDelete = true) }
+                QuietButton("Cancel") { model.dismissEraseFailure() }
+            }
+        },
+    )
 }
 
 @Composable
@@ -1106,6 +1127,7 @@ private fun SettingsSheet(model: AppViewModel) {
             dismissButton = { QuietButton("Cancel") { confirmErase = false } },
         )
     }
+    EraseFailureDialog(model)
 }
 
 @Composable

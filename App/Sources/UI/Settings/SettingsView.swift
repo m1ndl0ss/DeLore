@@ -118,6 +118,21 @@ struct SettingsView: View {
             } message: {
                 Text("Any cleanup in progress stops. Messages already unsent stay unsent.")
             }
+            .alert(
+                "Couldn't delete your server data",
+                isPresented: Binding(
+                    get: { model.eraseServerFailure },
+                    set: { model.eraseServerFailure = $0 }
+                )
+            ) {
+                Button("Try again", role: .destructive) { Task { await model.eraseEverything() } }
+                Button("Delete from this phone only", role: .destructive) {
+                    Task { await model.eraseEverything(skipServerDelete: true) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The Retract server couldn't be reached, so your usage record is still there. Nothing on this phone was removed yet. You can also email contact@kandalintsev.com.")
+            }
             .sheet(isPresented: $showingPaywall) {
                 PaywallView(context: .settings)
                     .environment(model)

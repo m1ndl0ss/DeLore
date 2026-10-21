@@ -136,6 +136,21 @@ struct SettingsTabView: View {
         } message: {
             Text("Login, chats, history and progress leave this phone. Already unsent messages stay unsent. Purchases stay with your Apple ID.")
         }
+        .alert(
+            "Couldn't delete your server data",
+            isPresented: Binding(
+                get: { model.eraseServerFailure },
+                set: { model.eraseServerFailure = $0 }
+            )
+        ) {
+            Button("Try again", role: .destructive) { Task { await model.eraseEverything() } }
+            Button("Delete from this phone only", role: .destructive) {
+                Task { await model.eraseEverything(skipServerDelete: true) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The Retract server couldn't be reached, so your usage record is still there. Nothing on this phone was removed yet. You can also email contact@kandalintsev.com.")
+        }
         .task { await model.reloadOverview() }
     }
 

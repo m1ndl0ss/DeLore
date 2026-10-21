@@ -68,7 +68,7 @@ struct PrivacyView: View {
                 Card {
                     Text("Your choices")
                         .font(.title(.headline))
-                    Text("Disconnect & delete my data clears local Instagram session and library data on this phone. Uninstall also removes local data. Manage or cancel subscriptions in Settings → Apple ID → Subscriptions — deleting the app does not cancel billing by itself.")
+                    Text("Disconnect & delete my data clears local Instagram session and library data on this phone, and deletes your server-side usage record (user id, username, free-usage count). You can also request deletion at kandalintsev.com/retract/delete-data. Uninstall also removes local data. Manage or cancel subscriptions in Settings → Apple ID → Subscriptions — deleting the app does not cancel billing by itself.")
                         .font(.subheadline)
                         .foregroundStyle(Palette.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)

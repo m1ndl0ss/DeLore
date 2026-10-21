@@ -33,6 +33,16 @@ interface NotifyBody {
   idempotencyKey?: string;
 }
 
+interface DeleteBody {
+  instagramUserId: string;
+  platform: "ios" | "android";
+  instagramUsername?: string;
+}
+
+interface DeleteRequestBody {
+  instagramUsername: string;
+}
+
 type FreeUsageOp = "pull" | "sync" | "increment";
 
 interface FreeUsageBody {
@@ -66,6 +76,12 @@ const WRITE_RATE_MAX_USER = 80;
 const notifyHits = new Map<string, { count: number; windowStart: number }>();
 const NOTIFY_RATE_WINDOW_MS = 60 * 60 * 1000;
 const NOTIFY_RATE_MAX_IP = 12;
+const deleteHits = new Map<string, { count: number; windowStart: number }>();
+const DELETE_RATE_WINDOW_MS = 60 * 60 * 1000;
+const DELETE_RATE_MAX_IP = 10;
+const deleteRequestHits = new Map<string, { count: number; windowStart: number }>();
+const DELETE_REQUEST_RATE_WINDOW_MS = 60 * 60 * 1000;
+const DELETE_REQUEST_RATE_MAX_IP = 5;
 
 function corsHeaders(): HeadersInit {
   return {
@@ -406,6 +422,132 @@ async function handleFreeUsage(request: Request, env: Env): Promise<Response> {
   return json(200, { ok: true, freeUsed: merged });
 }
 
+/**
+ * Full account deletion for the in-app "Delete my data" button.
+ * Removes the usage record and every idempotency marker for the user, then
+ * emails the publisher so the matching ops emails (connect / purchase /
+ * complimentary — the only place the username is stored) get purged too.
+ *
+ * Trade-off: a full delete also resets the free-tier allowance, so a user can
+ * delete + reconnect to mint a fresh free quota. We keep the honest full
+ * delete. If abuse ever shows up, switch to the alternative below, which
+ * keeps only an HMAC of the user id plus the count (no recoverable identity):
+ *
+ *   const key = await hmacKey(env.TOKEN_SIGNING_KEY);
+ *   const mac = b64url(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`tombstone:${userId}`)));
+ *   await env.FREE_USAGE.put(`tomb:${mac}`, JSON.stringify({ used: stored, at: new Date().toISOString() }));
+ *   // ...and on /v1/free-usage, seed a new `free:` record from `tomb:` when present.
+ */
+async function handleDelete(request: Request, env: Env): Promise<Response> {
+  if (!env.FREE_USAGE) return json(500, { error: "misconfigured" });
+
+  const ip = clientIp(request);
+  if (!allowRate(deleteHits, ip, Date.now(), DELETE_RATE_WINDOW_MS, DELETE_RATE_MAX_IP)) {
+    return json(429, { error: "rate_limited" });
+  }
+
+  const raw = await request.text();
+  if (raw.length > MAX_BODY) return json(413, { error: "too_large" });
+
+  let body: DeleteBody;
+  try {
+    body = JSON.parse(raw) as DeleteBody;
+  } catch {
+    return json(400, { error: "invalid_json" });
+  }
+
+  if (body.platform !== "ios" && body.platform !== "android") {
+    return json(400, { error: "bad_platform" });
+  }
+  const userId = cleanUserId(body.instagramUserId || "");
+  if (!userId) return json(400, { error: "bad_user_id" });
+
+  await env.FREE_USAGE.delete(`free:${userId}`);
+  let cursor: string | undefined;
+  do {
+    const page = await env.FREE_USAGE.list({ prefix: `idem:${userId}:`, cursor });
+    await Promise.all(page.keys.map((key) => env.FREE_USAGE.delete(key.name)));
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+
+  // Connect / purchase event records only exist as ops emails — tell the
+  // publisher to purge them. Best effort: KV is already gone either way.
+  if (env.RESEND_API_KEY && env.NOTIFY_TO && env.RESEND_FROM) {
+    const username = body.instagramUsername ? cleanUsername(body.instagramUsername) : null;
+    const who = username ? `@${username}` : `user id ${userId}`;
+    await sendResend(
+      env,
+      `Retract DELETE ${who} (${body.platform})`,
+      [
+        `In-app data deletion completed for ${who}.`,
+        `Instagram user id: ${userId}`,
+        username ? `Instagram username: @${username}` : "Instagram username: (not provided)",
+        `Platform: ${body.platform}`,
+        `At: ${new Date().toISOString()}`,
+        "",
+        "Server usage record and idempotency keys are already deleted.",
+        "Action required: purge this user's connect/purchase/complimentary ops emails within 30 days.",
+      ].join("\n"),
+    ).catch(() => undefined);
+  }
+
+  // 204 whether or not a record existed — don't leak existence.
+  return new Response(null, { status: 204, headers: corsHeaders() });
+}
+
+/**
+ * Unauthenticated web form on kandalintsev.com/retract/delete-data.
+ * A bare username must not delete anything directly (anyone could type a
+ * stranger's handle) — it only emails the publisher a deletion request that
+ * is verified and processed manually.
+ */
+async function handleDeleteRequest(request: Request, env: Env): Promise<Response> {
+  const ip = clientIp(request);
+  const now = Date.now();
+  if (!allowRate(deleteRequestHits, ip, now, DELETE_REQUEST_RATE_WINDOW_MS, DELETE_REQUEST_RATE_MAX_IP)) {
+    return json(429, { error: "rate_limited" });
+  }
+
+  const raw = await request.text();
+  if (raw.length > MAX_BODY) return json(413, { error: "too_large" });
+
+  let body: DeleteRequestBody;
+  try {
+    body = JSON.parse(raw) as DeleteRequestBody;
+  } catch {
+    return json(400, { error: "invalid_json" });
+  }
+
+  const username = cleanUsername(body.instagramUsername || "");
+  if (!username) return json(400, { error: "bad_username" });
+
+  if (!env.RESEND_API_KEY || !env.NOTIFY_TO || !env.RESEND_FROM) {
+    return json(500, { error: "misconfigured" });
+  }
+
+  // One request per username per day is plenty; swallow repeats quietly.
+  if (!alreadySeen(`delreq:${username}:${new Date().toISOString().slice(0, 10)}`, now)) {
+    const mail = await sendResend(
+      env,
+      `Retract data deletion request @${username} (web)`,
+      [
+        `Deletion requested via kandalintsev.com/retract/delete-data.`,
+        `Instagram username: @${username}`,
+        `At: ${new Date().toISOString()}`,
+        "",
+        "Action required within 30 days:",
+        `1. Find the user id for @${username} in the connect ops email.`,
+        "2. Delete the KV records (or POST /v1/delete with NOTIFY_SECRET).",
+        "3. Purge this user's connect/purchase/complimentary ops emails.",
+      ].join("\n"),
+    );
+    if (!mail.ok) return json(502, { error: "email_failed" });
+  }
+
+  // 204 whether or not we know the user — don't leak existence.
+  return new Response(null, { status: 204, headers: corsHeaders() });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS") {
@@ -421,6 +563,10 @@ export default {
     if (url.pathname === "/v1/token") {
       return handleToken(request, env);
     }
+    // Unauthenticated by design: the public web form posts here.
+    if (url.pathname === "/v1/delete-request") {
+      return handleDeleteRequest(request, env);
+    }
 
     if (!(await authorize(request, env))) {
       return json(401, { error: "unauthorized" });
@@ -431,6 +577,9 @@ export default {
     }
     if (url.pathname === "/v1/free-usage") {
       return handleFreeUsage(request, env);
+    }
+    if (url.pathname === "/v1/delete") {
+      return handleDelete(request, env);
     }
 
     return json(404, { error: "not_found" });

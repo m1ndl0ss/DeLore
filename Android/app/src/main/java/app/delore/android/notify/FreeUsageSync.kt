@@ -33,6 +33,36 @@ class FreeUsageSync(private val auth: WorkerAuth) {
             .put("platform", "android"),
     )
 
+    /**
+     * Deletes every server-side record for this account ("Delete my data").
+     * True only on a 2xx from the worker — callers must not wipe local state on false.
+     */
+    suspend fun delete(userId: String, username: String?): Boolean = withContext(Dispatchers.IO) {
+        if (userId.isBlank()) return@withContext false
+        val endpoint = auth.url("v1/delete") ?: return@withContext false
+        val token = auth.bearerToken() ?: return@withContext false
+        val body = JSONObject()
+            .put("instagramUserId", userId)
+            .put("platform", "android")
+        PublisherNotify.clean(username)?.let { body.put("instagramUsername", it) }
+        runCatching {
+            val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 8_000
+                readTimeout = 8_000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                setRequestProperty("Authorization", "Bearer $token")
+            }
+            try {
+                OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
+                connection.responseCode in 200..299
+            } finally {
+                connection.disconnect()
+            }
+        }.getOrDefault(false)
+    }
+
     private suspend fun post(body: JSONObject): Int? = withContext(Dispatchers.IO) {
         if (body.optString("instagramUserId").isBlank()) return@withContext null
         val endpoint = auth.url("v1/free-usage") ?: return@withContext null
