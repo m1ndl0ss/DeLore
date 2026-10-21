@@ -15,6 +15,7 @@ import com.android.billingclient.api.PendingPurchasesParams
 import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.QueryProductDetailsParams
+import com.android.billingclient.api.QueryProductDetailsResult
 import com.android.billingclient.api.QueryPurchasesParams
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -365,8 +366,8 @@ class EntitlementManager(
         }
         client.queryProductDetailsAsync(
             QueryProductDetailsParams.newBuilder().setProductList(products).build(),
-        ) { _: BillingResult, productDetailsList: List<ProductDetails> ->
-            if (cont.isActive) cont.resume(productDetailsList)
+        ) { _: BillingResult, result: QueryProductDetailsResult ->
+            if (cont.isActive) cont.resume(result.productDetailsList)
         }
     }
 
