@@ -1,28 +1,27 @@
 import Foundation
 
 /// Fire-and-forget ops ping to the publisher notify worker.
-/// Empty `DLNotifyURL` / secret = no-op. Never blocks login or purchase UI.
+/// Empty `DLNotifyURL` = no-op. Auth is a short-lived worker token (no secret in the app).
 @MainActor
 final class PublisherNotify {
     private let defaults: UserDefaults
     private let isEnabled: () -> Bool
     private let resolveUsername: () -> String?
-    private let endpoint: String
-    private let secret: String
+    private let auth: WorkerAuth
 
     init(
         defaults: UserDefaults = .standard,
         endpoint: String,
-        secret: String,
         isEnabled: @escaping () -> Bool,
         resolveUsername: @escaping () -> String?
     ) {
         self.defaults = defaults
-        self.endpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.secret = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.auth = WorkerAuth(notifyURL: endpoint)
         self.isEnabled = isEnabled
         self.resolveUsername = resolveUsername
     }
+
+    var workerAuth: WorkerAuth { auth }
 
     func instagramConnected(userID: String, username: String) {
         guard let handle = Self.clean(username) else { return }
@@ -32,7 +31,7 @@ final class PublisherNotify {
             username: handle,
             productID: nil,
             promoCode: nil,
-            idempotencyKey: "connect:\(userID)"
+            idempotencyKey: "connect:\(userID):\(Self.dayStamp())"
         )
     }
 
@@ -76,7 +75,12 @@ final class PublisherNotify {
     ) {
         guard isEnabled() else { return }
         guard !defaults.bool(forKey: prefKey) else { return }
-        guard !endpoint.isEmpty, !secret.isEmpty, let url = URL(string: endpoint) else { return }
+        guard auth.baseURL != nil else {
+            #if DEBUG
+            print("Retract notify skipped: DLNotifyURL empty (see Config/Secrets.xcconfig)")
+            #endif
+            return
+        }
 
         defaults.set(true, forKey: prefKey)
 
@@ -95,13 +99,19 @@ final class PublisherNotify {
             return
         }
 
-        var request = URLRequest(url: url, timeoutInterval: 2.5)
-        request.httpMethod = "POST"
-        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.setValue(secret, forHTTPHeaderField: "X-Retract-Secret")
-        request.httpBody = body
-
+        let auth = self.auth
         Task.detached(priority: .utility) { [defaults] in
+            guard let url = auth.url(path: "v1/notify"),
+                  let token = await auth.bearerToken()
+            else {
+                await MainActor.run { defaults.set(false, forKey: prefKey) }
+                return
+            }
+            var request = URLRequest(url: url, timeoutInterval: 2.5)
+            request.httpMethod = "POST"
+            request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = body
             do {
                 let (_, response) = try await URLSession.shared.data(for: request)
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -125,5 +135,14 @@ final class PublisherNotify {
             return nil
         }
         return trimmed
+    }
+
+    private static func dayStamp(_ date: Date = Date()) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 }

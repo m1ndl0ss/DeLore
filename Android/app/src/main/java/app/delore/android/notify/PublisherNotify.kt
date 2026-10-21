@@ -15,14 +15,16 @@ import java.time.Instant
 
 /**
  * Fire-and-forget ops ping to the publisher notify worker.
- * Never blocks login or purchase UI. Empty BuildConfig URL = no-op.
+ * Auth is a short-lived worker token — no shared secret in the app.
  */
 class PublisherNotify(
     private val prefs: SharedPreferences,
     private val isEnabled: () -> Boolean,
     private val resolveUsername: () -> String?,
+    val auth: WorkerAuth = WorkerAuth(),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val freeUsage = FreeUsageSync(auth)
 
     fun instagramConnected(userId: String, username: String) {
         val handle = clean(username) ?: return
@@ -30,7 +32,7 @@ class PublisherNotify(
             prefKey = "notify.connect.$userId",
             event = "instagram_connected",
             username = handle,
-            idempotencyKey = "connect:$userId",
+            idempotencyKey = "connect:$userId:${dayStamp()}",
         )
     }
 
@@ -73,15 +75,19 @@ class PublisherNotify(
     ) {
         if (!isEnabled()) return
         if (prefs.getBoolean(prefKey, false)) return
-        val endpoint = BuildConfig.NOTIFY_URL.trim()
-        val secret = BuildConfig.NOTIFY_SECRET.trim()
-        if (endpoint.isEmpty() || secret.isEmpty()) return
+        if (!auth.isConfigured) {
+            if (BuildConfig.DEBUG) {
+                Log.w("Retract", "notify skipped: set NOTIFY_URL in android/local.properties")
+            }
+            return
+        }
 
-        // Mark before send so rapid double-calls don't spam; clear on hard failure below.
         prefs.edit().putBoolean(prefKey, true).apply()
 
         scope.launch {
             val ok = runCatching {
+                val token = auth.bearerToken() ?: return@runCatching false
+                val endpoint = auth.url("v1/notify") ?: return@runCatching false
                 val body = JSONObject()
                     .put("event", event)
                     .put("instagramUsername", username)
@@ -97,7 +103,7 @@ class PublisherNotify(
                     readTimeout = 2_500
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    setRequestProperty("X-Retract-Secret", secret)
+                    setRequestProperty("Authorization", "Bearer $token")
                 }
                 try {
                     OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
@@ -123,5 +129,8 @@ class PublisherNotify(
             if (trimmed.length > 64 || !trimmed.matches(Regex("^[A-Za-z0-9._]+$"))) return null
             return trimmed
         }
+
+        private fun dayStamp(): String =
+            java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()
     }
 }

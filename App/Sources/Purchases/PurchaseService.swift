@@ -51,16 +51,27 @@ protocol PurchaseService: Sendable {
 
 /// Unused one-time passes and the free allowance, kept in the Keychain so they survive
 /// reinstalls and aren't trivially editable.
+///
+/// Free usage is per Instagram account, kept locally and max-merged with the Retract worker
+/// so the same account shares one counter across devices. Never cleared on logout.
 struct PassLedger: Sendable {
     static let passesKey = "entitlements.passes"
     static let processedKey = "entitlements.processedTransactions"
+    /// Legacy device-wide counter; migrated into `freeUsedByAccountKey` on first account touch.
     static let freeUsedKey = "entitlements.freeUsed"
-    static let preservedKeys = [passesKey, processedKey, freeUsedKey]
+    static let freeUsedByAccountKey = "entitlements.freeUsedByAccount"
+    static let preservedKeys = [passesKey, processedKey, freeUsedKey, freeUsedByAccountKey]
 
     let store: SecretStore
 
     var passes: Int { integer(for: Self.passesKey) }
-    var freeMessagesUsed: Int { integer(for: Self.freeUsedKey) }
+
+    /// Free usage for a signed-in Instagram account. Nil / empty → 0.
+    func freeMessagesUsed(for userID: String?) -> Int {
+        guard let userID = normalized(userID) else { return 0 }
+        migrateLegacyIfNeeded(into: userID)
+        return usageByAccount()[userID] ?? 0
+    }
 
     private func integer(for key: String) -> Int {
         guard let value = try? store.string(for: key) else { return 0 }
@@ -83,9 +94,47 @@ struct PassLedger: Sendable {
         return true
     }
 
-    func addFreeUsage(_ count: Int) throws {
-        guard count > 0 else { return }
-        try store.set(String(freeMessagesUsed + count), for: Self.freeUsedKey)
+    func addFreeUsage(_ count: Int, accountUserID: String?) throws {
+        guard count > 0, let userID = normalized(accountUserID) else { return }
+        migrateLegacyIfNeeded(into: userID)
+        var map = usageByAccount()
+        map[userID, default: 0] += count
+        try store.set(JSONEncoder().encode(map), for: Self.freeUsedByAccountKey)
+    }
+
+    /// Raises local usage to at least `remote` for this account (cross-device max-merge).
+    @discardableResult
+    func mergeRemoteFreeUsage(_ remote: Int, accountUserID: String?) throws -> Int {
+        guard let userID = normalized(accountUserID) else { return 0 }
+        migrateLegacyIfNeeded(into: userID)
+        var map = usageByAccount()
+        let merged = max(map[userID] ?? 0, max(0, remote))
+        map[userID] = merged
+        try store.set(JSONEncoder().encode(map), for: Self.freeUsedByAccountKey)
+        return merged
+    }
+
+    private func normalized(_ userID: String?) -> String? {
+        let value = userID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value?.isEmpty == false ? value : nil
+    }
+
+    private func usageByAccount() -> [String: Int] {
+        guard let data = try? store.data(for: Self.freeUsedByAccountKey),
+              let map = try? JSONDecoder().decode([String: Int].self, from: data) else { return [:] }
+        return map
+    }
+
+    /// One-time: fold the old device-wide integer into this account, then drop the legacy key.
+    private func migrateLegacyIfNeeded(into userID: String) {
+        let legacy = integer(for: Self.freeUsedKey)
+        guard legacy > 0 else { return }
+        var map = usageByAccount()
+        if map[userID] == nil {
+            map[userID] = legacy
+            try? store.set(JSONEncoder().encode(map), for: Self.freeUsedByAccountKey)
+        }
+        try? store.removeValue(for: Self.freeUsedKey)
     }
 
     private var processedTransactions: Set<String> {

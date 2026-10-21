@@ -52,11 +52,32 @@ final class PassLedgerTests: XCTestCase {
         XCTAssertEqual(ledger.passes, 1)
     }
 
-    func testFreeUsageAccumulates() throws {
+    func testFreeUsageIsPerAccountAndSurvivesLogout() throws {
         let ledger = PassLedger(store: InMemorySecretStore())
-        try ledger.addFreeUsage(20)
-        try ledger.addFreeUsage(5)
-        XCTAssertEqual(ledger.freeMessagesUsed, 25)
+        try ledger.addFreeUsage(20, accountUserID: "ig-1")
+        try ledger.addFreeUsage(5, accountUserID: "ig-1")
+        XCTAssertEqual(ledger.freeMessagesUsed(for: "ig-1"), 25)
+        XCTAssertEqual(ledger.freeMessagesUsed(for: nil), 0)
+        try ledger.addFreeUsage(3, accountUserID: "ig-2")
+        XCTAssertEqual(ledger.freeMessagesUsed(for: "ig-2"), 3)
+        XCTAssertEqual(ledger.freeMessagesUsed(for: "ig-1"), 25, "other accounts keep their own count")
+    }
+
+    func testLegacyFreeUsageMigratesOntoFirstAccount() throws {
+        let store = InMemorySecretStore()
+        try store.set("40", for: PassLedger.freeUsedKey)
+        let ledger = PassLedger(store: store)
+        XCTAssertEqual(ledger.freeMessagesUsed(for: "ig-1"), 40)
+        XCTAssertEqual(ledger.freeMessagesUsed(for: "ig-2"), 0)
+        XCTAssertNil(try store.string(for: PassLedger.freeUsedKey))
+    }
+
+    func testMergeRemoteFreeUsageTakesMax() throws {
+        let ledger = PassLedger(store: InMemorySecretStore())
+        try ledger.addFreeUsage(10, accountUserID: "ig-1")
+        XCTAssertEqual(try ledger.mergeRemoteFreeUsage(25, accountUserID: "ig-1"), 25)
+        XCTAssertEqual(try ledger.mergeRemoteFreeUsage(12, accountUserID: "ig-1"), 25)
+        XCTAssertEqual(ledger.freeMessagesUsed(for: "ig-1"), 25)
     }
 
     func testConsumingWithoutPassFails() throws {
@@ -68,7 +89,13 @@ final class PassLedgerTests: XCTestCase {
 final class EntitlementManagerTests: XCTestCase {
     func testPaywallOnlyOffersSubscriptions() async throws {
         let ledger = PassLedger(store: InMemorySecretStore())
-        let manager = EntitlementManager(service: MockPurchaseService(ledger: ledger), ledger: ledger, freeLimit: 50, analytics: .disabled)
+        let manager = EntitlementManager(
+            service: MockPurchaseService(ledger: ledger),
+            ledger: ledger,
+            freeLimit: 50,
+            analytics: .disabled,
+            accountUserID: { "ig-1" }
+        )
         await manager.loadProducts()
         XCTAssertFalse(manager.products.contains { $0.kind == .oneTimeCleanup })
         let yearly = try XCTUnwrap(manager.products.first { $0.kind == .proYearly })
@@ -89,20 +116,50 @@ final class EntitlementManagerTests: XCTestCase {
 
     func testFreeTierIsLimited() {
         let ledger = PassLedger(store: InMemorySecretStore())
-        let manager = EntitlementManager(service: MockPurchaseService(ledger: ledger), ledger: ledger, freeLimit: 100, analytics: .disabled)
+        let manager = EntitlementManager(
+            service: MockPurchaseService(ledger: ledger),
+            ledger: ledger,
+            freeLimit: 100,
+            analytics: .disabled,
+            accountUserID: { "ig-1" }
+        )
         XCTAssertEqual(manager.allowance(requestedCount: 200, usesAdvancedFilters: false), .limited(remainingFree: 100))
         manager.recordFreeUsage(30)
         XCTAssertEqual(manager.remainingFree, 70)
     }
 
-    func testComplimentaryPromoUnlocksProWithoutStore() async {
+    func testComplimentaryAllowlistGrantsProWithoutStore() async {
+        var account: String? = "ig-1"
+        var username: String? = "matvey"
+        let store = InMemorySecretStore()
+        let book = PromoCampaignBook(store: store)
+        XCTAssertTrue(book.replaceCampaign(codes: ["RETRACT10"], percentOff: 10, complimentaryUsernames: ["matvey"]))
+        let ledger = PassLedger(store: store)
+        let manager = EntitlementManager(
+            service: MockPurchaseService(ledger: ledger),
+            ledger: ledger,
+            freeLimit: 100,
+            analytics: .disabled,
+            promo: PromoVault(store: store, book: book),
+            accountUserID: { account },
+            accountUsername: { username }
+        )
+        await manager.refresh()
+        XCTAssertTrue(manager.isPro)
+        username = "someoneelse"
+        await manager.refresh()
+        XCTAssertFalse(manager.isPro, "allowlist is per signed-in username")
+        account = nil
+        username = "matvey"
+        await manager.refresh()
+        XCTAssertFalse(manager.isPro, "unsigned-in account cannot keep Pro")
+    }
+
+    func testBinaryComplimentaryCodeIsGone() {
         let ledger = PassLedger(store: InMemorySecretStore())
         let manager = EntitlementManager(service: MockPurchaseService(ledger: ledger), ledger: ledger, freeLimit: 100, analytics: .disabled)
+        XCTAssertEqual(manager.redeemPromo("kandal24"), .invalid(remaining: 3))
         XCTAssertFalse(manager.isPro)
-        XCTAssertEqual(manager.redeemPromo("kandal24"), .applied(.complimentary))
-        XCTAssertTrue(manager.isPro)
-        await manager.refresh()
-        XCTAssertTrue(manager.isPro, "store refresh must not strip complimentary Pro")
     }
 
     func testPercentOffBuysThePromoStoreProduct() async {
@@ -112,7 +169,8 @@ final class EntitlementManagerTests: XCTestCase {
             service: service,
             ledger: ledger,
             freeLimit: 100,
-            analytics: .disabled
+            analytics: .disabled,
+            accountUserID: { "ig-1" }
         )
         await manager.loadProducts()
         XCTAssertEqual(manager.products.count, 2)

@@ -63,16 +63,30 @@ class SessionVault(private val store: SecretStore) {
     fun clear() = store.remove(key)
 }
 
+/**
+ * Unused one-time passes and the free allowance.
+ *
+ * Free usage is per Instagram account, kept locally and max-merged with the Retract worker
+ * so the same account shares one counter across devices. Never cleared on logout.
+ */
 class PassLedger(private val store: SecretStore) {
     companion object {
         const val PASSES = "entitlements.passes"
         const val PROCESSED = "entitlements.processedTransactions"
+        /** Legacy device-wide counter; migrated into [FREE_USED_BY_ACCOUNT] on first account touch. */
         const val FREE_USED = "entitlements.freeUsed"
-        val preservedKeys = listOf(PASSES, PROCESSED, FREE_USED)
+        const val FREE_USED_BY_ACCOUNT = "entitlements.freeUsedByAccount"
+        val preservedKeys = listOf(PASSES, PROCESSED, FREE_USED, FREE_USED_BY_ACCOUNT)
     }
 
     val passes: Int get() = integer(PASSES)
-    val freeMessagesUsed: Int get() = integer(FREE_USED)
+
+    /** Free usage for a signed-in Instagram account. Null / empty → 0. */
+    fun freeMessagesUsed(forUserId: String?): Int {
+        val userId = normalize(forUserId) ?: return 0
+        migrateLegacyIfNeeded(userId)
+        return usageByAccount()[userId] ?: 0
+    }
 
     private fun integer(key: String): Int = store.string(key)?.toIntOrNull() ?: 0
 
@@ -91,9 +105,59 @@ class PassLedger(private val store: SecretStore) {
         return true
     }
 
-    fun addFreeUsage(count: Int) {
+    fun addFreeUsage(count: Int, accountUserId: String?) {
         if (count <= 0) return
-        store.set((freeMessagesUsed + count).toString(), FREE_USED)
+        val userId = normalize(accountUserId) ?: return
+        migrateLegacyIfNeeded(userId)
+        val map = usageByAccount().toMutableMap()
+        map[userId] = (map[userId] ?: 0) + count
+        saveUsage(map)
+    }
+
+    /** Raises local usage to at least [remote] for this account (cross-device max-merge). */
+    fun mergeRemoteFreeUsage(remote: Int, accountUserId: String?): Int {
+        val userId = normalize(accountUserId) ?: return 0
+        migrateLegacyIfNeeded(userId)
+        val map = usageByAccount().toMutableMap()
+        val merged = maxOf(map[userId] ?: 0, maxOf(0, remote))
+        map[userId] = merged
+        saveUsage(map)
+        return merged
+    }
+
+    private fun normalize(userId: String?): String? =
+        userId?.trim()?.takeIf { it.isNotEmpty() }
+
+    private fun usageByAccount(): Map<String, Int> {
+        val raw = store.string(FREE_USED_BY_ACCOUNT)?.takeIf { it.isNotBlank() } ?: return emptyMap()
+        return runCatching {
+            val json = org.json.JSONObject(raw)
+            buildMap {
+                val keys = json.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    put(key, json.optInt(key, 0))
+                }
+            }
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun saveUsage(map: Map<String, Int>) {
+        val json = org.json.JSONObject()
+        map.forEach { (key, value) -> json.put(key, value) }
+        store.set(json.toString(), FREE_USED_BY_ACCOUNT)
+    }
+
+    /** One-time: fold the old device-wide integer into this account, then drop the legacy key. */
+    private fun migrateLegacyIfNeeded(userId: String) {
+        val legacy = integer(FREE_USED)
+        if (legacy <= 0) return
+        val map = usageByAccount().toMutableMap()
+        if (userId !in map) {
+            map[userId] = legacy
+            saveUsage(map)
+        }
+        store.remove(FREE_USED)
     }
 
     private fun processedTransactions(): Set<String> =

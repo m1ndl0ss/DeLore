@@ -117,6 +117,7 @@ final class AppModel {
                 try? env.jobStore.discardActiveJob()
                 return
             }
+            entitlements.setTracksFreeUnsent(CleanupBilling.billing(for: job.id) == .free)
             attachSession(CleanupSessionModel(engine: engine, initial: progress, entitlements: entitlements))
             isSessionPresented = true
             switch job.status {
@@ -239,6 +240,7 @@ final class AppModel {
         }
         loginPurpose = nil
         isDemoMode = env.isDemoMode
+        Task { await entitlements.refresh() }
         let shouldSync: Bool
         switch purpose {
         case .connect, .refresh:
@@ -484,7 +486,16 @@ final class AppModel {
 
     /// Starts a confirmed job, charging the right entitlement.
     func startCleanup(_ prepared: PreparedCleanup) async {
-        guard case let .allowed(_, consumesPass, usesFreeAllowance) = prepared.decision else { return }
+        var decision = prepared.decision
+        // Pull server free-usage before starting so reinstall / multi-device can't refill the free tier.
+        if case .allowed(_, _, true) = decision {
+            await entitlements.syncFreeUsage()
+            decision = entitlements.allowance(
+                requestedCount: prepared.count,
+                usesAdvancedFilters: prepared.job.request.filter.isAdvanced
+            )
+        }
+        guard case let .allowed(_, consumesPass, usesFreeAllowance) = decision else { return }
         let billing: CleanupBilling
         if consumesPass {
             guard entitlements.consumePass() else { return }
@@ -495,6 +506,7 @@ final class AppModel {
             billing = .pro
         }
         CleanupBilling.record(billing, for: prepared.job.id)
+        entitlements.setTracksFreeUnsent(billing == .free)
 
         do {
             env.webBrowser.attachIfNeeded()
@@ -539,6 +551,7 @@ final class AppModel {
         history = []
         isDemoMode = false
         didPromptDeletionLogin = false
+        await entitlements.refresh()
         tab = .settings
         withAnimation { route = .home }
     }
@@ -559,6 +572,7 @@ final class AppModel {
         overview = nil
         history = []
         isDemoMode = false
+        await entitlements.refresh()
         await reloadOverview()
     }
 }

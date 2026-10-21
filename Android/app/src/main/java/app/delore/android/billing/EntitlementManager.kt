@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import app.delore.android.BuildConfig
 import app.delore.android.domain.EntitlementState
+import app.delore.android.notify.FreeUsageSync
 import app.delore.android.secrets.PassLedger
 import com.android.billingclient.api.AcknowledgePurchaseParams
 import com.android.billingclient.api.BillingClient
@@ -16,7 +17,10 @@ import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -44,13 +48,16 @@ class EntitlementManager(
     private val ledger: PassLedger,
     private val promo: PromoVault,
     val freeLimit: Int = BuildConfig.FREE_LIMIT,
+    private val accountUserId: () -> String? = { null },
+    private val accountUsername: () -> String? = { null },
+    private val freeUsage: FreeUsageSync? = null,
     private val onSubscriptionPurchased: ((productId: String, promoCode: String?, purchaseToken: String) -> Unit)? = null,
     private val onComplimentaryUnlocked: ((promoCode: String) -> Unit)? = null,
 ) {
     var state: EntitlementState = EntitlementState(
-        isPro = promo.isComplimentary,
+        isPro = promo.isComplimentaryUsername(accountUsername()),
         cleanupPasses = ledger.passes,
-        freeMessagesUsed = ledger.freeMessagesUsed,
+        freeMessagesUsed = ledger.freeMessagesUsed(accountUserId()),
     )
         private set
     var products: List<StoreProduct> = fallbackProducts()
@@ -70,20 +77,31 @@ class EntitlementManager(
     val promoGuessesRemaining: Int get() = promo.remainingGuesses()
     val isPromoLocked: Boolean get() = promo.isLocked()
     val hasStoreSubscription: Boolean get() = paidFromStore
+    /** Live Play Billing result only — never sticky across logout or billing outages. */
     private var paidFromStore: Boolean = false
 
     private var billing: BillingClient? = null
     private var details: Map<String, ProductDetails> = emptyMap()
     private val purchaseWaiter = AtomicReference<CompletableDeferred<PurchaseOutcome>?>(null)
     private val setupMutex = Mutex()
+    private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var tracksFreeUnsent: Boolean = false
 
     fun redeemPromo(raw: String): PromoRedeemResult {
-        val result = promo.redeem(raw)
-        if (result is PromoRedeemResult.Applied && result.offer == PromoOffer.COMPLIMENTARY) {
-            state = state.copy(isPro = true)
-            onComplimentaryUnlocked?.invoke(promo.appliedCode ?: raw.trim().uppercase())
-        }
+        val result = promo.redeem(raw, accountUserId = accountUserId())
+        // Complimentary Pro is hosted username allowlist only — redeem never grants it.
         return result
+    }
+
+    /** Drops complimentary / promo unlocks. Per-account free usage stays so logout cannot refill it. */
+    fun clearLocalUnlocks() {
+        promo.clearLocalUnlocks()
+        paidFromStore = false
+        state = EntitlementState(
+            isPro = false,
+            cleanupPasses = ledger.passes,
+            freeMessagesUsed = 0,
+        )
     }
 
     fun allowance(requestedCount: Int, usesAdvancedFilters: Boolean) =
@@ -95,28 +113,77 @@ class EntitlementManager(
         return consumed
     }
 
-    fun recordFreeUsage(count: Int) {
-        ledger.addFreeUsage(count)
-        state = state.copy(freeMessagesUsed = ledger.freeMessagesUsed)
+    fun setTracksFreeUnsent(enabled: Boolean) {
+        tracksFreeUnsent = enabled
+    }
+
+    /** Called once per completed free-tier unsend (idempotent on the worker via message key). */
+    fun noteFreeUnsent(idempotencyKey: String) {
+        if (!tracksFreeUnsent) return
+        val uid = accountUserId()
+        ledger.addFreeUsage(1, uid)
+        state = state.copy(freeMessagesUsed = ledger.freeMessagesUsed(uid))
+        val userId = uid?.takeIf { it.isNotBlank() } ?: return
+        val sync = freeUsage ?: return
+        syncScope.launch {
+            val merged = sync.increment(userId, idempotencyKey) ?: return@launch
+            ledger.mergeRemoteFreeUsage(merged, userId)
+            state = state.copy(freeMessagesUsed = ledger.freeMessagesUsed(userId))
+        }
+    }
+
+    /** Pull + max-merge with the worker so reinstall / new device picks up prior free usage. */
+    suspend fun syncFreeUsage() {
+        val uid = accountUserId()?.takeIf { it.isNotBlank() } ?: return
+        val sync = freeUsage ?: return
+        // Prefer a pull first so reinstalls adopt the server total before any local push.
+        sync.pull(uid)?.let {
+            ledger.mergeRemoteFreeUsage(it, uid)
+            state = state.copy(freeMessagesUsed = ledger.freeMessagesUsed(uid))
+        }
+        // Worker caps each sync raise; loop until local is fully pushed or the server stops moving.
+        repeat(5) {
+            val local = ledger.freeMessagesUsed(uid)
+            val merged = sync.sync(uid, local) ?: return
+            ledger.mergeRemoteFreeUsage(merged, uid)
+            state = state.copy(freeMessagesUsed = ledger.freeMessagesUsed(uid))
+            if (merged >= local) return
+        }
     }
 
     suspend fun refresh() {
+        // Drop any leftover vault complimentary flags from the retired binary gift code.
+        promo.clearLegacyComplimentaryFlags()
+        refreshCampaignCodes()
         runCatching { ensureClient() }
-        val subscription = querySubscription()
+        val uid = accountUserId()
+        val signedIn = !uid.isNullOrBlank()
         val ready = billing?.isReady == true
-        paidFromStore = if (ready) subscription.first else paidFromStore || subscription.first
+        val subscription = if (ready) querySubscription() else false to null
+        // Fail closed when Billing is unavailable — never keep a sticky local Pro flag.
+        paidFromStore = subscription.first
+        if (signedIn) syncFreeUsage()
+        val complimentary = promo.isComplimentaryUsername(accountUsername())
         state = EntitlementState(
-            isPro = paidFromStore || promo.isComplimentary || (!ready && state.isPro),
-            proRenewsOrExpiresAt = subscription.second ?: state.proRenewsOrExpiresAt,
+            isPro = signedIn && (paidFromStore || complimentary),
+            proRenewsOrExpiresAt = subscription.second,
             cleanupPasses = ledger.passes,
-            freeMessagesUsed = ledger.freeMessagesUsed,
+            freeMessagesUsed = if (signedIn) ledger.freeMessagesUsed(uid) else 0,
         )
+    }
+
+    /** Pulls hosted percent-off codes + complimentary username allowlist. Soft-fails to cache / baked codes. */
+    suspend fun refreshCampaignCodes() {
+        withContext(Dispatchers.IO) {
+            RemotePromoCatalog.refresh(promo.campaignBook, BuildConfig.PROMO_CATALOG_URL)
+        }
     }
 
     suspend fun loadProducts() {
         if (isLoadingProducts) return
         isLoadingProducts = true
         try {
+            refreshCampaignCodes()
             ensureClient()
             val loaded = queryProductDetails()
             if (loaded.isNotEmpty()) {
@@ -140,7 +207,10 @@ class EntitlementManager(
 
     suspend fun purchase(activity: Activity, product: StoreProduct): PurchaseOutcome? {
         if (isPurchasing) return null
+        // Promo SKUs require an active percent-off code — never sell them bare.
+        if (product.isPromo && percentOff <= 0) return null
         val target = checkoutProduct(forDisplay = product) ?: return null
+        if (target.isPromo && percentOff <= 0) return null
         isPurchasing = true
         val waiter = CompletableDeferred<PurchaseOutcome>()
         purchaseWaiter.set(waiter)
@@ -340,11 +410,14 @@ class EntitlementManager(
             ) { }
         }
         val subProduct = purchase.products.firstOrNull { it in subscriptionIds }
-        state = state.copy(isPro = purchase.products.any {
-            it in subscriptionIds
-        } || promo.isComplimentary || state.isPro, cleanupPasses = ledger.passes)
+        val uid = accountUserId()
+        val fromStore = purchase.products.any { it in subscriptionIds }
+        if (fromStore) paidFromStore = true
+        state = state.copy(
+            isPro = !uid.isNullOrBlank() && (paidFromStore || promo.isComplimentaryUsername(accountUsername())),
+            cleanupPasses = ledger.passes,
+        )
         if (subProduct != null) {
-            paidFromStore = true
             onSubscriptionPurchased?.invoke(subProduct, promo.appliedCode, purchase.purchaseToken)
         }
     }

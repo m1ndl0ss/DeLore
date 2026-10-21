@@ -1,2 +1,4 @@
-NOTIFY_SECRET=replace-me
+TOKEN_SIGNING_KEY=replace-with-long-random
 RESEND_API_KEY=re_xxx
+# optional admin only — never put this in the mobile app
+# NOTIFY_SECRET=replace-me

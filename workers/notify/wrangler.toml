@@ -4,5 +4,10 @@ compatibility_date = "2024-10-01"
 
 [vars]
 NOTIFY_TO = "contact@kandalintsev.com"
-# Must be a Resend-verified sender. Override per-env if needed.
-RESEND_FROM = "Retract <onboarding@resend.dev>"
+# Requires a verified domain in Resend (kandalintsev.com). Fallback test sender cannot mail this inbox.
+RESEND_FROM = "Retract <notify@kandalintsev.com>"
+FREE_LIMIT = "100"
+
+[[kv_namespaces]]
+binding = "FREE_USAGE"
+id = "c627218ab2c042d383a547e77e28b1ad"

@@ -31,6 +31,9 @@ import app.delore.android.secrets.EncryptedSecretStore
 import app.delore.android.secrets.PassLedger
 import app.delore.android.secrets.SecretStore
 import app.delore.android.secrets.SessionVault
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -59,6 +62,9 @@ class AppEnvironment(private val context: Context) {
         context,
         ledger,
         promo,
+        accountUserId = { loadSession()?.userID },
+        accountUsername = { loadSession()?.displayName },
+        freeUsage = publisherNotify.freeUsage,
         onSubscriptionPurchased = { productId, promoCode, token ->
             publisherNotify.subscriptionPurchased(
                 username = loadSession()?.displayName,
@@ -144,6 +150,9 @@ class AppEnvironment(private val context: Context) {
     fun saveSession(session: InstagramWebSession) {
         isDemoMode = false
         sessionVault.save(json.encodeToString(session))
+        CoroutineScope(Dispatchers.IO).launch {
+            maybeNotifyConnected()
+        }
     }
 
     fun loadSession(): InstagramWebSession? {
@@ -200,10 +209,12 @@ class AppEnvironment(private val context: Context) {
         unsender = unsender,
         policy = ratePolicy,
         history = history,
+        onItemCompleted = { key -> entitlements.noteFreeUnsent(key) },
     )
 
-    /** Signs out of Instagram on this phone. Keeps Pro, passes, terms acceptance, and onboarding. */
+    /** Signs out of Instagram. Clears local unlocks; paid Pro is re-checked from Play Billing after login. */
     fun disconnectInstagram() {
+        entitlements.clearLocalUnlocks()
         sessionVault.clear()
         jobStore.wipe()
         library.wipe()
@@ -216,9 +227,10 @@ class AppEnvironment(private val context: Context) {
         webBrowser.destroy()
     }
 
+    /** Disconnects and removes sensitive data. Play purchases stay with the Google account. */
     fun eraseAllData() {
-        val eraserKeys = PassLedger.preservedKeys + PromoVault.COMPLIMENTARY_KEY
-        secrets.wipePreserving(eraserKeys)
+        entitlements.clearLocalUnlocks()
+        secrets.wipePreserving(PassLedger.preservedKeys + PromoVault.preservedKeys)
         jobStore.wipe()
         library.wipe()
         history.wipe()

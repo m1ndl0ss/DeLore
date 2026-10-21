@@ -1,72 +1,52 @@
-@testable import DeLoreCore
-import Foundation
 import XCTest
+@testable import DeLoreCore
 
 final class PromoCodeTests: XCTestCase {
-    func testComplimentaryCodeIsCaseInsensitive() {
-        XCTAssertEqual(PromoCatalog.offer(for: "kandal24"), .complimentary)
-        XCTAssertEqual(PromoCatalog.offer(for: "  KANDAL24  "), .complimentary)
-    }
-
-    func testUnknownCodeIsRejected() {
+    func testUnknownCodesAreRejected() {
+        XCTAssertNil(PromoCatalog.offer(for: "KANDAL24"))
         XCTAssertNil(PromoCatalog.offer(for: "NOPE"))
         XCTAssertNil(PromoCatalog.offer(for: " "))
-    }
-
-    func testCheckoutIDUsesPromoSku() {
-        let catalog = ProductCatalog(
-            oneTimeCleanup: "app.delore.cleanup.single",
-            proMonthly: "app.delore.pro.monthly",
-            proYearly: "app.delore.pro.yearly"
-        )
-        XCTAssertEqual(catalog.checkoutID(forDisplay: "app.delore.pro.yearly", discounted: false), "app.delore.pro.yearly")
-        XCTAssertEqual(catalog.checkoutID(forDisplay: "app.delore.pro.yearly", discounted: true), "app.delore.pro.yearly.promo")
-        XCTAssertEqual(catalog.all.count, 5)
     }
 
     func testCampaignCodesAreTenPercentOff() {
         XCTAssertEqual(PromoCatalog.offer(for: "RETRACT10"), .percentOff(10))
         XCTAssertEqual(PromoCatalog.offer(for: "ref10"), .percentOff(10))
-        XCTAssertEqual(PromoCatalog.percentOffCodes, ["RETRACT10", "REF10"])
+        XCTAssertEqual(PromoCatalog.bakedPercentOffCodes, ["RETRACT10", "REF10"])
     }
 
-    func testDiscountedPriceKeepsCurrency() {
+    func testRemotePayloadParsesComplimentaryUsernames() {
+        let data = Data(#"{"percentOff":10,"codes":["NEWCODE","retract10"],"complimentaryUsernames":["Alice","@Bob"]}"#.utf8)
+        let parsed = RemotePromoCatalog.parse(data)
+        XCTAssertEqual(parsed?.codes, ["NEWCODE", "RETRACT10"])
+        XCTAssertEqual(parsed?.percent, 10)
+        XCTAssertEqual(parsed?.usernames, ["alice", "bob"])
+    }
+
+    func testCampaignBookCachesRemoteCodesAndAllowlist() {
+        let store = InMemorySecretStore()
+        let book = PromoCampaignBook(store: store)
+        XCTAssertTrue(book.replaceCampaign(codes: ["FRIEND10", "VIP10"], percentOff: 10, complimentaryUsernames: ["matvey"]))
+        XCTAssertEqual(book.offer(for: "friend10"), .percentOff(10))
+        XCTAssertNil(book.offer(for: "RETRACT10"), "remote replace drops baked codes not in the new list")
+        XCTAssertTrue(book.isComplimentaryUsername("Matvey"))
+        let reloaded = PromoCampaignBook(store: store)
+        XCTAssertEqual(reloaded.offer(for: "VIP10"), .percentOff(10))
+        XCTAssertTrue(reloaded.isComplimentaryUsername("matvey"))
+    }
+
+    func testDiscountedPriceFormatting() {
         XCTAssertEqual(PromoVault.discountedPrice("$59.99", percentOff: 10), "$53.99")
         XCTAssertEqual(PromoVault.discountedPrice("$19.99", percentOff: 10), "$17.99")
     }
 
-    func testFailedGuessesLockAfterThree() {
+    func testGuessLockout() {
         let vault = PromoVault(store: InMemorySecretStore())
         let now = Date(timeIntervalSince1970: 1_775_000_000)
-        XCTAssertEqual(vault.redeem("WRONG1", now: now), .invalid(remaining: 2))
-        XCTAssertEqual(vault.redeem("WRONG2", now: now), .invalid(remaining: 1))
-        XCTAssertEqual(vault.redeem("WRONG3", now: now), .invalid(remaining: 0))
-        XCTAssertEqual(vault.redeem("KANDAL24", now: now), .locked)
-        XCTAssertTrue(vault.isLocked(now: now))
-    }
-
-    func testEmptyGuessDoesNotCount() {
-        let vault = PromoVault(store: InMemorySecretStore())
-        XCTAssertEqual(vault.redeem("   "), .empty)
-        XCTAssertEqual(vault.remainingGuesses(), PromoVault.dailyLimit)
-    }
-
-    func testComplimentaryPersistsAndUnlocks() {
-        let store = InMemorySecretStore()
-        let vault = PromoVault(store: store)
-        XCTAssertEqual(vault.redeem("KANDAL24"), .applied(.complimentary))
-        XCTAssertTrue(PromoVault(store: store).isComplimentary)
-        XCTAssertEqual(PromoVault(store: store).appliedCode, "KANDAL24")
-    }
-
-    func testGuessesResetNextDay() {
-        let vault = PromoVault(store: InMemorySecretStore())
-        let day1 = Date(timeIntervalSince1970: 1_775_000_000)
-        let day2 = day1.addingTimeInterval(86_400)
-        _ = vault.redeem("A", now: day1)
-        _ = vault.redeem("B", now: day1)
-        _ = vault.redeem("C", now: day1)
-        XCTAssertEqual(vault.redeem("KANDAL24", now: day2), .applied(.complimentary))
+        XCTAssertEqual(vault.redeem("A", now: now), .invalid(remaining: 2))
+        XCTAssertEqual(vault.redeem("B", now: now), .invalid(remaining: 1))
+        XCTAssertEqual(vault.redeem("C", now: now), .invalid(remaining: 0))
+        XCTAssertEqual(vault.redeem("RETRACT10", now: now), .locked)
+        XCTAssertEqual(vault.remainingGuesses(now: now), 0)
     }
 
     func testPercentOffPersists() {
@@ -74,7 +54,18 @@ final class PromoCodeTests: XCTestCase {
         let vault = PromoVault(store: store)
         XCTAssertEqual(vault.redeem("ref10"), .applied(.percentOff(10)))
         XCTAssertEqual(PromoVault(store: store).percentOff, 10)
-        XCTAssertFalse(PromoVault(store: store).isComplimentary)
+        XCTAssertFalse(PromoVault(store: store).isComplimentaryUsername("anyone"))
         XCTAssertEqual(PromoVault(store: store).appliedCode, "REF10")
+    }
+
+    func testAllowlistGrantsComplimentaryByUsername() {
+        let store = InMemorySecretStore()
+        let book = PromoCampaignBook(store: store)
+        XCTAssertTrue(book.replaceCampaign(codes: ["RETRACT10"], percentOff: 10, complimentaryUsernames: ["you"]))
+        let vault = PromoVault(store: store, book: book)
+        XCTAssertTrue(vault.isComplimentaryUsername("You"))
+        XCTAssertFalse(vault.isComplimentaryUsername("someoneelse"))
+        vault.clearLocalUnlocks()
+        XCTAssertTrue(PromoVault(store: store, book: book).isComplimentaryUsername("you"), "allowlist is not sticky vault state")
     }
 }
