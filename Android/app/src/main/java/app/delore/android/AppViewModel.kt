@@ -71,7 +71,6 @@ data class UiState(
     val loadingOverview: Boolean = false,
     val loginPurpose: LoginPurpose? = null,
     val termsPrompt: TermsPrompt? = null,
-    val isDemoMode: Boolean = false,
     /** Observed in Compose — do not read env.hasLiveSession from UI directly. */
     val hasLiveSession: Boolean = false,
     val syncing: Boolean = false,
@@ -98,13 +97,11 @@ class AppViewModel(
     val entitlements get() = env.entitlements
     val ratePolicy get() = env.ratePolicy
     val hasLiveSession get() = env.hasLiveSession
-    val isDemoMode get() = env.isDemoMode
     val isCleanupAvailable get() = env.isCleanupAvailable
 
     private val engine get() = work.engine
     private var didPromptDeletionLogin = false
     private var termsNoticeDismissedThisLaunch = false
-    private var pendingSampleInbox = false
     private var inboxLoadIds: Collection<ConversationID>? = null
     private var lastInboxCompletedTick = work.inbox.value.completedTick
 
@@ -169,7 +166,6 @@ class AppViewModel(
     private fun syncSessionFlags() {
         _state.update {
             it.copy(
-                isDemoMode = env.isDemoMode,
                 hasLiveSession = env.hasLiveSession,
             )
         }
@@ -196,13 +192,7 @@ class AppViewModel(
             termsNoticeDismissedThisLaunch = true
         }
         if (prompt == TermsPrompt.SIGNUP) {
-            if (pendingSampleInbox) {
-                pendingSampleInbox = false
-                _state.update { it.copy(termsPrompt = null) }
-                openSampleInbox()
-            } else {
-                _state.update { it.copy(termsPrompt = null, loginPurpose = LoginPurpose.CONNECT) }
-            }
+            _state.update { it.copy(termsPrompt = null, loginPurpose = LoginPurpose.CONNECT) }
         } else {
             _state.update { it.copy(termsPrompt = null) }
         }
@@ -222,7 +212,7 @@ class AppViewModel(
 
     fun handleLogin(session: InstagramWebSession, purpose: LoginPurpose) {
         env.saveSession(session)
-        _state.update { it.copy(loginPurpose = null, isDemoMode = env.isDemoMode, hasLiveSession = true) }
+        _state.update { it.copy(loginPurpose = null, hasLiveSession = true) }
         viewModelScope.launch { env.entitlements.refresh() }
         val shouldSync = when (purpose) {
             LoginPurpose.CONNECT, LoginPurpose.REFRESH -> true
@@ -316,27 +306,11 @@ class AppViewModel(
         if (tab == MainTab.ACTIVITY) reloadHistory()
     }
 
-    fun openSampleInbox() {
-        if (env.hasLiveSession) return
-        _state.update { it.copy(loginPurpose = null) }
-        if (!env.hasAcceptedTerms) {
-            pendingSampleInbox = true
-            _state.update { it.copy(termsPrompt = TermsPrompt.SIGNUP, loginPurpose = null) }
-            return
-        }
-        env.enterReviewDemo()
-        viewModelScope.launch {
-            reloadOverview()
-            _state.update { it.copy(isDemoMode = true, hasLiveSession = false) }
-        }
-    }
-
     fun deletionAppeared() {
         if (env.hasLiveSession) {
             if (!env.hasLibrary && !_state.value.syncing) beginInboxSync()
             return
         }
-        if (env.isDemoMode) return
         if (didPromptDeletionLogin) return
         didPromptDeletionLogin = true
         beginLogin(LoginPurpose.CONNECT)
@@ -422,7 +396,7 @@ class AppViewModel(
         _state.update { it.copy(eraseServerFailure = false) }
         // Delete the server-side usage record first, while the user id is still
         // in the vault. On failure keep local data so the user can retry.
-        if (!skipServerDelete && !env.isDemoMode) {
+        if (!skipServerDelete) {
             val account = env.loadSession()
             if (account != null && account.userID.isNotBlank() && env.publisherNotify.auth.isConfigured) {
                 val deleted = env.publisherNotify.freeUsage.delete(account.userID, account.displayName)
@@ -439,7 +413,7 @@ class AppViewModel(
         env.entitlements.refresh()
         didPromptDeletionLogin = false
         _state.update {
-            UiState(route = Route.HOME, tab = MainTab.SETTINGS, isDemoMode = false, hasLiveSession = false)
+            UiState(route = Route.HOME, tab = MainTab.SETTINGS, hasLiveSession = false)
         }
     }
 
@@ -458,7 +432,6 @@ class AppViewModel(
                 sessionPresented = false,
                 progress = null,
                 sheet = null,
-                isDemoMode = false,
                 hasLiveSession = false,
                 overview = null,
             )

@@ -95,7 +95,6 @@ fun TermsAcceptScreen(
     reminder: Boolean,
     onPrimary: (dontShowAgain: Boolean) -> Unit,
     onCancel: () -> Unit,
-    onReviewDemo: () -> Unit = {},
 ) {
     val scroll = rememberScrollState()
     var agreed by remember { mutableStateOf(false) }
@@ -122,7 +121,7 @@ fun TermsAcceptScreen(
             .padding(top = Spacing.s, bottom = Spacing.s),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Wordmark(onSecretUnlock = onReviewDemo)
+            Wordmark()
             Spacer(Modifier.weight(1f))
             CloseButton(onCancel)
         }

@@ -205,11 +205,6 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertLessThanOrEqual(policy.maxAttemptsPerItem, 3)
     }
 
-    func testReviewPacingIsFasterThanProduction() {
-        XCTAssertLessThan(RatePolicy.review.minimumDelay, RatePolicy.conservative.minimumDelay)
-        XCTAssertGreaterThan(RatePolicy.review.hourlyLimit, RatePolicy.conservative.hourlyLimit)
-    }
-
     func testLiveUnsendUsesWebsiteSession() {
         let service = LiveIntegration.makeUnsendService(sessionVault: SessionVault(store: InMemorySecretStore()), logger: .disabled)
         XCTAssertTrue(service is InstagramWebUnsendService)

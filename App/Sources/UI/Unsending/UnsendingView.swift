@@ -62,7 +62,6 @@ struct UnsendingView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 0) {
             Wordmark()
-                .reviewDemoUnlock()
             Spacer(minLength: 12)
             if model.overview != nil && model.env.hasLiveSession {
                 Button {
@@ -155,14 +154,8 @@ struct UnsendingView: View {
             }
             .padding(.horizontal, Spacing.screen)
 
-            if !model.env.hasLiveSession && !model.isDemoMode {
+            if !model.env.hasLiveSession {
                 expiredSession
-                    .padding(.horizontal, Spacing.screen)
-            }
-            if model.isDemoMode {
-                Text("Sample chats for review. Connect Instagram in Settings to use a real account.")
-                    .font(Type.body(14))
-                    .foregroundStyle(Palette.secondaryInk)
                     .padding(.horizontal, Spacing.screen)
             }
 

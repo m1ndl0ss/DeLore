@@ -13,7 +13,6 @@ struct InstagramLoginView: View {
         VStack(spacing: 0) {
             HStack {
                 Wordmark()
-                    .reviewDemoUnlock()
                 Spacer()
                 CloseButton(action: onCancel)
             }

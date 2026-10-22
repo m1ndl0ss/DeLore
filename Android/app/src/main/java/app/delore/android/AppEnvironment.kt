@@ -40,7 +40,7 @@ import java.io.File
 
 class AppEnvironment(private val context: Context) {
     val ratePolicy: RatePolicy
-        get() = if (isDemoMode) RatePolicy.review else RatePolicy.conservative
+        get() = RatePolicy.conservative
     val secrets: SecretStore = EncryptedSecretStore(context)
     val sessionVault = SessionVault(secrets)
     val ledger = PassLedger(secrets)
@@ -55,7 +55,7 @@ class AppEnvironment(private val context: Context) {
     val prefs: SharedPreferences = context.getSharedPreferences("retract", Context.MODE_PRIVATE)
     val publisherNotify = PublisherNotify(
         prefs = prefs,
-        isEnabled = { !isDemoMode },
+        isEnabled = { true },
         resolveUsername = { loadSession()?.displayName },
     )
     val entitlements = EntitlementManager(
@@ -86,9 +86,8 @@ class AppEnvironment(private val context: Context) {
     val webBrowser = InstagramWebViewGateway()
     private val http = InstagramHTTPClient(defaultOkHttp(), { loadSession() }, webBrowser)
     private val liveUnsender = InstagramWebUnsendService(http, ownerID = { loadSession()?.userID })
-    private val demoUnsender = app.delore.android.domain.ReviewDemoUnsendService()
     val unsender: app.delore.android.domain.UnsendService
-        get() = if (isDemoMode) demoUnsender else liveUnsender
+        get() = liveUnsender
 
     fun releaseUnsendWorkingCaches() {
         liveUnsender.releaseWorkingCaches()
@@ -96,10 +95,7 @@ class AppEnvironment(private val context: Context) {
 
     val hasLibrary: Boolean get() = library.hasLibrary
     val hasLiveSession: Boolean get() = loadSession()?.hasLiveSession == true
-    val isCleanupAvailable: Boolean get() = hasLiveSession || isDemoMode
-    var isDemoMode: Boolean
-        get() = prefs.getBoolean(DEMO_KEY, false)
-        set(value) { prefs.edit().putBoolean(DEMO_KEY, value).apply() }
+    val isCleanupAvailable: Boolean get() = hasLiveSession
     var hasCompletedOnboarding: Boolean
         get() = prefs.getBoolean("onboarding.completed", false)
         set(value) { prefs.edit().putBoolean("onboarding.completed", value).apply() }
@@ -124,7 +120,6 @@ class AppEnvironment(private val context: Context) {
         }
 
     fun dropStaleFullInbox() {
-        if (isDemoMode) return
         if (prefs.getBoolean("inbox.listFirst", false)) return
         library.wipe()
         jobStore.wipe()
@@ -138,17 +133,7 @@ class AppEnvironment(private val context: Context) {
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    fun enterReviewDemo() {
-        jobStore.wipe()
-        app.delore.android.domain.ReviewDemo.seed(library)
-        saveRetractQueue(emptySet())
-        inboxWork.clear()
-        inboxListCursor = null
-        isDemoMode = true
-    }
-
     fun saveSession(session: InstagramWebSession) {
-        isDemoMode = false
         sessionVault.save(json.encodeToString(session))
         CoroutineScope(Dispatchers.IO).launch {
             maybeNotifyConnected()
@@ -187,7 +172,6 @@ class AppEnvironment(private val context: Context) {
     }
 
     private suspend fun maybeNotifyConnected() {
-        if (isDemoMode) return
         val session = loadSession()?.takeIf { it.hasLiveSession } ?: return
         val fromLibrary = runCatching { library.account().displayName }.getOrNull()
         val username = PublisherNotify.clean(session.displayName)
@@ -223,7 +207,6 @@ class AppEnvironment(private val context: Context) {
         inboxListCursor = null
         saveRetractQueue(emptySet())
         prefs.edit().remove("inbox.holdOffUntil").apply()
-        isDemoMode = false
         webBrowser.destroy()
     }
 
@@ -243,7 +226,7 @@ class AppEnvironment(private val context: Context) {
             .remove("inbox.listCursor")
             .remove(InboxWorkStore.KEY)
             .remove(RETRACT_QUEUE_KEY)
-            .remove(DEMO_KEY)
+            .remove(LEGACY_DEMO_KEY)
             .apply()
         val clearNotify = prefs.edit()
         prefs.all.keys.filter { it.startsWith("notify.") }.forEach { clearNotify.remove(it) }
@@ -270,6 +253,7 @@ class AppEnvironment(private val context: Context) {
 
     companion object {
         private const val RETRACT_QUEUE_KEY = "inbox.retractQueue"
-        private const val DEMO_KEY = "review.demo"
+        /** Review demo was removed; still cleared on erase for upgraded installs. */
+        private const val LEGACY_DEMO_KEY = "review.demo"
     }
 }

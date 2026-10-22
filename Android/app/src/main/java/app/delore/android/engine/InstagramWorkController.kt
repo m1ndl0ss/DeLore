@@ -64,7 +64,6 @@ class InstagramWorkController(private val app: Application, private val env: App
         }
 
     fun attachBrowser() {
-        if (env.isDemoMode) return
         val run = {
             env.webBrowser.attach(app)
             env.webBrowser.wake()

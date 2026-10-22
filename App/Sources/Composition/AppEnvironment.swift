@@ -17,7 +17,6 @@ final class AppEnvironment {
     let publisherNotify: PublisherNotify
     let webBrowser: InstagramWebViewGateway
     private let liveUnsender: InstagramWebUnsendService
-    private let demoUnsender = ReviewDemoUnsendService()
     private let dataDirectory: URL
 
     private static let onboardingKey = "onboarding.completed"
@@ -27,7 +26,8 @@ final class AppEnvironment {
     private static let listCursorKey = "inbox.listCursor"
     private static let inboxWorkKey = "inbox.work"
     private static let retractQueueKey = "inbox.retractQueue"
-    private static let reviewDemoKey = "review.demo"
+    /// Review demo was removed; still cleared on erase for upgraded installs.
+    private static let legacyReviewDemoKey = "review.demo"
 
     init(configuration: AppConfiguration = .load()) {
         self.configuration = configuration
@@ -70,7 +70,7 @@ final class AppEnvironment {
         let vault = sessionVault
         let notify = PublisherNotify(
             endpoint: configuration.notifyURL,
-            isEnabled: { !UserDefaults.standard.bool(forKey: Self.reviewDemoKey) },
+            isEnabled: { true },
             resolveUsername: {
                 (try? vault.loadSession())?.displayName
             }
@@ -109,9 +109,9 @@ final class AppEnvironment {
     }
 
     var messageSource: MessageSource { library }
-    var unsender: UnsendService { isDemoMode ? demoUnsender : liveUnsender }
-    var isCleanupAvailable: Bool { hasLiveSession || isDemoMode }
-    var ratePolicy: RatePolicy { isDemoMode ? .review : configuration.ratePolicy }
+    var unsender: UnsendService { liveUnsender }
+    var isCleanupAvailable: Bool { hasLiveSession }
+    var ratePolicy: RatePolicy { configuration.ratePolicy }
 
     func releaseUnsendWorkingCaches() async {
         await liveUnsender.releaseWorkingCaches()
@@ -121,26 +121,7 @@ final class AppEnvironment {
         (try? sessionVault.loadSession())?.hasLiveSession == true
     }
 
-    var isDemoMode: Bool {
-        get { UserDefaults.standard.bool(forKey: Self.reviewDemoKey) }
-        set { UserDefaults.standard.set(newValue, forKey: Self.reviewDemoKey) }
-    }
-
-    func enterReviewDemo() throws {
-        try jobStore.wipe()
-        try ReviewDemo.seed(into: library)
-        saveRetractQueue([])
-        saveInboxWork(nil)
-        inboxListCursor = nil
-        isDemoMode = true
-    }
-
-    func clearReviewDemoFlag() {
-        isDemoMode = false
-    }
-
     func saveInstagramSession(_ session: InstagramWebSession) throws {
-        clearReviewDemoFlag()
         try sessionVault.saveSession(session)
         Task { await maybeNotifyConnected() }
     }
@@ -201,7 +182,6 @@ final class AppEnvironment {
     }
 
     private func maybeNotifyConnected() async {
-        guard !isDemoMode else { return }
         guard var session = try? sessionVault.loadSession(), session.hasLiveSession else { return }
         let fromLibrary = try? await library.account().displayName
         guard let username = PublisherNotify.clean(session.displayName)
@@ -283,7 +263,6 @@ final class AppEnvironment {
     }
 
     func dropStaleFullInbox() {
-        guard !isDemoMode else { return }
         guard !UserDefaults.standard.bool(forKey: Self.listFirstKey) else { return }
         try? library.wipe()
         try? jobStore.wipe()
@@ -332,7 +311,6 @@ final class AppEnvironment {
         inboxListCursor = nil
         saveRetractQueue([])
         inboxHoldOffUntil = nil
-        isDemoMode = false
     }
 
     /// Disconnects and removes everything sensitive. StoreKit purchases stay with the Apple ID.
@@ -355,7 +333,7 @@ final class AppEnvironment {
         UserDefaults.standard.removeObject(forKey: Self.listCursorKey)
         UserDefaults.standard.removeObject(forKey: Self.inboxWorkKey)
         UserDefaults.standard.removeObject(forKey: Self.retractQueueKey)
-        UserDefaults.standard.removeObject(forKey: Self.reviewDemoKey)
+        UserDefaults.standard.removeObject(forKey: Self.legacyReviewDemoKey)
         for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix(CleanupBilling.keyPrefix) {
             UserDefaults.standard.removeObject(forKey: key)
         }

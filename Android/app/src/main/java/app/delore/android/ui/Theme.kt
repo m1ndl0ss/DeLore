@@ -164,37 +164,11 @@ private val headlineShadow = tightLines.copy(
 )
 
 @Composable
-fun Wordmark(onSecretUnlock: (() -> Unit)? = null) {
-    var taps by remember { mutableIntStateOf(0) }
-    var windowStart by remember { mutableLongStateOf(0L) }
-    val interaction = remember { MutableInteractionSource() }
+fun Wordmark() {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier
-            .semantics {
-                contentDescription = "Retract"
-                if (onSecretUnlock != null) {
-                    customActions = listOf(
-                        CustomAccessibilityAction("Load sample inbox") {
-                            onSecretUnlock()
-                            true
-                        },
-                    )
-                }
-            }
-            .then(
-                if (onSecretUnlock == null) Modifier
-                else Modifier.clickable(interactionSource = interaction, indication = null) {
-                    val now = android.os.SystemClock.elapsedRealtime()
-                    taps = if (now - windowStart > 2_000L) 1 else taps + 1
-                    windowStart = now
-                    if (taps >= 7) {
-                        taps = 0
-                        onSecretUnlock()
-                    }
-                },
-            ),
+        modifier = Modifier.semantics { contentDescription = "Retract" },
     ) {
         Image(
             painter = painterResource(R.drawable.brand_mark),

@@ -9,12 +9,14 @@ Paste into **App Store Connect → App Review Information → Notes** and **Goog
 ```
 Retract automates Instagram’s built-in Unsend for DMs the signed-in user sent. It is not affiliated with Instagram or Meta.
 
-HOW TO REVIEW WITHOUT AN INSTAGRAM ACCOUNT
-1. If an Instagram login screen or Terms screen appears, tap the “Retract” wordmark seven times.
-   VoiceOver / TalkBack: use the accessibility action “Load sample inbox”.
-2. That loads a sample inbox of fake chats. It never contacts Instagram or a real account.
-3. Pick one or more chats → continue → start retracting.
-4. After 100 free unsends, the Pro paywall appears (monthly and yearly). Restore, Terms, Privacy, and auto-renew / manage-cancel fine print are on the paywall. Manage or cancel is also in Settings.
+HOW TO REVIEW
+1. Tap Connect Instagram and sign in on Instagram's own page with the
+   provided Instagram test account (username: apptesting070124; password in
+   the console's app-access / login-credentials field).
+2. Pick one or more chats → continue → start retracting. Unsends run at a
+   conservative, human-like pace by design.
+3. After 100 free unsends, the Pro paywall appears (monthly and yearly). Restore, Terms, Privacy, and auto-renew / manage-cancel fine print are on the paywall. Manage or cancel is also in Settings.
+There is no demo or sample-inbox mode; the app always works against the signed-in Instagram account.
 
 LOGIN (LIVE ACCOUNT PATH)
 • Sign-in uses Instagram’s own website (instagram.com) inside the app — chrome says “Continue on Instagram.com”, not “Sign in with Instagram”.
@@ -44,9 +46,7 @@ SUPPORT
 
 ## Screenshots to attach (both stores)
 
-1. Home / chat picker with sample or live inbox  
+1. Home / chat picker with a live inbox  
 2. Cleanup / unsending progress  
 3. Paywall showing monthly + yearly only (with Restore + legal links + auto-renew fine print)  
 4. Settings (Instagram connected / Log out, Plan, Privacy, Terms)
-
-Do **not** market the sample-inbox unlock in store screenshots or listing text.

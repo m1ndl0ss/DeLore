@@ -8,7 +8,6 @@ struct ConnectView: View {
         VStack(alignment: .leading, spacing: Spacing.l) {
             HStack {
                 Wordmark()
-                    .reviewDemoUnlock()
                 Spacer()
                 if model.env.hasLibrary {
                     CloseButton { model.returnHome() }

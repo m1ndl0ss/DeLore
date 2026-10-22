@@ -18,16 +18,12 @@ struct SettingsTabView: View {
                         Text("Instagram")
                             .font(Type.medium(17))
                             .foregroundStyle(Palette.ink)
-                        Text(
-                            model.env.hasLiveSession
-                                ? "Connected · stays on this phone"
-                                : (model.isDemoMode ? "Sample inbox · not a real account" : "Not connected")
-                        )
+                        Text(model.env.hasLiveSession ? "Connected · stays on this phone" : "Not connected")
                             .font(Type.body(14))
-                            .foregroundStyle(model.env.hasLiveSession || model.isDemoMode ? Palette.accent : Palette.secondaryInk)
+                            .foregroundStyle(model.env.hasLiveSession ? Palette.accent : Palette.secondaryInk)
                     }
                     Spacer()
-                    if model.env.hasLiveSession || model.isDemoMode {
+                    if model.env.hasLiveSession {
                         Button {
                             Task { await model.logOutInstagram() }
                         } label: {

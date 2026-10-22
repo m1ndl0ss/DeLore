@@ -42,7 +42,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 fun InstagramLoginScreen(
     onComplete: (InstagramWebSession) -> Unit,
     onCancel: () -> Unit,
-    onReviewDemo: () -> Unit = {},
 ) {
     var working by remember { mutableStateOf(true) }
     BackHandler(onBack = onCancel)
@@ -57,7 +56,7 @@ fun InstagramLoginScreen(
             Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.s),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Wordmark(onSecretUnlock = onReviewDemo)
+            Wordmark()
             Spacer(Modifier.weight(1f))
             CloseButton(onCancel)
         }

@@ -98,27 +98,6 @@ public struct RatePolicy: Hashable, Codable, Sendable {
         maxConsecutiveFailures: 5
     )
 
-    /// Sample inbox only. Fast enough for App Review guideline 2.1; never used against Instagram.
-    public static let review = RatePolicy(
-        minimumDelay: 0.35,
-        maximumJitter: 0.1,
-        burstLimit: 200,
-        burstWindow: 60,
-        hourlyLimit: 10_000,
-        backoffBase: 0.5,
-        backoffFactor: 2,
-        backoffMaximum: 4,
-        rateLimitCooldown: 2,
-        rateLimitCooldownMaximum: 8,
-        maxConsecutiveRateLimits: 3,
-        maxRateLimitsPerRun: 6,
-        slowdownFactor: 2,
-        maximumSlowdown: 4,
-        successesToRelax: 20,
-        maxAttemptsPerItem: 3,
-        maxConsecutiveFailures: 5
-    )
-
     /// Fast pacing for tests, where nothing talks to Instagram.
     public static let demo = RatePolicy(
         minimumDelay: 0.05,

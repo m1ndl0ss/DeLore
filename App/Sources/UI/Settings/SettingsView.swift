@@ -60,15 +60,6 @@ struct SettingsView: View {
                                 dismiss()
                             }
                         }
-                    } else if model.isDemoMode {
-                        Text("Sample inbox · not a real account")
-                            .foregroundStyle(Palette.secondaryInk)
-                        Button("Log out", role: .destructive) {
-                            Task {
-                                await model.logOutInstagram()
-                                dismiss()
-                            }
-                        }
                     } else {
                         Button("Connect Instagram") {
                             dismiss()

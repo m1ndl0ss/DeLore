@@ -194,8 +194,7 @@ fun DeLoreRoot(model: AppViewModel) {
                 state.route != Route.HOME || covering ->
                     MeshBackground(Modifier.matchParentSize())
             }
-            val needBrowser = !state.isDemoMode &&
-                state.route == Route.HOME &&
+            val needBrowser = state.route == Route.HOME &&
                 (model.hasLiveSession || state.syncing || state.sessionPresented)
             if (needBrowser) {
                 InstagramBrowserHost(model.environment.webBrowser)
@@ -220,14 +219,12 @@ fun DeLoreRoot(model: AppViewModel) {
                     reminder = state.termsPrompt == TermsPrompt.REMINDER,
                     onPrimary = { dontShow -> model.acceptTermsPrompt(dontShow) },
                     onCancel = { model.cancelTermsPrompt() },
-                    onReviewDemo = { model.openSampleInbox() },
                 )
             }
             if (state.loginPurpose != null) {
                 InstagramLoginScreen(
                     onComplete = { session -> model.handleLogin(session, state.loginPurpose!!) },
                     onCancel = { model.cancelLogin() },
-                    onReviewDemo = { model.openSampleInbox() },
                 )
             }
             if (state.sessionPresented && state.progress != null) {
@@ -371,17 +368,13 @@ private fun AccountScreen(model: AppViewModel) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Instagram", color = Palette.ink(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                     Text(
-                        when {
-                            state.hasLiveSession -> "Connected · stays on this phone"
-                            state.isDemoMode -> "Sample inbox · not a real account"
-                            else -> "Not connected"
-                        },
-                        color = if (state.hasLiveSession || state.isDemoMode) Palette.accent else Palette.secondaryInk(),
+                        if (state.hasLiveSession) "Connected · stays on this phone" else "Not connected",
+                        color = if (state.hasLiveSession) Palette.accent else Palette.secondaryInk(),
                         fontFamily = Type.sans,
                         fontSize = 14.sp,
                     )
                 }
-                if (state.hasLiveSession || state.isDemoMode) {
+                if (state.hasLiveSession) {
                     Box(
                         Modifier
                             .clip(RoundedCornerShape(50))
@@ -826,7 +819,7 @@ private fun HomeScreen(model: AppViewModel) {
         ) {
             Spacer(Modifier.height(Spacing.s))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Wordmark(onSecretUnlock = { model.openSampleInbox() })
+                Wordmark()
                 Spacer(Modifier.weight(1f))
                 if (overview != null && model.hasLiveSession) {
                     IconButton(
@@ -899,20 +892,12 @@ private fun HomeScreen(model: AppViewModel) {
                     fontFamily = Type.sans,
                     fontSize = 15.sp,
                 )
-                if (!model.hasLiveSession && !state.isDemoMode) {
+                if (!model.hasLiveSession) {
                     Card {
                         Text("Instagram signed you out", color = Palette.ink(), fontWeight = FontWeight.SemiBold)
                         Text("Progress is still on this phone. Reconnect to keep cleaning — we won't unsend twice.", color = Palette.secondaryInk())
                         SecondaryButton("Reconnect Instagram") { model.beginLogin(LoginPurpose.RECONNECT) }
                     }
-                }
-                if (state.isDemoMode) {
-                    Text(
-                        "Sample chats for review. Connect Instagram in Settings to use a real account.",
-                        color = Palette.secondaryInk(),
-                        fontFamily = Type.sans,
-                        fontSize = 14.sp,
-                    )
                 }
                 OutlinedTextField(
                     value = query,
@@ -1003,13 +988,8 @@ private fun HomeScreen(model: AppViewModel) {
                 Appear(160) {
                     ConnectButton(if (model.hasLiveSession) "Load chats" else "Connect Instagram") { model.showConnect() }
                 }
-                if (!model.hasLiveSession && !state.isDemoMode) {
-                    Appear(220) {
-                        QuietButton("Try it with a sample inbox") { model.openSampleInbox() }
-                    }
-                }
             }
-            if (!model.entitlements.isPro && (model.hasLiveSession || state.isDemoMode)) {
+            if (!model.entitlements.isPro && model.hasLiveSession) {
                 UpgradeDock(
                     remaining = model.entitlements.remainingFree,
                 ) { model.showSheet(Sheet.Paywall("settings")) }
@@ -1054,7 +1034,7 @@ private fun SettingsSheet(model: AppViewModel) {
         Row {
             Text(if (model.entitlements.isPro) "Pro" else "Free", color = Palette.ink(), fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            if (!model.entitlements.isPro && (model.hasLiveSession || state.isDemoMode)) {
+            if (!model.entitlements.isPro && model.hasLiveSession) {
                 Text("${inflect(model.entitlements.remainingFree, "free message")} left", color = Palette.secondaryInk())
             }
         }
@@ -1080,13 +1060,6 @@ private fun SettingsSheet(model: AppViewModel) {
         when {
             state.hasLiveSession -> {
                 Text("Connected · stays on this phone", color = Palette.secondaryInk(), fontSize = 14.sp)
-                QuietButton("Log out", tint = Palette.secondaryInk()) {
-                    model.logOutInstagram()
-                    model.showSheet(null)
-                }
-            }
-            state.isDemoMode -> {
-                Text("Sample inbox · not a real account", color = Palette.secondaryInk(), fontSize = 14.sp)
                 QuietButton("Log out", tint = Palette.secondaryInk()) {
                     model.logOutInstagram()
                     model.showSheet(null)

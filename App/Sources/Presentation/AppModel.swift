@@ -70,12 +70,10 @@ final class AppModel {
     var termsPrompt: TermsPrompt?
     private var termsNoticeDismissedThisLaunch = false
     private var pendingRetractIDs: Set<ConversationID> = []
-    private var pendingSampleInbox = false
     private var lastInboxJob: InboxSyncModel.Job = .list
     private(set) var overview: LibraryOverview?
     private(set) var isLoadingOverview = false
     private(set) var history: [CleanupHistoryEntry] = []
-    private(set) var isDemoMode = false
     /// Server-side delete failed during "Delete my data"; nothing local was removed yet.
     var eraseServerFailure = false
 
@@ -93,7 +91,6 @@ final class AppModel {
         async let minimumSplash: Void = Self.splashDelay()
         await entitlements.refresh()
         env.dropStaleFullInbox()
-        isDemoMode = env.isDemoMode
 
         if env.hasLibrary {
             await reloadOverview()
@@ -211,12 +208,7 @@ final class AppModel {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(450))
             guard env.hasAcceptedTerms else { return }
-            if pendingSampleInbox {
-                pendingSampleInbox = false
-                openSampleInbox()
-            } else {
-                loginPurpose = .connect
-            }
+            loginPurpose = .connect
         }
     }
 
@@ -237,11 +229,9 @@ final class AppModel {
         } catch {
             env.logger.error("could not keep Instagram session: \(error.safeDescription)")
             loginPurpose = nil
-            isDemoMode = env.isDemoMode
             return
         }
         loginPurpose = nil
-        isDemoMode = env.isDemoMode
         Task { await entitlements.refresh() }
         let shouldSync: Bool
         switch purpose {
@@ -414,29 +404,11 @@ final class AppModel {
         withAnimation { route = .home }
     }
 
-    func openSampleInbox() {
-        if env.hasLiveSession { return }
-        loginPurpose = nil
-        if !env.hasAcceptedTerms {
-            pendingSampleInbox = true
-            termsPrompt = .signup
-            return
-        }
-        do {
-            try env.enterReviewDemo()
-            isDemoMode = true
-            Task { await reloadOverview() }
-        } catch {
-            env.logger.error("could not open sample inbox: \(error.safeDescription)")
-        }
-    }
-
     func deletionAppeared() {
         if env.hasLiveSession {
             if !env.hasLibrary { beginInboxSync() }
             return
         }
-        if env.isDemoMode { return }
         guard !didPromptDeletionLogin else { return }
         didPromptDeletionLogin = true
         beginLogin(.connect)
@@ -453,7 +425,7 @@ final class AppModel {
         history = (try? env.history.load())?.reversed() ?? []
     }
 
-    private fun attachSession(_ model: CleanupSessionModel) {
+    private func attachSession(_ model: CleanupSessionModel) {
         model.onActivityChanged = { [weak self] in self?.reloadHistory() }
         model.onCleaned = { [weak self] keys in
             Task { @MainActor in
@@ -539,7 +511,7 @@ final class AppModel {
         eraseServerFailure = false
         // Delete the server-side usage record first, while the user id is still
         // in the vault. On failure keep local data so the user can retry.
-        if !skipServerDelete, !env.isDemoMode,
+        if !skipServerDelete,
            let account = try? env.sessionVault.loadSession(),
            !account.userID.isEmpty,
            env.publisherNotify.workerAuth.baseURL != nil {
@@ -568,7 +540,6 @@ final class AppModel {
         }
         overview = nil
         history = []
-        isDemoMode = false
         didPromptDeletionLogin = false
         await entitlements.refresh()
         tab = .settings
@@ -590,7 +561,6 @@ final class AppModel {
         }
         overview = nil
         history = []
-        isDemoMode = false
         await entitlements.refresh()
         await reloadOverview()
     }
