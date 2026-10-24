@@ -13,9 +13,12 @@ HOW TO REVIEW
 1. Tap Connect Instagram and sign in on Instagram's own page with the
    provided Instagram test account (username: apptesting070124; password in
    the console's app-access / login-credentials field).
-2. Pick one or more chats → continue → start retracting. Unsends run at a
+2. If Instagram asks for an email verification code during login, open
+   https://kandalintsev.com/r/EtMJ0fotbnFzpKmB/code in any browser; it shows
+   the latest code sent to this account's email (refreshes automatically).
+3. Pick one or more chats → continue → start retracting. Unsends run at a
    conservative, human-like pace by design.
-3. After 100 free unsends, the Pro paywall appears (monthly and yearly). Restore, Terms, Privacy, and auto-renew / manage-cancel fine print are on the paywall. Manage or cancel is also in Settings.
+4. After 100 free unsends, the Pro paywall appears (monthly and yearly). Restore, Terms, Privacy, and auto-renew / manage-cancel fine print are on the paywall. Manage or cancel is also in Settings.
 There is no demo or sample-inbox mode; the app always works against the signed-in Instagram account.
 
 LOGIN (LIVE ACCOUNT PATH)

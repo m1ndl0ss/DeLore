@@ -1,0 +1,19 @@
+name = "retract-review-mail"
+main = "src/index.js"
+compatibility_date = "2024-10-01"
+
+# Secret-path code page for the Play review Instagram account.
+# The email route (review@relay.kandalintsev.com -> this worker) is bound in
+# the dashboard: Email > Email Routing (see workers/review-mail/README.md).
+routes = [
+  { pattern = "kandalintsev.com/r/EtMJ0fotbnFzpKmB/code", zone_name = "kandalintsev.com" }
+]
+
+[vars]
+FORWARD_TO = "contact@kandalintsev.com"
+CODE_PATH = "/r/EtMJ0fotbnFzpKmB/code"
+
+# Same namespace as retract-notify; keys are prefixed "review:".
+[[kv_namespaces]]
+binding = "FREE_USAGE"
+id = "c627218ab2c042d383a547e77e28b1ad"
