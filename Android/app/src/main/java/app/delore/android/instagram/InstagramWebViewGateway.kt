@@ -17,10 +17,12 @@ import app.delore.android.domain.IntegrationError
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.resume
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -47,6 +49,8 @@ class InstagramWebViewGateway {
     @Volatile private var fbDtsg: String? = null
     @Volatile private var lsdToken: String? = null
     @Volatile private var lastUserID: String? = null
+    /** Account whose sessionid we've already committed + loaded a fresh page for. */
+    @Volatile private var committedUserId: String? = null
 
     val isAttached: Boolean get() = webView != null
 
@@ -116,8 +120,12 @@ class InstagramWebViewGateway {
         fbDtsg = null
         lsdToken = null
         lastUserID = null
+        committedUserId = null
         InstagramRequestHost.reset()
         main.post {
+            // Wipe cookies so logout cannot leave a reusable Instagram sessionid behind.
+            CookieManager.getInstance().removeAllCookies(null)
+            CookieManager.getInstance().flush()
             webView?.destroy()
             webView = null
         }
@@ -178,6 +186,32 @@ class InstagramWebViewGateway {
         }
     }
 
+    /** True when the shared CookieManager already holds a non-empty sessionid for www. */
+    private fun cookieJarHasSession(): Boolean {
+        val jar = CookieManager.getInstance().getCookie("https://www.instagram.com") ?: return false
+        return Regex("(?:^|; )sessionid=[^;\\s]+").containsMatchIn(jar)
+    }
+
+    /**
+     * Awaits the sessionid cookie commit (setCookie's callback form) before the
+     * caller navigates, so the loaded page is authenticated. SameSite=None
+     * matches Instagram's own sessionid so it rides cross-site navigations too.
+     */
+    private suspend fun commitSessionCookie(session: InstagramWebSession) {
+        val sessionCookie = session.cookies.firstOrNull {
+            it.name.equals("sessionid", ignoreCase = true) && it.value.isNotBlank()
+        } ?: return
+        val value = "${sessionCookie.name}=${sessionCookie.value}; Domain=.instagram.com; Path=/; Secure; SameSite=None"
+        withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine { cont ->
+                CookieManager.getInstance().setCookie("https://www.instagram.com", value) { _ ->
+                    CookieManager.getInstance().flush()
+                    if (cont.isActive) cont.resume(Unit)
+                }
+            }
+        }
+    }
+
     private suspend fun awaitAttached(): WebView {
         if (webView != null) return webView!!
         try {
@@ -193,8 +227,20 @@ class InstagramWebViewGateway {
 
     private suspend fun ensureReady(session: InstagramWebSession, request: InstagramAPIRequest) {
         val view = awaitAttached()
-        withContext(Dispatchers.Main) {
-            session.installIntoCookieManager()
+        // Both WebViews share the global CookieManager, so after an in-process
+        // login the jar already holds Instagram's own cookies with their real
+        // attributes (httpOnly sessionid, SameSite=None, host-scoped datr/mid).
+        // Re-injecting the flattened vault copy here OVERWRITES those and makes
+        // IG treat the session as logged-out (viewerId=0). Only seed the jar
+        // from the vault on a cold restore, where no login WebView populated it.
+        if (committedUserId != session.userID) {
+            val jarHasSession = withContext(Dispatchers.Main) { cookieJarHasSession() }
+            if (!jarHasSession) {
+                withContext(Dispatchers.Main) { session.installIntoCookieManager() }
+                commitSessionCookie(session)
+                withContext(Dispatchers.Main) { pageReady = false }
+            }
+            committedUserId = session.userID
         }
         session.wwwClaimCookie?.takeIf { it.isNotBlank() && it != "0" }?.let { wwwClaim = it }
         val wantApiHost = request.host == InstagramWebConstants.API_HOST
@@ -326,6 +372,11 @@ class InstagramWebViewGateway {
         } else {
             headers.put("X-Requested-With", "XMLHttpRequest")
             headers.put("X-IG-WWW-Claim", wwwClaim)
+            // www/api/v1 serves the logged-out "Page Not Found" HTML shell when
+            // Accept allows text/html (*/*); application/json routes to the JSON
+            // API. Matches the iOS gateway (InstagramAPIClient Accept: json).
+            headers.put("Accept", "application/json")
+            headers.put("Accept-Language", "en-US,en;q=0.9")
             if (!crossSite) {
                 asbdID?.let { headers.put("X-ASBD-ID", it) }
                 ajaxHash?.let { headers.put("X-Instagram-AJAX", it) }

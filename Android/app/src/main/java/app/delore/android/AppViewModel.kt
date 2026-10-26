@@ -85,6 +85,8 @@ data class UiState(
     val sessionBusy: Boolean = false,
     /** Server-side delete failed during "Delete my data"; nothing local was removed yet. */
     val eraseServerFailure: Boolean = false,
+    /** Reviewer sample-inbox mode (in-memory); drives the persistent banner + "Demo" markers. */
+    val isDemoMode: Boolean = false,
 )
 
 class AppViewModel(
@@ -98,6 +100,7 @@ class AppViewModel(
     val ratePolicy get() = env.ratePolicy
     val hasLiveSession get() = env.hasLiveSession
     val isCleanupAvailable get() = env.isCleanupAvailable
+    val isDemoMode get() = env.isDemoMode
 
     private val engine get() = work.engine
     private var didPromptDeletionLogin = false
@@ -167,8 +170,17 @@ class AppViewModel(
         _state.update {
             it.copy(
                 hasLiveSession = env.hasLiveSession,
+                isDemoMode = env.isDemoMode,
             )
         }
+    }
+
+    /** Enters the reviewer sample inbox from the hidden welcome-screen gesture. */
+    fun enterReviewDemo() = viewModelScope.launch {
+        if (env.hasLiveSession) return@launch
+        env.enterReviewDemo()
+        reloadOverview()
+        _state.update { it.copy(isDemoMode = true, hasLiveSession = false, loginPurpose = null) }
     }
 
     fun beginLogin(purpose: LoginPurpose = LoginPurpose.CONNECT) {
@@ -394,6 +406,13 @@ class AppViewModel(
 
     fun eraseEverything(skipServerDelete: Boolean = false) = viewModelScope.launch {
         _state.update { it.copy(eraseServerFailure = false) }
+        // Demo has no server record and no real session — just leave it.
+        if (env.isDemoMode) {
+            env.exitReviewDemo()
+            env.entitlements.refresh()
+            _state.update { UiState(route = Route.HOME, tab = MainTab.SETTINGS) }
+            return@launch
+        }
         // Delete the server-side usage record first, while the user id is still
         // in the vault. On failure keep local data so the user can retry.
         if (!skipServerDelete) {
@@ -423,7 +442,7 @@ class AppViewModel(
         work.cancelInbox()
         engine?.cancel()
         work.releaseEngine()
-        env.disconnectInstagram()
+        if (env.isDemoMode) env.exitReviewDemo() else env.disconnectInstagram()
         env.entitlements.refresh()
         reloadOverview()
         reloadHistory()
@@ -433,6 +452,7 @@ class AppViewModel(
                 progress = null,
                 sheet = null,
                 hasLiveSession = false,
+                isDemoMode = false,
                 overview = null,
             )
         }

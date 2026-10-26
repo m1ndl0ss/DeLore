@@ -53,9 +53,17 @@ class AppEnvironment(private val context: Context) {
         FileCleanupHistoryStore(File(context.filesDir, "history"))
     }.getOrElse { InMemoryCleanupHistoryStore() }
     val prefs: SharedPreferences = context.getSharedPreferences("retract", Context.MODE_PRIVATE)
+    /**
+     * Reviewer sample-inbox mode. In-memory only — never persisted, never
+     * auto-entered; killing the app returns to the welcome screen. Entered
+     * solely via the hidden welcome-screen gesture (see ReviewerGesture).
+     */
+    @Volatile
+    var isDemoMode: Boolean = false
+        private set
     val publisherNotify = PublisherNotify(
         prefs = prefs,
-        isEnabled = { true },
+        isEnabled = { !isDemoMode },
         resolveUsername = { loadSession()?.displayName },
     )
     val entitlements = EntitlementManager(
@@ -86,8 +94,9 @@ class AppEnvironment(private val context: Context) {
     val webBrowser = InstagramWebViewGateway()
     private val http = InstagramHTTPClient(defaultOkHttp(), { loadSession() }, webBrowser)
     private val liveUnsender = InstagramWebUnsendService(http, ownerID = { loadSession()?.userID })
+    private val demoUnsender = app.delore.android.domain.ReviewDemoUnsendService()
     val unsender: app.delore.android.domain.UnsendService
-        get() = liveUnsender
+        get() = if (isDemoMode) demoUnsender else liveUnsender
 
     fun releaseUnsendWorkingCaches() {
         liveUnsender.releaseWorkingCaches()
@@ -95,7 +104,32 @@ class AppEnvironment(private val context: Context) {
 
     val hasLibrary: Boolean get() = library.hasLibrary
     val hasLiveSession: Boolean get() = loadSession()?.hasLiveSession == true
-    val isCleanupAvailable: Boolean get() = hasLiveSession
+    val isCleanupAvailable: Boolean get() = hasLiveSession || isDemoMode
+
+    /**
+     * Enters the reviewer sample inbox (in-memory). Seeds fake local chats and
+     * uses the local-only unsend service; nothing touches Instagram or the
+     * notify worker, and demo unsends never count against free usage.
+     */
+    fun enterReviewDemo() {
+        jobStore.wipe()
+        app.delore.android.domain.ReviewDemo.seed(library)
+        saveRetractQueue(emptySet())
+        inboxWork.clear()
+        inboxListCursor = null
+        isDemoMode = true
+    }
+
+    /** Leaves demo mode and clears its seeded local data. */
+    fun exitReviewDemo() {
+        isDemoMode = false
+        library.wipe()
+        jobStore.wipe()
+        history.wipe()
+        inboxWork.clear()
+        inboxListCursor = null
+        saveRetractQueue(emptySet())
+    }
     var hasCompletedOnboarding: Boolean
         get() = prefs.getBoolean("onboarding.completed", false)
         set(value) { prefs.edit().putBoolean("onboarding.completed", value).apply() }
@@ -120,6 +154,7 @@ class AppEnvironment(private val context: Context) {
         }
 
     fun dropStaleFullInbox() {
+        if (isDemoMode) return
         if (prefs.getBoolean("inbox.listFirst", false)) return
         library.wipe()
         jobStore.wipe()
@@ -172,6 +207,7 @@ class AppEnvironment(private val context: Context) {
     }
 
     private suspend fun maybeNotifyConnected() {
+        if (isDemoMode) return
         val session = loadSession()?.takeIf { it.hasLiveSession } ?: return
         val fromLibrary = runCatching { library.account().displayName }.getOrNull()
         val username = PublisherNotify.clean(session.displayName)
@@ -193,7 +229,8 @@ class AppEnvironment(private val context: Context) {
         unsender = unsender,
         policy = ratePolicy,
         history = history,
-        onItemCompleted = { key -> entitlements.noteFreeUnsent(key) },
+        // Demo unsends never count against free usage.
+        onItemCompleted = { key -> if (!isDemoMode) entitlements.noteFreeUnsent(key) },
     )
 
     /** Signs out of Instagram. Clears local unlocks; paid Pro is re-checked from Play Billing after login. */

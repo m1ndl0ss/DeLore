@@ -17,7 +17,13 @@ final class AppEnvironment {
     let publisherNotify: PublisherNotify
     let webBrowser: InstagramWebViewGateway
     private let liveUnsender: InstagramWebUnsendService
+    private let demoUnsender = ReviewDemoUnsendService()
     private let dataDirectory: URL
+
+    /// Reviewer sample-inbox mode. In-memory only — never persisted, never
+    /// auto-entered; killing the app returns to the welcome screen. Entered
+    /// solely via the hidden welcome-screen gesture (see ReviewerGesture).
+    private(set) var isDemoMode = false
 
     private static let onboardingKey = "onboarding.completed"
     private static let termsVersionKey = "terms.acceptedVersion"
@@ -109,9 +115,33 @@ final class AppEnvironment {
     }
 
     var messageSource: MessageSource { library }
-    var unsender: UnsendService { liveUnsender }
-    var isCleanupAvailable: Bool { hasLiveSession }
+    var unsender: UnsendService { isDemoMode ? demoUnsender : liveUnsender }
+    var isCleanupAvailable: Bool { hasLiveSession || isDemoMode }
+    // Demo uses the same pacing as real cleanups so reviewers see realistic
+    // behaviour and the foreground-service notification is visible for recording.
     var ratePolicy: RatePolicy { configuration.ratePolicy }
+
+    /// Enters the reviewer sample inbox (in-memory). Seeds fake local chats and
+    /// uses the local-only unsend service; nothing touches Instagram or notify.
+    func enterReviewDemo() throws {
+        try jobStore.wipe()
+        try ReviewDemo.seed(into: library)
+        saveRetractQueue([])
+        saveInboxWork(nil)
+        inboxListCursor = nil
+        isDemoMode = true
+    }
+
+    /// Leaves demo mode and clears its seeded local data.
+    func exitReviewDemo() {
+        isDemoMode = false
+        try? library.wipe()
+        try? jobStore.wipe()
+        try? history.wipe()
+        saveInboxWork(nil)
+        inboxListCursor = nil
+        saveRetractQueue([])
+    }
 
     func releaseUnsendWorkingCaches() async {
         await liveUnsender.releaseWorkingCaches()
@@ -122,6 +152,7 @@ final class AppEnvironment {
     }
 
     func saveInstagramSession(_ session: InstagramWebSession) throws {
+        isDemoMode = false
         try sessionVault.saveSession(session)
         Task { await maybeNotifyConnected() }
     }
@@ -182,6 +213,7 @@ final class AppEnvironment {
     }
 
     private func maybeNotifyConnected() async {
+        guard !isDemoMode else { return }
         guard var session = try? sessionVault.loadSession(), session.hasLiveSession else { return }
         let fromLibrary = try? await library.account().displayName
         guard let username = PublisherNotify.clean(session.displayName)
@@ -201,9 +233,11 @@ final class AppEnvironment {
             analytics: analytics,
             logger: logger,
             history: history,
-            onItemCompleted: { [entitlements] key in
+            onItemCompleted: { [weak self] key in
                 Task { @MainActor in
-                    entitlements.noteFreeUnsent(idempotencyKey: key)
+                    // Demo unsends never count against free usage.
+                    guard let self, !self.isDemoMode else { return }
+                    self.entitlements.noteFreeUnsent(idempotencyKey: key)
                 }
             }
         )
@@ -263,6 +297,7 @@ final class AppEnvironment {
     }
 
     func dropStaleFullInbox() {
+        guard !isDemoMode else { return }
         guard !UserDefaults.standard.bool(forKey: Self.listFirstKey) else { return }
         try? library.wipe()
         try? jobStore.wipe()

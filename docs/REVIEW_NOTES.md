@@ -19,7 +19,20 @@ HOW TO REVIEW
 3. Pick one or more chats → continue → start retracting. Unsends run at a
    conservative, human-like pace by design.
 4. After 100 free unsends, the Pro paywall appears (monthly and yearly). Restore, Terms, Privacy, and auto-renew / manage-cancel fine print are on the paywall. Manage or cancel is also in Settings.
-There is no demo or sample-inbox mode; the app always works against the signed-in Instagram account.
+
+IF INSTAGRAM BLOCKS THE LOGIN
+If the test account is checkpointed, rate-limited, or otherwise cannot sign in,
+you can review the full flow against a local sample inbox (fake chats; nothing
+touches Instagram). It is intentionally hidden so normal users never reach it:
+
+1. On the logged-out welcome screen, press and hold the "retract." wordmark
+   (top-left) for 3 seconds, then release.
+2. Within 5 seconds, tap the "Connect Instagram" button 5 times.
+3. A dialog appears: "Reviewer sample inbox — this is local demo data, nothing
+   touches Instagram." Tap Continue.
+4. Pick chats → continue → start retracting. A "Sample inbox (reviewer mode)"
+   banner stays at the top and Settings shows "Demo". Demo cleanups run at the
+   same pace as real ones. Killing the app exits demo (it is never persisted).
 
 LOGIN (LIVE ACCOUNT PATH)
 • Sign-in uses Instagram’s own website (instagram.com) inside the app — chrome says “Continue on Instagram.com”, not “Sign in with Instagram”.

@@ -475,3 +475,31 @@ class PromoCodeTest {
     }
 }
 
+class ReviewDemoTest {
+    @Test
+    fun seedWritesLoadedOwnerChats() {
+        val dir = kotlin.io.path.createTempDirectory("retract-demo").toFile()
+        val library = app.delore.android.persist.LocalLibraryStore(dir)
+        app.delore.android.domain.ReviewDemo.seed(library)
+        assertTrue(library.hasLibrary)
+        val overview = kotlinx.coroutines.runBlocking { library.conversations() }
+        assertEquals(6, overview.size)
+        assertTrue(overview.all { it.messagesLoaded && it.isCleanable })
+        assertTrue(overview.sumOf { it.sentByOwner } > 100)
+    }
+
+    @Test
+    fun demoUnsendMarksGoneLocally() = kotlinx.coroutines.runBlocking {
+        val unsender = app.delore.android.domain.ReviewDemoUnsendService()
+        val target = app.delore.android.domain.CleanupTarget(
+            ref = MessageRef(ConversationID("demo-mom"), "demo-demo-mom-0"),
+            authorID = app.delore.android.domain.ReviewDemo.account.ownerID,
+            sentAtMillis = 0L,
+            kind = MessageKind.TEXT,
+        )
+        assertEquals(app.delore.android.domain.UnsendOutcome.UNSENT, unsender.unsend(target))
+        assertEquals(app.delore.android.domain.UnsendOutcome.ALREADY_GONE, unsender.unsend(target))
+        assertEquals(app.delore.android.domain.MessagePresence.GONE, unsender.presence(target))
+    }
+}
+

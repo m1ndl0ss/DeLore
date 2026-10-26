@@ -76,6 +76,8 @@ final class AppModel {
     private(set) var history: [CleanupHistoryEntry] = []
     /// Server-side delete failed during "Delete my data"; nothing local was removed yet.
     var eraseServerFailure = false
+    /// Reviewer sample-inbox mode (in-memory); drives the banner + "Demo" markers.
+    private(set) var isDemoMode = false
 
     let env: AppEnvironment
     var entitlements: EntitlementManager { env.entitlements }
@@ -404,11 +406,25 @@ final class AppModel {
         withAnimation { route = .home }
     }
 
+    /// Enters the reviewer sample inbox from the hidden welcome-screen gesture.
+    func enterReviewDemo() {
+        guard !env.hasLiveSession else { return }
+        do {
+            try env.enterReviewDemo()
+            isDemoMode = true
+            loginPurpose = nil
+            Task { await reloadOverview() }
+        } catch {
+            env.logger.error("could not enter review demo: \(error.safeDescription)")
+        }
+    }
+
     func deletionAppeared() {
         if env.hasLiveSession {
             if !env.hasLibrary { beginInboxSync() }
             return
         }
+        if env.isDemoMode { return }
         guard !didPromptDeletionLogin else { return }
         didPromptDeletionLogin = true
         beginLogin(.connect)
@@ -509,6 +525,18 @@ final class AppModel {
 
     func eraseEverything(skipServerDelete: Bool = false) async {
         eraseServerFailure = false
+        // Demo has no server record and no real session — just leave it.
+        if env.isDemoMode {
+            env.exitReviewDemo()
+            isDemoMode = false
+            overview = nil
+            history = []
+            sheet = nil
+            await entitlements.refresh()
+            tab = .settings
+            withAnimation { route = .home }
+            return
+        }
         // Delete the server-side usage record first, while the user id is still
         // in the vault. On failure keep local data so the user can retry.
         if !skipServerDelete,
@@ -554,10 +582,15 @@ final class AppModel {
         loginPurpose = nil
         inboxSyncModel?.cancel()
         inboxSyncModel = nil
-        do {
-            try env.disconnectInstagram()
-        } catch {
-            env.logger.error("logout failed: \(error.safeDescription)")
+        if env.isDemoMode {
+            env.exitReviewDemo()
+            isDemoMode = false
+        } else {
+            do {
+                try env.disconnectInstagram()
+            } catch {
+                env.logger.error("logout failed: \(error.safeDescription)")
+            }
         }
         overview = nil
         history = []

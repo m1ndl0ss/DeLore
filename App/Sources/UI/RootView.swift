@@ -19,6 +19,9 @@ struct RootView: View {
                     .transition(.opacity)
             }
         }
+        .overlay(alignment: .top) {
+            if model.isDemoMode { DemoBanner() }
+        }
         .screenBackground()
         .task { await model.bootstrap() }
         .sheet(item: otherSheetBinding) { sheet in
@@ -212,17 +215,38 @@ private struct SheetContent: View {
     }
 }
 
+/// Persistent reviewer-mode marker shown at the top of every screen in demo mode.
+private struct DemoBanner: View {
+    var body: some View {
+        Text("Sample inbox (reviewer mode)")
+            .font(Type.medium(12))
+            .foregroundStyle(Palette.onAccent)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .background(Palette.accent)
+            .allowsHitTesting(false)
+    }
+}
+
 struct SplashView: View {
     @State private var appeared = false
 
     var body: some View {
-        Wordmark()
-            .scaleEffect(appeared ? 1 : 0.94)
-            .opacity(appeared ? 1 : 0)
-            .onAppear {
-                withAnimation(.easeOut(duration: 0.35)) { appeared = true }
-            }
-            .accessibilityLabel("Retract is loading")
+        VStack(spacing: Spacing.m) {
+            Wordmark()
+                .scaleEffect(appeared ? 1.08 : 0.94)
+            Text("Take it back.")
+                .font(Type.medium(22))
+                .foregroundStyle(Palette.ink.opacity(0.72))
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 6)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.4)) { appeared = true }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Retract is loading")
     }
 }
 

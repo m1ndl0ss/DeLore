@@ -88,7 +88,7 @@ struct SettingsView: View {
                 Section {
                     EmptyView()
                 } footer: {
-                    Text("Retract \(appVersion) · We never read your chats. Not affiliated with Instagram or Meta. We are not responsible for anything that happens to your Instagram account.")
+                    Text("Retract \(appVersion)\(model.isDemoMode ? " · Demo" : "") · We never read your chats. Not affiliated with Instagram or Meta. We are not responsible for anything that happens to your Instagram account.")
                         .frame(maxWidth: .infinity)
                 }
             }

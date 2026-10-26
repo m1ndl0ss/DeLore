@@ -45,10 +45,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -243,6 +245,23 @@ fun DeLoreRoot(model: AppViewModel) {
             }
             if (state.syncing || state.syncErrorTitle != null) {
                 InboxSyncScreen(model)
+            }
+            // Persistent reviewer-mode marker on top of every screen.
+            if (state.isDemoMode) {
+                Text(
+                    "Sample inbox (reviewer mode)",
+                    color = Palette.onAccent,
+                    fontFamily = Type.sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .background(Palette.accent)
+                        .statusBarsPadding()
+                        .padding(vertical = 4.dp),
+                )
             }
         }
     }
@@ -441,7 +460,7 @@ private fun AccountScreen(model: AppViewModel) {
             Text("Delete my data", color = Palette.danger(), fontFamily = Type.sans, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
         }
         Text(
-            "Retract ${BuildConfig.VERSION_NAME} · We never read your chats. Not affiliated with Instagram or Meta.",
+            "Retract ${BuildConfig.VERSION_NAME}${if (model.isDemoMode) " · Demo" else ""} · We never read your chats. Not affiliated with Instagram or Meta.",
             color = Palette.tertiaryDark,
             fontFamily = Type.sans,
             fontSize = 12.sp,
@@ -792,6 +811,10 @@ private fun HomeScreen(model: AppViewModel) {
     val overview = state.overview
     var query by remember { mutableStateOf("") }
     var selection by remember { mutableStateOf(setOf<ConversationID>()) }
+    // Hidden reviewer entry point — see ReviewerGesture. Only on logged-out welcome.
+    val reviewerGesture = remember { ReviewerGesture() }
+    var showDemoConfirm by remember { mutableStateOf(false) }
+    val isWelcome = overview == null && !state.hasLiveSession && !state.isDemoMode
     LaunchedEffect(Unit) { model.deletionAppeared() }
     val people = remember(overview, query) {
         val all = overview?.conversations.orEmpty().sortedBy { it.title.lowercase() }
@@ -819,7 +842,27 @@ private fun HomeScreen(model: AppViewModel) {
         ) {
             Spacer(Modifier.height(Spacing.s))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Wordmark()
+                Box(
+                    modifier = if (isWelcome) {
+                        Modifier.pointerInput(Unit) {
+                            detectTapGestures(
+                                onPress = {
+                                    // Held >= 3s (no release within window) arms the gesture. No feedback.
+                                    val releasedEarly = kotlinx.coroutines.withTimeoutOrNull(3_000L) {
+                                        tryAwaitRelease()
+                                    }
+                                    if (releasedEarly == null) {
+                                        reviewerGesture.onLongPressCompleted(android.os.SystemClock.elapsedRealtime())
+                                    }
+                                },
+                            )
+                        }
+                    } else {
+                        Modifier
+                    },
+                ) {
+                    Wordmark()
+                }
                 Spacer(Modifier.weight(1f))
                 if (overview != null && model.hasLiveSession) {
                     IconButton(
@@ -986,7 +1029,17 @@ private fun HomeScreen(model: AppViewModel) {
                 }
             } else if (overview == null && !state.loadingOverview) {
                 Appear(160) {
-                    ConnectButton(if (model.hasLiveSession) "Load chats" else "Connect Instagram") { model.showConnect() }
+                    ConnectButton(if (model.hasLiveSession) "Load chats" else "Connect Instagram") {
+                        // While armed, swallow taps toward the hidden gesture (no feedback);
+                        // otherwise behave as the normal Connect button.
+                        if (!model.hasLiveSession && reviewerGesture.isArmed) {
+                            if (reviewerGesture.onConnectTap(android.os.SystemClock.elapsedRealtime())) {
+                                showDemoConfirm = true
+                            }
+                        } else {
+                            model.showConnect()
+                        }
+                    }
                 }
             }
             if (!model.entitlements.isPro && model.hasLiveSession) {
@@ -994,6 +1047,20 @@ private fun HomeScreen(model: AppViewModel) {
                     remaining = model.entitlements.remainingFree,
                 ) { model.showSheet(Sheet.Paywall("settings")) }
             }
+        }
+        if (showDemoConfirm) {
+            AlertDialog(
+                onDismissRequest = { showDemoConfirm = false },
+                title = { Text("Reviewer sample inbox") },
+                text = { Text("This is local demo data, nothing touches Instagram.") },
+                confirmButton = {
+                    QuietButton("Continue", tint = Palette.accent) {
+                        showDemoConfirm = false
+                        model.enterReviewDemo()
+                    }
+                },
+                dismissButton = { QuietButton("Cancel") { showDemoConfirm = false } },
+            )
         }
     }
 }
@@ -1083,7 +1150,7 @@ private fun SettingsSheet(model: AppViewModel) {
         QuietButton("Disconnect & delete my data", tint = Palette.danger()) { confirmErase = true }
         Text("Removes your chats, Instagram login, cleanup progress and everything else stored on this phone. Purchases stay with your Google account.", color = Palette.secondaryInk(), fontSize = 12.sp)
         Spacer(Modifier.height(Spacing.m))
-        Text("Retract ${BuildConfig.VERSION_NAME} · We never read your chats. Not affiliated with Instagram or Meta. We are not responsible for anything that happens to your Instagram account.", color = Palette.secondaryInk(), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        Text("Retract ${BuildConfig.VERSION_NAME}${if (model.isDemoMode) " · Demo" else ""} · We never read your chats. Not affiliated with Instagram or Meta. We are not responsible for anything that happens to your Instagram account.", color = Palette.secondaryInk(), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(Spacing.xl))
     }
     if (confirmErase) {
