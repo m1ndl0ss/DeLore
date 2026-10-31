@@ -189,7 +189,10 @@ data class InstagramWebSession(
 object InstagramResponseClassifier {
     fun classify(response: HTTPResponse, destructive: Boolean): IntegrationError? {
         statusError(response.statusCode, retryAfter(response), destructive)?.let { fromStatus ->
-            if (response.statusCode == 403 || response.statusCode == 400) {
+            // 404 included: a logged-out www session answers /api/v1/… with the
+            // "Page Not Found" shell that links to /accounts/login. A body telling
+            // you to log in is an expired session, not something to retry later.
+            if (response.statusCode == 403 || response.statusCode == 400 || response.statusCode == 404) {
                 bodyError(response.body, destructive)?.let { return it }
             }
             return fromStatus
@@ -390,10 +393,23 @@ object InstagramWebFormat {
 
     fun parseInbox(body: ByteArray): InboxPage {
         val root = JSONObject(quoteOversizedNumericIds(body.decodeToString()))
+        val viewer = root.optJSONObject("viewer") ?: root.optJSONObject("data")?.optJSONObject("viewer")
         val inbox = root.optJSONObject("inbox")
             ?: root.optJSONObject("data")?.optJSONObject("inbox")
-            ?: throw IllegalArgumentException("missing inbox (${topKeys(body)})")
-        val viewer = root.optJSONObject("viewer") ?: root.optJSONObject("data")?.optJSONObject("viewer")
+            // An account with no DMs can answer "ok" without an inbox object at all.
+            // That's an empty inbox, not a broken read — throwing here surfaced as
+            // UnexpectedResponse → the hold-off screen. Only accept it when Instagram
+            // said status:ok, so a real error envelope still pauses the sync.
+            ?: if (root.optString("status").equals("ok", ignoreCase = true)) {
+                return InboxPage(
+                    threads = emptyList(),
+                    hasOlder = false,
+                    oldestCursor = null,
+                    viewerUsername = viewer?.optString("username")?.ifBlank { null },
+                )
+            } else {
+                throw IllegalArgumentException("missing inbox (${topKeys(body)})")
+            }
         val threadsJson = inbox.optJSONArray("threads") ?: JSONArray()
         val threads = buildList {
             for (i in 0 until threadsJson.length()) {

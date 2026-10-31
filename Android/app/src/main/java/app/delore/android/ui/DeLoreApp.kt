@@ -992,7 +992,15 @@ private fun HomeScreen(model: AppViewModel) {
                     }
                 }
             } else if (overview != null) {
-                LoreHeadline("No DMs on this account.")
+                // Instagram handed over a clean, empty inbox. Say so plainly —
+                // this is not the hold-off / couldn't-read case.
+                LoreHeadline("No conversations yet")
+                Text(
+                    "Nothing in your Instagram DMs to unsend. Pull a refresh if you've sent something since.",
+                    color = Palette.secondaryInk(),
+                    fontFamily = Type.sans,
+                    fontSize = 17.sp,
+                )
             } else if (state.loadingOverview) {
                 LoreHeadline("Loading your chats.")
                 CircularProgressIndicator(color = Palette.accent)

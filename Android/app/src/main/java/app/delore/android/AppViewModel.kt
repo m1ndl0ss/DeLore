@@ -538,8 +538,8 @@ data class SyncPause(
 
         fun from(error: Exception): SyncPause = when (error) {
             IntegrationError.SessionExpired -> SyncPause(
-                "Instagram signed you out",
-                "Sign in again when you're ready. Nothing left this phone.",
+                "Session expired, please log in again",
+                "Instagram turned down the saved login. Nothing left this phone.",
                 SyncPauseKind.RECONNECT,
             )
             IntegrationError.VerificationRequired -> SyncPause(

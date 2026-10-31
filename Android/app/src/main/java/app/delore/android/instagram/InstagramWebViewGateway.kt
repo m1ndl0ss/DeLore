@@ -51,6 +51,13 @@ class InstagramWebViewGateway {
     @Volatile private var lastUserID: String? = null
     /** Account whose sessionid we've already committed + loaded a fresh page for. */
     @Volatile private var committedUserId: String? = null
+    /**
+     * True while the jar is running on cookies seeded from the vault (cold restore)
+     * and nothing has come back cleanly yet. The vault copy is flattened — no
+     * HttpOnly sessionid, no host-scoped device cookies — so Instagram often serves
+     * the logged-out shell for it. Cleared by the first clean response.
+     */
+    @Volatile private var seededFromVault = false
 
     val isAttached: Boolean get() = webView != null
 
@@ -121,6 +128,7 @@ class InstagramWebViewGateway {
         lsdToken = null
         lastUserID = null
         committedUserId = null
+        seededFromVault = false
         InstagramRequestHost.reset()
         main.post {
             // Wipe cookies so logout cannot leave a reusable Instagram sessionid behind.
@@ -178,8 +186,17 @@ class InstagramWebViewGateway {
                             "Retract",
                             "IG unexpected ${request.host}${request.path} status=${result.status} body=${result.body.take(240)}",
                         )
+                        // Cold restore: Instagram turned down the vault's cookies and served
+                        // the logged-out shell (404 HTML / viewerId=0). That's an expired
+                        // session to re-authenticate, not a reason to hold off and retry.
+                        if (seededFromVault) {
+                            Log.w("Retract", "IG rejected vault-seeded cookies — treating as session expired")
+                            throw IntegrationError.SessionExpired
+                        }
                         throw error
                     }
+                    // The restored jar works; later odd responses are their own problem.
+                    seededFromVault = false
                     mapped
                 }
             }
@@ -239,6 +256,8 @@ class InstagramWebViewGateway {
                 withContext(Dispatchers.Main) { session.installIntoCookieManager() }
                 commitSessionCookie(session)
                 withContext(Dispatchers.Main) { pageReady = false }
+                seededFromVault = true
+                Log.i("Retract", "IG cookie jar seeded from vault (cold restore)")
             }
             committedUserId = session.userID
         }
